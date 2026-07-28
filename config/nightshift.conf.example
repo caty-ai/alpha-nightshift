@@ -2,13 +2,17 @@
 
 # NIGHTSHIFT_STATE_DIR="$REPO_ROOT/state"
 
-# Observation lanes are contiguous numbered shell command strings.
+# Observation lanes are contiguous numbered shell command strings starting at 1.
+# The scan stops at the first missing LANE_CMD_n, so do not leave number gaps.
 # Lanes write proposals to "$LANE_DIR/findings.jsonl"; they never write the ledger.
 LANE_CMD_1=':'
 
 LANE_TIMEBOX_MIN=60
+# 0 means the run is metered but uncapped (the Phase 0 default).
 NIGHT_BUDGET_TOKENS=0
 BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 
-# Colon-separated absolute paths exposed as symlinks inside the isolated lane HOME.
-LANE_HOME_LINKS="$HOME/.codex"
+# Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
+# isolated lane HOME. Lanes that need Codex auth must opt in explicitly. Never
+# link ~/.ssh, ~/.config/gh, or any GitHub credential store.
+LANE_HOME_LINKS=''

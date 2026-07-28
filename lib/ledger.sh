@@ -7,7 +7,7 @@ ledger_file_path() {
 
 ledger_append() {
   input_json=$1
-  if ! printf '%s\n' "$input_json" | jq -e 'type' >/dev/null 2>&1; then
+  if ! printf '%s\n' "$input_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
     return 1
   fi
   if ! compact_json=$(printf '%s\n' "$input_json" | jq -c . 2>/dev/null); then
@@ -42,7 +42,26 @@ ledger_ingest_proposals() {
   proposal_file=$1
   LEDGER_INGESTED_COUNT=0
   LEDGER_SKIPPED_COUNT=0
+  LEDGER_DUPLICATE_COUNT=0
   [ -f "$proposal_file" ] || return 0
+
+  if ! existing_ids_file=$(mktemp "$STATE_DIR/.finding-ids.XXXXXX"); then
+    return 1
+  fi
+  ledger_file=$(ledger_file_path)
+  if [ -f "$ledger_file" ]; then
+    if ! jq -r '
+      select(
+        type == "object" and
+        .type == "finding" and
+        (.id | type == "string")
+      )
+      | .id
+    ' "$ledger_file" > "$existing_ids_file"; then
+      rm -f "$existing_ids_file"
+      return 1
+    fi
+  fi
 
   while IFS= read -r proposal_line || [ -n "$proposal_line" ]; do
     if [ -z "$proposal_line" ]; then
@@ -76,11 +95,25 @@ ledger_ingest_proposals() {
       continue
     fi
 
+    proposal_id=$(printf '%s\n' "$validated" | jq -r '.id')
+    if grep -F -x -- "$proposal_id" "$existing_ids_file" >/dev/null 2>&1; then
+      LEDGER_DUPLICATE_COUNT=$((LEDGER_DUPLICATE_COUNT + 1))
+      continue
+    fi
+
     finding_record=$(printf '%s\n' "$validated" | jq -c \
       --arg ts "$(nightshift_iso_now)" \
       --arg night_id "$NIGHT_ID" \
       '. + {ts: $ts, night_id: $night_id, type: "finding", status: "open"}')
-    ledger_append "$finding_record"
+    if ! ledger_append "$finding_record"; then
+      rm -f "$existing_ids_file"
+      return 1
+    fi
+    if ! printf '%s\n' "$proposal_id" >> "$existing_ids_file"; then
+      rm -f "$existing_ids_file"
+      return 1
+    fi
     LEDGER_INGESTED_COUNT=$((LEDGER_INGESTED_COUNT + 1))
   done < "$proposal_file"
+  rm -f "$existing_ids_file"
 }

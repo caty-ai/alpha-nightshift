@@ -25,6 +25,9 @@ assert_file_exists "$ledger"
 if ledger_append '{invalid'; then
   fail "invalid JSON was accepted"
 fi
+if ledger_append 'null'; then
+  fail "JSON null was accepted as a ledger record"
+fi
 [ "$(wc -l < "$ledger" | tr -d ' ')" -eq 1 ] || fail "invalid JSON changed ledger"
 
 ledger_append '{"ts":"x","night_id":"other","type":"run_start"}'
@@ -42,10 +45,19 @@ printf '%s\n' \
 ledger_ingest_proposals "$proposal"
 [ "$LEDGER_INGESTED_COUNT" -eq 1 ] || fail "valid proposal was not ingested"
 [ "$LEDGER_SKIPPED_COUNT" -eq 2 ] || fail "malformed proposals were not skipped"
+[ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] || fail "first proposal ingest reported duplicates"
 finding=$(ledger_query_night 2026-07-28 finding)
 [ "$(printf '%s\n' "$finding" | jq -r '.status')" = open ] ||
   fail "dispatcher did not force finding status to open"
 [ "$(printf '%s\n' "$finding" | jq -r '.symptom')" = "button is hidden" ] ||
   fail "finding fields were not retained"
+
+first_ingested=$LEDGER_INGESTED_COUNT
+ledger_ingest_proposals "$proposal"
+[ "$LEDGER_INGESTED_COUNT" -eq 0 ] || fail "duplicate proposal was ingested twice"
+[ "$LEDGER_DUPLICATE_COUNT" -eq "$first_ingested" ] ||
+  fail "duplicate proposal count did not match the first ingest"
+[ "$LEDGER_SKIPPED_COUNT" -eq 2 ] ||
+  fail "malformed proposal count changed during duplicate ingest"
 
 printf 'test_ledger: PASS\n'

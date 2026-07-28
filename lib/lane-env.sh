@@ -43,9 +43,10 @@ lane_exec() {
   IFS=$old_ifs
 
   lane_started=$(date '+%s')
+  set -m
   (
     cd "$lane_work"
-    env -i \
+    exec env -i \
       PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin \
       HOME="$lane_home" \
       TMPDIR="$lane_tmp" \
@@ -53,22 +54,27 @@ lane_exec() {
       TERM=dumb \
       NIGHT_ID="$NIGHT_ID" \
       LANE_DIR="$lane_dir" \
+      GIT_CEILING_DIRECTORIES="$lane_dir" \
       "$@"
   ) >"$lane_dir/lane.log" 2>&1 &
   lane_pid=$!
+  set +m
   lane_deadline_sec=$((LANE_TIMEBOX_MIN * 60))
   LANE_TIMED_OUT=false
+  # Give the exec'd command one scheduler tick to enter its process group
+  # before an immediate (zero-minute) deadline is enforced.
+  sleep 0.1
 
   while kill -0 "$lane_pid" 2>/dev/null; do
     lane_now=$(date '+%s')
     if [ $((lane_now - lane_started)) -ge "$lane_deadline_sec" ]; then
       LANE_TIMED_OUT=true
-      kill -TERM "$lane_pid" 2>/dev/null || true
+      kill -TERM -- "-$lane_pid" 2>/dev/null || true
       lane_grace_started=$(date '+%s')
-      while kill -0 "$lane_pid" 2>/dev/null; do
+      while kill -0 -- "-$lane_pid" 2>/dev/null; do
         lane_grace_now=$(date '+%s')
         if [ $((lane_grace_now - lane_grace_started)) -ge 10 ]; then
-          kill -KILL "$lane_pid" 2>/dev/null || true
+          kill -KILL -- "-$lane_pid" 2>/dev/null || true
           break
         fi
         sleep 0.1
@@ -82,6 +88,12 @@ lane_exec() {
     LANE_EXIT_CODE=0
   else
     LANE_EXIT_CODE=$?
+  fi
+  if [ "$LANE_TIMED_OUT" = true ]; then
+    if lane_group_members=$(ps -g "$lane_pid" -o pid= 2>/dev/null) &&
+      [ -n "$(printf '%s' "$lane_group_members" | tr -d '[:space:]')" ]; then
+      nightshift_log WARN "Lane process group $lane_pid still has survivors after KILL"
+    fi
   fi
   LANE_WALLCLOCK_SEC=$(( $(date '+%s') - lane_started ))
   export LANE_TIMED_OUT LANE_EXIT_CODE LANE_WALLCLOCK_SEC

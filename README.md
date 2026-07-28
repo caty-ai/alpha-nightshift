@@ -4,7 +4,8 @@ Phase 0 is a macOS nightly observation harness. At 23:30 the dispatcher runs
 credential-free observation lanes and serially ingests their JSONL proposals.
 At 06:30 a separate machine-template digest reports findings, a clean zero, or
 the dead-man condition where the nightly run never started. Phase 0 performs no
-GitHub or network operations.
+GitHub or network operations in the harness itself. Phase 0 lanes are not
+network-confined; network sandboxing is planned for Phase 1.
 
 ## Requirements
 
@@ -14,6 +15,11 @@ GitHub or network operations.
 
 Copy `config/nightshift.conf.example` to `config/nightshift.conf` and adjust the
 numbered `LANE_CMD_n` values. Runtime state is stored under `state/` by default.
+
+`LANE_HOME_LINKS` is empty by default. Any opted-in path is reachable READ-WRITE
+through its lane HOME symlink. A lane that needs Codex authentication may
+explicitly link the minimum required path, but never link `~/.ssh`,
+`~/.config/gh`, or any GitHub credential store.
 
 ## Run manually
 

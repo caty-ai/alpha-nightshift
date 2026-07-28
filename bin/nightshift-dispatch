@@ -30,7 +30,9 @@ append_event() {
     --arg night_id "$NIGHT_ID" \
     --arg type "$event_type" \
     '{ts: $ts, night_id: $night_id, type: $type}')
-  ledger_append "$event_json"
+  if ! ledger_append "$event_json"; then
+    return 1
+  fi
 }
 
 record_skip() {
@@ -40,7 +42,9 @@ record_skip() {
     --arg night_id "$NIGHT_ID" \
     --arg reason "$skip_reason" \
     '{ts: $ts, night_id: $night_id, type: "skip", reason: $reason}')
-  ledger_append "$skip_record"
+  if ! ledger_append "$skip_record"; then
+    return 1
+  fi
 }
 
 write_run_end() {
@@ -65,37 +69,141 @@ write_run_end() {
       wallclock_sec: $wallclock_sec,
       budget: $budget
     }')
-  ledger_append "$run_end_record"
+  if ! ledger_append "$run_end_record"; then
+    return 1
+  fi
+}
+
+write_aborted_run_end() {
+  run_lanes=$1
+  run_findings=$2
+  run_started_epoch=$3
+  run_signal=$4
+  abort_reason=$5
+  run_wallclock=$(( $(date '+%s') - run_started_epoch ))
+  run_budget=$(budget_snapshot)
+  abort_record=$(jq -n -c \
+    --arg ts "$(nightshift_iso_now)" \
+    --arg night_id "$NIGHT_ID" \
+    --arg signal "$run_signal" \
+    --arg reason "$abort_reason" \
+    --argjson lanes_run "$run_lanes" \
+    --argjson findings_count "$run_findings" \
+    --argjson wallclock_sec "$run_wallclock" \
+    --argjson budget "$run_budget" \
+    '{
+      ts: $ts,
+      night_id: $night_id,
+      type: "run_end",
+      aborted: true,
+      lanes_run: $lanes_run,
+      findings_count: $findings_count,
+      wallclock_sec: $wallclock_sec,
+      budget: $budget
+    }
+    + (if $signal == "" then {} else {signal: $signal} end)
+    + (if $reason == "" then {} else {reason: $reason} end)')
+  if ! ledger_append "$abort_record"; then
+    return 1
+  fi
+}
+
+abort_after_ledger_failure() {
+  failed_record_type=$1
+  nightshift_log ERROR "Ledger append failed for $failed_record_type; aborting run"
+  if [ "$RUN_START_RECORDED" = true ]; then
+    if ! write_aborted_run_end \
+      "$RUN_LANES_RUN" \
+      "$RUN_FINDINGS_COUNT" \
+      "$RUN_STARTED_EPOCH" \
+      "" \
+      "ledger_append_failed"; then
+      nightshift_log ERROR "Best-effort abort record append also failed"
+    fi
+  fi
+  return 1
+}
+
+run_signal_handler() {
+  caught_signal=$1
+  signal_exit=$2
+  trap - HUP INT TERM
+  nightshift_log WARN "Run aborted by signal $caught_signal"
+  if [ "$RUN_START_RECORDED" = true ]; then
+    if ! write_aborted_run_end \
+      "$RUN_LANES_RUN" \
+      "$RUN_FINDINGS_COUNT" \
+      "$RUN_STARTED_EPOCH" \
+      "$caught_signal" \
+      ""; then
+      nightshift_log ERROR "Failed to append signal abort record"
+    fi
+  fi
+  exit "$signal_exit"
 }
 
 run_command() {
   lock_dir="$STATE_DIR/locks/nightshift.lock"
   if ! lock_acquire "$lock_dir"; then
+    # This is the one sanctioned append by a non-lock-holder. A single compact
+    # O_APPEND write makes lock contention visible without claiming the lock.
+    if ! record_skip lock_held; then
+      nightshift_log ERROR "Failed to record lock-held skip"
+      return 1
+    fi
     nightshift_log INFO "Skipped: already running (lock retained for human inspection)"
     return 0
   fi
   trap 'lock_release "$lock_dir" || true' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
 
-  run_started_epoch=$(date '+%s')
-  lanes_run=0
-  findings_count=0
-  append_event run_start
+  RUN_STARTED_EPOCH=$(date '+%s')
+  RUN_LANES_RUN=0
+  RUN_FINDINGS_COUNT=0
+  RUN_START_RECORDED=false
+  trap 'run_signal_handler HUP 129' HUP
+  trap 'run_signal_handler INT 130' INT
+  trap 'run_signal_handler TERM 143' TERM
+
+  if ! append_event run_start; then
+    nightshift_log ERROR "Ledger append failed for run_start; no lanes started"
+    trap - HUP INT TERM
+    return 1
+  fi
+  RUN_START_RECORDED=true
   nightshift_log INFO "Run started for night $NIGHT_ID"
 
   initial_budget_rc=0
   budget_check || initial_budget_rc=$?
   if [ "$initial_budget_rc" -ne 0 ]; then
-    if [ "$initial_budget_rc" -eq 2 ]; then
-      record_skip budget_exhausted
-      nightshift_log INFO "No lanes started: budget exhausted"
-    else
-      record_skip meter_error
-      nightshift_log WARN "No lanes started: budget meter error"
+    case "$initial_budget_rc" in
+      2)
+        if ! record_skip budget_exhausted; then
+          abort_after_ledger_failure skip || true
+          trap - HUP INT TERM
+          return 1
+        fi
+        nightshift_log INFO "No lanes started: budget exhausted"
+        ;;
+      3)
+        abort_after_ledger_failure meter_error || true
+        trap - HUP INT TERM
+        return 1
+        ;;
+      *)
+        if ! record_skip meter_error; then
+          abort_after_ledger_failure skip || true
+          trap - HUP INT TERM
+          return 1
+        fi
+        nightshift_log WARN "No lanes started: budget meter error"
+        ;;
+    esac
+    if ! write_run_end "$RUN_LANES_RUN" "$RUN_FINDINGS_COUNT" "$RUN_STARTED_EPOCH"; then
+      abort_after_ledger_failure run_end || true
+      trap - HUP INT TERM
+      return 1
     fi
-    write_run_end "$lanes_run" "$findings_count" "$run_started_epoch"
+    trap - HUP INT TERM
     return 0
   fi
 
@@ -114,13 +222,29 @@ run_command() {
     lane_budget_rc=0
     budget_check || lane_budget_rc=$?
     if [ "$lane_budget_rc" -ne 0 ]; then
-      if [ "$lane_budget_rc" -eq 2 ]; then
-        record_skip budget_exhausted
-        nightshift_log INFO "Stopping before lane $lane_number: budget exhausted"
-      else
-        record_skip meter_error
-        nightshift_log WARN "Stopping before lane $lane_number: budget meter error"
-      fi
+      case "$lane_budget_rc" in
+        2)
+          if ! record_skip budget_exhausted; then
+            abort_after_ledger_failure skip || true
+            trap - HUP INT TERM
+            return 1
+          fi
+          nightshift_log INFO "Stopping before lane $lane_number: budget exhausted"
+          ;;
+        3)
+          abort_after_ledger_failure meter_error || true
+          trap - HUP INT TERM
+          return 1
+          ;;
+        *)
+          if ! record_skip meter_error; then
+            abort_after_ledger_failure skip || true
+            trap - HUP INT TERM
+            return 1
+          fi
+          nightshift_log WARN "Stopping before lane $lane_number: budget meter error"
+          ;;
+      esac
       break
     fi
 
@@ -132,13 +256,21 @@ run_command() {
       --arg night_id "$NIGHT_ID" \
       --arg lane "$lane_name" \
       '{ts: $ts, night_id: $night_id, type: "lane_start", lane: $lane}')
-    ledger_append "$lane_start_record"
-    lanes_run=$((lanes_run + 1))
+    if ! ledger_append "$lane_start_record"; then
+      abort_after_ledger_failure lane_start || true
+      trap - HUP INT TERM
+      return 1
+    fi
+    RUN_LANES_RUN=$((RUN_LANES_RUN + 1))
     nightshift_log INFO "Starting $lane_name"
 
     lane_exec "$lane_dir" /bin/bash -c "$lane_command"
-    ledger_ingest_proposals "$lane_dir/findings.jsonl"
-    findings_count=$((findings_count + LEDGER_INGESTED_COUNT))
+    if ! ledger_ingest_proposals "$lane_dir/findings.jsonl"; then
+      abort_after_ledger_failure finding || true
+      trap - HUP INT TERM
+      return 1
+    fi
+    RUN_FINDINGS_COUNT=$((RUN_FINDINGS_COUNT + LEDGER_INGESTED_COUNT))
 
     lane_end_record=$(jq -n -c \
       --arg ts "$(nightshift_iso_now)" \
@@ -149,6 +281,7 @@ run_command() {
       --argjson wallclock_sec "$LANE_WALLCLOCK_SEC" \
       --argjson findings_ingested "$LEDGER_INGESTED_COUNT" \
       --argjson malformed_proposals "$LEDGER_SKIPPED_COUNT" \
+      --argjson duplicates_skipped "$LEDGER_DUPLICATE_COUNT" \
       '{
         ts: $ts,
         night_id: $night_id,
@@ -158,21 +291,37 @@ run_command() {
         timed_out: $timed_out,
         wallclock_sec: $wallclock_sec,
         findings_ingested: $findings_ingested,
-        malformed_proposals: $malformed_proposals
+        malformed_proposals: $malformed_proposals,
+        duplicates_skipped: $duplicates_skipped
       }')
-    ledger_append "$lane_end_record"
-    nightshift_log INFO "Finished $lane_name (exit=$LANE_EXIT_CODE timed_out=$LANE_TIMED_OUT findings=$LEDGER_INGESTED_COUNT)"
+    if ! ledger_append "$lane_end_record"; then
+      abort_after_ledger_failure lane_end || true
+      trap - HUP INT TERM
+      return 1
+    fi
+    nightshift_log INFO "Finished $lane_name (exit=$LANE_EXIT_CODE timed_out=$LANE_TIMED_OUT findings=$LEDGER_INGESTED_COUNT duplicates=$LEDGER_DUPLICATE_COUNT)"
     lane_number=$((lane_number + 1))
   done
 
-  write_run_end "$lanes_run" "$findings_count" "$run_started_epoch"
-  nightshift_log INFO "Run ended (lanes=$lanes_run findings=$findings_count)"
+  if ! write_run_end "$RUN_LANES_RUN" "$RUN_FINDINGS_COUNT" "$RUN_STARTED_EPOCH"; then
+    abort_after_ledger_failure run_end || true
+    trap - HUP INT TERM
+    return 1
+  fi
+  trap - HUP INT TERM
+  nightshift_log INFO "Run ended (lanes=$RUN_LANES_RUN findings=$RUN_FINDINGS_COUNT)"
 }
 
 digest_command() {
   run_start_count=$(ledger_query_night "$NIGHT_ID" run_start | wc -l | tr -d ' ')
+  run_end_count=$(ledger_query_night "$NIGHT_ID" run_end | wc -l | tr -d ' ')
   finding_count=$(ledger_query_night "$NIGHT_ID" finding | wc -l | tr -d ' ')
   last_run_end=$(ledger_query_night "$NIGHT_ID" run_end | tail -n 1)
+  last_skip=$(ledger_query_night "$NIGHT_ID" skip | tail -n 1)
+  lock_skip_count=$(ledger_query_night "$NIGHT_ID" skip |
+    jq -r 'select(.reason == "lock_held") | .reason' |
+    wc -l |
+    tr -d ' ')
 
   if [ -n "$last_run_end" ]; then
     budget_block=$(printf '%s\n' "$last_run_end" | jq -c \
@@ -185,10 +334,32 @@ digest_command() {
   fi
 
   if [ "$run_start_count" -eq 0 ]; then
-    digest_mode=DEAD_MAN
-    findings_block='夜番は起きなかった'
-    lane_stats='run_start=0, lanes_run=unknown, findings=unknown'
-    digest_dead_man=true
+    if [ "$lock_skip_count" -gt 0 ]; then
+      digest_mode=LOCK_HELD
+      findings_block='ロック残留のため skip — 人間によるロック確認が必要'
+      lane_stats='run_start=0, lanes_run=0, skip_reason=lock_held'
+      digest_dead_man=false
+    else
+      digest_mode=DEAD_MAN
+      findings_block='夜番は起きなかった'
+      lane_stats='run_start=0, lanes_run=unknown, findings=unknown'
+      digest_dead_man=true
+    fi
+  elif [ "$run_end_count" -lt "$run_start_count" ] ||
+    [ "$(printf '%s\n' "$last_run_end" | jq -r '.aborted == true')" = true ]; then
+    digest_mode=ABORTED
+    findings_block='夜番は開始しましたが、中断されました。run_end または aborted 記録を確認してください。'
+    if [ "$run_end_count" -lt "$run_start_count" ]; then
+      lane_stats="run_start=$run_start_count, run_end=$run_end_count, lanes_run=unknown, findings=unknown"
+    fi
+    digest_dead_man=false
+  elif [ "$(printf '%s\n' "$last_run_end" | jq -r '.lanes_run // 0')" -eq 0 ] &&
+    [ -n "$last_skip" ]; then
+    skip_reason=$(printf '%s\n' "$last_skip" | jq -r '.reason // "unknown"')
+    digest_mode=SKIPPED
+    findings_block="夜番は skip されました。理由: $skip_reason"
+    lane_stats="lanes_run=0, findings=0, skip_reason=$skip_reason"
+    digest_dead_man=false
   elif [ "$finding_count" -eq 0 ]; then
     digest_mode=ZERO
     findings_block='夜番は起動し、観測項目は0件でした。'
@@ -229,7 +400,10 @@ digest_command() {
       mode: $mode,
       dead_man: $dead_man
     }')
-  ledger_append "$digest_record"
+  if ! ledger_append "$digest_record"; then
+    nightshift_log ERROR "Digest was written, but digest_written ledger append failed"
+    return 1
+  fi
   nightshift_log INFO "Digest written: $digest_file ($digest_mode)"
 }
 

@@ -35,4 +35,23 @@ if lock_acquire "$lockdir"; then
 fi
 [ -f "$lockdir/meta" ] || fail "stale lock metadata was removed"
 
+integration_state="$TEST_TMP/integration-state"
+integration_config="$TEST_TMP/integration.conf"
+mkdir -p "$integration_state/locks/nightshift.lock"
+printf 'pid=999999\nstarted_at=2000-01-01T00:00:00Z\n' \
+  > "$integration_state/locks/nightshift.lock/meta"
+printf '%s\n' \
+  "NIGHTSHIFT_STATE_DIR='$integration_state'" \
+  "LANE_CMD_1=':'" \
+  "LANE_HOME_LINKS=''" \
+  > "$integration_config"
+NIGHTSHIFT_CONFIG="$integration_config" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null
+NIGHT_ID=$(date -v-8H '+%F')
+assert_ledger_record \
+  "$integration_state/ledger/ledger.jsonl" \
+  "$NIGHT_ID" \
+  skip \
+  lock_held
+
 printf 'test_lock: PASS\n'

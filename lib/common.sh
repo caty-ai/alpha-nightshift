@@ -22,7 +22,9 @@ nightshift_init() {
   NIGHT_BUDGET_TOKENS=${NIGHT_BUDGET_TOKENS:-0}
   BUDGET_PROBE_CMD=${BUDGET_PROBE_CMD:-"$REPO_ROOT/bin/budget-probe-stub"}
   BUDGET_PROBE_TIMEOUT_SEC=${BUDGET_PROBE_TIMEOUT_SEC:-30}
-  LANE_HOME_LINKS=${LANE_HOME_LINKS-"${HOME:-}/.codex"}
+  # HOME links are read-write through their symlinks. Lanes that need Codex
+  # authentication must opt in explicitly.
+  LANE_HOME_LINKS=${LANE_HOME_LINKS-}
   LANG=${LANG:-C}
   NIGHT_ID=$(date -v-8H '+%F')
 

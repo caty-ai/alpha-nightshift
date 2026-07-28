@@ -82,4 +82,52 @@ assert_contains NORMAL "$normal_digest"
 assert_contains 'first symptom（確認: 即断）' "$normal_digest"
 assert_contains 'second symptom（確認: 3分）' "$normal_digest"
 
+lock_state="$TEST_TMP/lock-state"
+lock_config="$TEST_TMP/lock.conf"
+write_digest_config "$lock_config" "$lock_state"
+seed_record "$lock_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"skip", reason:"lock_held"}')"
+run_digest "$lock_config"
+lock_digest="$lock_state/digests/$NIGHT_ID.md"
+assert_contains LOCK_HELD "$lock_digest"
+assert_contains 'ロック残留のため skip' "$lock_digest"
+
+aborted_state="$TEST_TMP/aborted-state"
+aborted_config="$TEST_TMP/aborted.conf"
+write_digest_config "$aborted_config" "$aborted_state"
+seed_record "$aborted_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_start"}')"
+seed_record "$aborted_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_end", lanes_run:1, findings_count:0, wallclock_sec:1}')"
+seed_record "$aborted_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_start"}')"
+run_digest "$aborted_config"
+aborted_digest="$aborted_state/digests/$NIGHT_ID.md"
+assert_contains ABORTED "$aborted_digest"
+assert_contains '中断されました' "$aborted_digest"
+
+signal_aborted_state="$TEST_TMP/signal-aborted-state"
+signal_aborted_config="$TEST_TMP/signal-aborted.conf"
+write_digest_config "$signal_aborted_config" "$signal_aborted_state"
+seed_record "$signal_aborted_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_start"}')"
+seed_record "$signal_aborted_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_end", aborted:true, signal:"TERM", lanes_run:1, findings_count:0, wallclock_sec:1}')"
+run_digest "$signal_aborted_config"
+assert_contains ABORTED "$signal_aborted_state/digests/$NIGHT_ID.md"
+
+skipped_state="$TEST_TMP/skipped-state"
+skipped_config="$TEST_TMP/skipped.conf"
+write_digest_config "$skipped_config" "$skipped_state"
+seed_record "$skipped_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_start"}')"
+seed_record "$skipped_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"skip", reason:"budget_exhausted"}')"
+seed_record "$skipped_state" "$(jq -n -c --arg night "$NIGHT_ID" \
+  '{ts:"x", night_id:$night, type:"run_end", lanes_run:0, findings_count:0, wallclock_sec:1}')"
+run_digest "$skipped_config"
+skipped_digest="$skipped_state/digests/$NIGHT_ID.md"
+assert_contains SKIPPED "$skipped_digest"
+assert_contains 'budget_exhausted' "$skipped_digest"
+
 printf 'test_digest: PASS\n'
