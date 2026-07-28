@@ -1,0 +1,14 @@
+# Copy this file to config/nightshift.conf and edit it for the local host.
+
+# NIGHTSHIFT_STATE_DIR="$REPO_ROOT/state"
+
+# Observation lanes are contiguous numbered shell command strings.
+# Lanes write proposals to "$LANE_DIR/findings.jsonl"; they never write the ledger.
+LANE_CMD_1=':'
+
+LANE_TIMEBOX_MIN=60
+NIGHT_BUDGET_TOKENS=0
+BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
+
+# Colon-separated absolute paths exposed as symlinks inside the isolated lane HOME.
+LANE_HOME_LINKS="$HOME/.codex"

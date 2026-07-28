@@ -1,3 +1,5 @@
 state/
+config/nightshift.conf
 *.log
 .DS_Store
+.omx/

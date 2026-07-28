@@ -1,0 +1,279 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+# shellcheck source=../lib/common.sh
+. "$REPO_ROOT/lib/common.sh"
+nightshift_init "$REPO_ROOT"
+
+# shellcheck source=../lib/lock.sh
+. "$REPO_ROOT/lib/lock.sh"
+# shellcheck source=../lib/ledger.sh
+. "$REPO_ROOT/lib/ledger.sh"
+# shellcheck source=../lib/budget.sh
+. "$REPO_ROOT/lib/budget.sh"
+# shellcheck source=../lib/lane-env.sh
+. "$REPO_ROOT/lib/lane-env.sh"
+# shellcheck source=../lib/digest.sh
+. "$REPO_ROOT/lib/digest.sh"
+
+usage() {
+  printf 'Usage: %s {run|digest|status}\n' "$0" >&2
+}
+
+append_event() {
+  event_type=$1
+  event_json=$(jq -n -c \
+    --arg ts "$(nightshift_iso_now)" \
+    --arg night_id "$NIGHT_ID" \
+    --arg type "$event_type" \
+    '{ts: $ts, night_id: $night_id, type: $type}')
+  ledger_append "$event_json"
+}
+
+record_skip() {
+  skip_reason=$1
+  skip_record=$(jq -n -c \
+    --arg ts "$(nightshift_iso_now)" \
+    --arg night_id "$NIGHT_ID" \
+    --arg reason "$skip_reason" \
+    '{ts: $ts, night_id: $night_id, type: "skip", reason: $reason}')
+  ledger_append "$skip_record"
+}
+
+write_run_end() {
+  run_lanes=$1
+  run_findings=$2
+  run_started_epoch=$3
+  run_wallclock=$(( $(date '+%s') - run_started_epoch ))
+  run_budget=$(budget_snapshot)
+  run_end_record=$(jq -n -c \
+    --arg ts "$(nightshift_iso_now)" \
+    --arg night_id "$NIGHT_ID" \
+    --argjson lanes_run "$run_lanes" \
+    --argjson findings_count "$run_findings" \
+    --argjson wallclock_sec "$run_wallclock" \
+    --argjson budget "$run_budget" \
+    '{
+      ts: $ts,
+      night_id: $night_id,
+      type: "run_end",
+      lanes_run: $lanes_run,
+      findings_count: $findings_count,
+      wallclock_sec: $wallclock_sec,
+      budget: $budget
+    }')
+  ledger_append "$run_end_record"
+}
+
+run_command() {
+  lock_dir="$STATE_DIR/locks/nightshift.lock"
+  if ! lock_acquire "$lock_dir"; then
+    nightshift_log INFO "Skipped: already running (lock retained for human inspection)"
+    return 0
+  fi
+  trap 'lock_release "$lock_dir" || true' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  run_started_epoch=$(date '+%s')
+  lanes_run=0
+  findings_count=0
+  append_event run_start
+  nightshift_log INFO "Run started for night $NIGHT_ID"
+
+  initial_budget_rc=0
+  budget_check || initial_budget_rc=$?
+  if [ "$initial_budget_rc" -ne 0 ]; then
+    if [ "$initial_budget_rc" -eq 2 ]; then
+      record_skip budget_exhausted
+      nightshift_log INFO "No lanes started: budget exhausted"
+    else
+      record_skip meter_error
+      nightshift_log WARN "No lanes started: budget meter error"
+    fi
+    write_run_end "$lanes_run" "$findings_count" "$run_started_epoch"
+    return 0
+  fi
+
+  lane_number=1
+  while :; do
+    lane_var="LANE_CMD_$lane_number"
+    if ! declare -p "$lane_var" >/dev/null 2>&1; then
+      break
+    fi
+    lane_command=${!lane_var}
+    if [ -z "$lane_command" ]; then
+      lane_number=$((lane_number + 1))
+      continue
+    fi
+
+    lane_budget_rc=0
+    budget_check || lane_budget_rc=$?
+    if [ "$lane_budget_rc" -ne 0 ]; then
+      if [ "$lane_budget_rc" -eq 2 ]; then
+        record_skip budget_exhausted
+        nightshift_log INFO "Stopping before lane $lane_number: budget exhausted"
+      else
+        record_skip meter_error
+        nightshift_log WARN "Stopping before lane $lane_number: budget meter error"
+      fi
+      break
+    fi
+
+    lane_name="lane_$lane_number"
+    lane_dir="$STATE_DIR/lanes/$NIGHT_ID/$lane_name"
+    mkdir -p "$lane_dir"
+    lane_start_record=$(jq -n -c \
+      --arg ts "$(nightshift_iso_now)" \
+      --arg night_id "$NIGHT_ID" \
+      --arg lane "$lane_name" \
+      '{ts: $ts, night_id: $night_id, type: "lane_start", lane: $lane}')
+    ledger_append "$lane_start_record"
+    lanes_run=$((lanes_run + 1))
+    nightshift_log INFO "Starting $lane_name"
+
+    lane_exec "$lane_dir" /bin/bash -c "$lane_command"
+    ledger_ingest_proposals "$lane_dir/findings.jsonl"
+    findings_count=$((findings_count + LEDGER_INGESTED_COUNT))
+
+    lane_end_record=$(jq -n -c \
+      --arg ts "$(nightshift_iso_now)" \
+      --arg night_id "$NIGHT_ID" \
+      --arg lane "$lane_name" \
+      --argjson exit_code "$LANE_EXIT_CODE" \
+      --argjson timed_out "$LANE_TIMED_OUT" \
+      --argjson wallclock_sec "$LANE_WALLCLOCK_SEC" \
+      --argjson findings_ingested "$LEDGER_INGESTED_COUNT" \
+      --argjson malformed_proposals "$LEDGER_SKIPPED_COUNT" \
+      '{
+        ts: $ts,
+        night_id: $night_id,
+        type: "lane_end",
+        lane: $lane,
+        exit_code: $exit_code,
+        timed_out: $timed_out,
+        wallclock_sec: $wallclock_sec,
+        findings_ingested: $findings_ingested,
+        malformed_proposals: $malformed_proposals
+      }')
+    ledger_append "$lane_end_record"
+    nightshift_log INFO "Finished $lane_name (exit=$LANE_EXIT_CODE timed_out=$LANE_TIMED_OUT findings=$LEDGER_INGESTED_COUNT)"
+    lane_number=$((lane_number + 1))
+  done
+
+  write_run_end "$lanes_run" "$findings_count" "$run_started_epoch"
+  nightshift_log INFO "Run ended (lanes=$lanes_run findings=$findings_count)"
+}
+
+digest_command() {
+  run_start_count=$(ledger_query_night "$NIGHT_ID" run_start | wc -l | tr -d ' ')
+  finding_count=$(ledger_query_night "$NIGHT_ID" finding | wc -l | tr -d ' ')
+  last_run_end=$(ledger_query_night "$NIGHT_ID" run_end | tail -n 1)
+
+  if [ -n "$last_run_end" ]; then
+    budget_block=$(printf '%s\n' "$last_run_end" | jq -c \
+      '.budget // {"status":"unavailable"}')
+    lane_stats=$(printf '%s\n' "$last_run_end" | jq -r \
+      '"lanes_run=\(.lanes_run // 0), findings=\(.findings_count // 0), wallclock_sec=\(.wallclock_sec // 0)"')
+  else
+    budget_block='{"status":"unavailable"}'
+    lane_stats='lanes_run=unknown, findings=unknown, wallclock_sec=unknown'
+  fi
+
+  if [ "$run_start_count" -eq 0 ]; then
+    digest_mode=DEAD_MAN
+    findings_block='夜番は起きなかった'
+    lane_stats='run_start=0, lanes_run=unknown, findings=unknown'
+    digest_dead_man=true
+  elif [ "$finding_count" -eq 0 ]; then
+    digest_mode=ZERO
+    findings_block='夜番は起動し、観測項目は0件でした。'
+    digest_dead_man=false
+  else
+    digest_mode=NORMAL
+    findings_block=$(ledger_query_night "$NIGHT_ID" finding | jq -r \
+      '"- " + (.symptom | gsub("[\\r\\n\\t]+"; " ")) + "（確認: " + .confirm_cost + "）"')
+    digest_dead_man=false
+  fi
+
+  generated_at=$(nightshift_iso_now)
+  digest_file="$STATE_DIR/digests/$NIGHT_ID.md"
+  if ! digest_render_template \
+    "$REPO_ROOT/templates/digest.md" \
+    "$digest_file" \
+    "$NIGHT_ID" \
+    "$generated_at" \
+    "$digest_mode" \
+    "$findings_block" \
+    "$budget_block" \
+    "$lane_stats"; then
+    nightshift_log ERROR "Failed to write digest: $digest_file"
+    return 1
+  fi
+
+  digest_record=$(jq -n -c \
+    --arg ts "$generated_at" \
+    --arg night_id "$NIGHT_ID" \
+    --arg path "$digest_file" \
+    --arg mode "$digest_mode" \
+    --argjson dead_man "$digest_dead_man" \
+    '{
+      ts: $ts,
+      night_id: $night_id,
+      type: "digest_written",
+      path: $path,
+      mode: $mode,
+      dead_man: $dead_man
+    }')
+  ledger_append "$digest_record"
+  nightshift_log INFO "Digest written: $digest_file ($digest_mode)"
+}
+
+status_command() {
+  lock_dir="$STATE_DIR/locks/nightshift.lock"
+  if [ -d "$lock_dir" ]; then
+    printf 'lock: held\n'
+    if [ -f "$lock_dir/meta" ]; then
+      sed 's/^/  /' "$lock_dir/meta"
+    fi
+  else
+    printf 'lock: free\n'
+  fi
+
+  ledger_file=$(ledger_file_path)
+  if [ -f "$ledger_file" ]; then
+    last_run_end=$(jq -c 'select(type == "object" and .type == "run_end")' "$ledger_file" | tail -n 1)
+    ledger_lines=$(wc -l < "$ledger_file" | tr -d ' ')
+  else
+    last_run_end=
+    ledger_lines=0
+  fi
+  printf 'last_run_end: %s\n' "${last_run_end:-none}"
+  printf 'ledger_lines: %s\n' "$ledger_lines"
+}
+
+if [ "$#" -ne 1 ]; then
+  usage
+  exit 2
+fi
+
+nightshift_prepare_state
+nightshift_start_logging "$1"
+
+dispatch_subcommand() {
+  case "$1" in
+    run) run_command ;;
+    digest) digest_command ;;
+    status) status_command ;;
+    *) usage; return 2 ;;
+  esac
+}
+
+dispatch_exit=0
+dispatch_subcommand "$1" || dispatch_exit=$?
+nightshift_finish_logging "$dispatch_exit"
+exit $?
