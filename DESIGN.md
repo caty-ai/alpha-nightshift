@@ -234,7 +234,7 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 
 | Phase | 対象 | 内容 | ゲート（開始条件） |
 |---|---|---|---|
-| 0 | LP | **GitHub 書き込み完全ゼロ**（観測・台帳・null digest・ダイジェスト。GOALS 案は state dir 生成→昼に Alpha が PR 化）・7夜 | 設計承認・L3 読み取り制限と予算メータ稼働 |
+| 0 | LP | **GitHub 書き込み完全ゼロ＝credential 不在で仕組み保証**（レーンのプロセス環境に GitHub credential を注入しない。照会が必要な情報はハーネスが取得してファイルで渡す。観測・台帳・null digest・ダイジェスト。GOALS 案は state dir 生成→昼に Alpha が PR 化）・7夜 | 設計承認・レーン環境に書き込み credential が存在しないことのテスト実証・予算メータ稼働 |
 | 1 | LP | L1 解禁・1-2 レーン | **enforcement build 完了**: night-bot identity＋branch protection＋gateway＋公開ゲート稼働、**5席の攻撃経路を test case 化したバイパス E2E が全 deny を実証** |
 | 2 | CatyPhone | UX 100% モードで L2-L3・focus ローテーション | Phase 1 KPI 閾値内・CatyPhone 朝予算 cap の翔さん決定 |
 | v0.1 | persona-engine | 生成レーン追加 | 様式ゲート（SFW lint）稼働 |
