@@ -68,8 +68,7 @@
           "locator": {
             "role": "link",
             "name": "始め|試す|デモ|無料|体験|start|try|demo"
-          },
-          "stopAtOutbound": true
+          }
         },
         {
           "id": "secondary-cta",
@@ -77,8 +76,7 @@
           "locator": {
             "role": "link",
             "name": "詳しく|問い合わせ|連絡|learn|contact"
-          },
-          "stopAtOutbound": true
+          }
         }
       ]
     },

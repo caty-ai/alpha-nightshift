@@ -1,6 +1,11 @@
 import { chromium } from "playwright";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  ELEMENT_TEXT_MAX_CHARS,
+  boundedText,
+  createConsoleCollector,
+} from "./capture-bounds.mjs";
 
 const VIEWPORTS = [
   { id: "mobile", width: 390, height: 844 },
@@ -81,13 +86,18 @@ async function runStep(page, step, baseOrigin) {
     return { result: "not-visible", observation: "flow step element exists but is not visible" };
   }
   const box = await locator.boundingBox().catch(() => null);
-  const elementText = (await locator.innerText().catch(() => "")).trim();
+  const rawElementText = (await locator.innerText().catch(() => "")).trim();
+  const boundedElementText = boundedText(rawElementText, ELEMENT_TEXT_MAX_CHARS);
+  const elementProjection = {
+    elementText: boundedElementText.text,
+    elementTextTruncated: boundedElementText.truncated,
+  };
 
   if (step.action === "observe") {
     return {
       result: "observed",
       observation: "flow step element is visible",
-      elementText,
+      ...elementProjection,
       box,
     };
   }
@@ -101,7 +111,7 @@ async function runStep(page, step, baseOrigin) {
           result: "outbound-not-followed",
           observation: "outbound link was detected and not followed",
           href: destination.href,
-          elementText,
+          ...elementProjection,
           box,
         };
       }
@@ -112,7 +122,7 @@ async function runStep(page, step, baseOrigin) {
       result: "clicked",
       observation: "flow step element was clicked",
       href,
-      elementText,
+      ...elementProjection,
       box,
       resultingUrl: page.url(),
     };
@@ -137,7 +147,7 @@ async function main() {
     files: {},
     steps: [],
   };
-  const consoleErrors = [];
+  const consoleCollector = createConsoleCollector();
   let sequence = 1;
   let captureFailures = 0;
   const browser = await chromium.launch({ headless: true });
@@ -148,35 +158,13 @@ async function main() {
         const context = await browser.newContext({
           viewport: { width: viewport.width, height: viewport.height },
         });
-        const page = await context.newPage();
         let activeStep = "navigation";
-        page.on("console", (message) => {
-          if (message.type() === "error") {
-            consoleErrors.push({
-              flow: flow.id,
-              step: activeStep,
-              viewport: viewport.id,
-              type: "console",
-              text: message.text(),
-              location: message.location(),
-            });
-          }
-        });
-        page.on("pageerror", (error) => {
-          consoleErrors.push({
-            flow: flow.id,
-            step: activeStep,
-            viewport: viewport.id,
-            type: "pageerror",
-            text: error.message,
-          });
-        });
-        await page.route("**/*", async (route) => {
+        await context.route("**/*", async (route) => {
           const request = route.request();
           if (request.resourceType() === "document") {
             const requested = new URL(request.url());
             if (requested.origin !== baseUrl.origin) {
-              consoleErrors.push({
+              consoleCollector.add({
                 flow: flow.id,
                 step: activeStep,
                 viewport: viewport.id,
@@ -189,7 +177,41 @@ async function main() {
           }
           await route.continue();
         });
-
+        const page = await context.newPage();
+        context.on("page", (openedPage) => {
+          if (openedPage === page) {
+            return;
+          }
+          consoleCollector.add({
+            flow: flow.id,
+            step: activeStep,
+            viewport: viewport.id,
+            type: "unexpected-popup",
+            text: openedPage.url(),
+          });
+          void openedPage.close().catch(() => {});
+        });
+        page.on("console", (message) => {
+          if (message.type() === "error") {
+            consoleCollector.add({
+              flow: flow.id,
+              step: activeStep,
+              viewport: viewport.id,
+              type: "console",
+              text: message.text(),
+              location: message.location(),
+            });
+          }
+        });
+        page.on("pageerror", (error) => {
+          consoleCollector.add({
+            flow: flow.id,
+            step: activeStep,
+            viewport: viewport.id,
+            type: "pageerror",
+            text: error.message,
+          });
+        });
         try {
           await page.goto(baseUrl.href, { waitUntil: "networkidle", timeout: 30_000 });
           await page.waitForTimeout(FIXED_WAIT_MS);
@@ -251,8 +273,17 @@ async function main() {
     await browser.close();
   }
 
+  const consoleSnapshot = consoleCollector.snapshot();
   const consoleName = "console-errors.jsonl";
-  const consoleBody = consoleErrors.map((entry) => JSON.stringify(entry)).join("\n");
+  const consoleRecords = [...consoleSnapshot.entries];
+  if (consoleSnapshot.status.dropped > 0) {
+    consoleRecords.push({
+      type: "console-errors-truncated",
+      text: `${consoleSnapshot.status.dropped} additional console records were omitted`,
+      ...consoleSnapshot.status,
+    });
+  }
+  const consoleBody = consoleRecords.map((entry) => JSON.stringify(entry)).join("\n");
   await writeFile(
     path.join(args.out, consoleName),
     consoleBody.length > 0 ? `${consoleBody}\n` : "",
@@ -262,12 +293,10 @@ async function main() {
     type: "console-errors",
     flow: "*",
     step: "*",
-    mappings: consoleErrors.map(({ flow, step, viewport }) => ({
-      flow,
-      step,
-      viewport,
-    })),
+    mappings: consoleSnapshot.mappings,
+    truncation: consoleSnapshot.status,
   };
+  manifest.consoleErrors = consoleSnapshot.status;
   await writeFile(
     path.join(args.out, "manifest.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,

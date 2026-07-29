@@ -13,7 +13,10 @@ log() {
 
 validate_port() {
   case "$METSUKE_PORT" in
-    ''|*[!0-9]*|0) log "METSUKE_PORT must be a positive integer"; return 1 ;;
+    ''|*[!0-9]*|0)
+      log "METSUKE_PORT must be a positive integer"
+      return 1
+      ;;
   esac
   [ "$METSUKE_PORT" -le 65535 ] || {
     log "METSUKE_PORT must not exceed 65535"
@@ -22,12 +25,80 @@ validate_port() {
 }
 
 server_is_alive() {
-  server_pid=$1
-  kill -0 "$server_pid" 2>/dev/null
+  local server_pid=$1
+  local process_state
+  kill -0 "$server_pid" 2>/dev/null || return 1
+  process_state=$(ps -o stat= -p "$server_pid" 2>/dev/null | tr -d ' ') || return 1
+  case "$process_state" in
+    ''|Z*) return 1 ;;
+  esac
+  return 0
+}
+
+port_is_occupied() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$METSUKE_PORT" -sTCP:LISTEN >/dev/null 2>&1
+    return
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$METSUKE_PORT" >/dev/null 2>&1
+    return
+  fi
+  curl --max-time 1 -s -o /dev/null "http://127.0.0.1:$METSUKE_PORT"
+}
+
+collect_pid_tree() {
+  local root_pid=$1
+  local process_snapshot="$LANE_DIR/.metsuke-processes.$$.txt"
+  ps -axo pid=,ppid= > "$process_snapshot"
+  awk -v root="$root_pid" '
+    {
+      pid[NR] = $1
+      parent[NR] = $2
+    }
+    END {
+      selected[root] = 1
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (row = 1; row <= NR; row += 1) {
+          if (selected[parent[row]] && !selected[pid[row]]) {
+            selected[pid[row]] = 1
+            changed = 1
+          }
+        }
+      }
+      for (row = 1; row <= NR; row += 1) {
+        if (selected[pid[row]]) {
+          print pid[row]
+        }
+      }
+    }
+  ' "$process_snapshot"
+  rm -f "$process_snapshot"
+}
+
+signal_pid_list() {
+  local signal_name=$1
+  local pid_list=$2
+  local process_pid
+  while IFS= read -r process_pid; do
+    case "$process_pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    kill "-$signal_name" "$process_pid" 2>/dev/null || true
+  done <<EOF
+$pid_list
+EOF
 }
 
 start_server() {
-  checkout=${METSUKE_LP_CHECKOUT:-}
+  local checkout=${METSUKE_LP_CHECKOUT:-}
+  local old_pid
+  local server_pid
+  local wait_ticks
+  local http_status
+
   [ -n "$checkout" ] || {
     log "METSUKE_LP_CHECKOUT is required when METSUKE_TARGET_URL is unset"
     return 1
@@ -53,17 +124,19 @@ start_server() {
         ;;
     esac
   fi
+  if port_is_occupied; then
+    log "port $METSUKE_PORT is already occupied; refusing to build or start"
+    return 1
+  fi
 
   log "building local LP in $checkout"
   (cd "$checkout" && npm run build)
 
-  set -m
   (
     cd "$checkout"
     exec npm run start -- -p "$METSUKE_PORT" -H 127.0.0.1
   ) >"$SERVER_LOG" 2>&1 &
   server_pid=$!
-  set +m
   printf '%s\n' "$server_pid" > "$PID_FILE"
   printf '%s\n' "$METSUKE_PORT" > "$PORT_FILE"
 
@@ -89,6 +162,12 @@ start_server() {
 }
 
 stop_server() {
+  local server_pid
+  local pid_tree
+  local refreshed_pid_tree
+  local stop_ticks
+  local free_ticks
+
   [ -s "$PID_FILE" ] || return 0
   server_pid=$(sed -n '1p' "$PID_FILE")
   case "$server_pid" in
@@ -102,36 +181,32 @@ stop_server() {
   fi
   validate_port
 
-  if ! kill -TERM -- "-$server_pid" 2>/dev/null; then
-    if server_is_alive "$server_pid"; then
-      kill -TERM "$server_pid" 2>/dev/null || true
-    fi
-  fi
+  pid_tree=$(collect_pid_tree "$server_pid")
+  signal_pid_list TERM "$pid_tree"
   stop_ticks=0
-  while server_is_alive "$server_pid" && [ "$stop_ticks" -lt 30 ]; do
+  while [ "$stop_ticks" -lt 30 ]; do
+    refreshed_pid_tree=$(collect_pid_tree "$server_pid")
+    pid_tree="$pid_tree
+$refreshed_pid_tree"
+    if ! server_is_alive "$server_pid"; then
+      break
+    fi
     sleep 0.1
     stop_ticks=$((stop_ticks + 1))
   done
-  # npm may exit before the server it launched. Kill the dedicated job-control
-  # process group after the grace period even when the recorded leader is gone.
-  if ! kill -KILL -- "-$server_pid" 2>/dev/null; then
-    if server_is_alive "$server_pid"; then
-      kill -KILL "$server_pid" 2>/dev/null || true
-    fi
-  fi
+  signal_pid_list KILL "$pid_tree"
 
   free_ticks=0
   while [ "$free_ticks" -lt 50 ]; do
-    if ! curl --max-time 1 -s -o /dev/null \
-      "http://127.0.0.1:$METSUKE_PORT"; then
+    if ! port_is_occupied; then
       rm -f "$PID_FILE" "$PORT_FILE"
-      log "stopped and verified port $METSUKE_PORT is free"
+      log "stopped server tree and verified port $METSUKE_PORT is free"
       return 0
     fi
     sleep 0.1
     free_ticks=$((free_ticks + 1))
   done
-  log "port $METSUKE_PORT still accepts connections after server stop"
+  log "port $METSUKE_PORT is still occupied after server stop"
   return 1
 }
 
