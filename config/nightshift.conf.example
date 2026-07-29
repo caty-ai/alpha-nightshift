@@ -13,7 +13,20 @@ NIGHT_BUDGET_TOKENS=0
 BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 
 # Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
-# isolated lane HOME. Lanes that need Codex auth must opt in explicitly.
+# isolated lane HOME. Metsuke requires the Codex auth/config directory below.
 # Sensitive basenames such as .ssh, .config, .git-credentials, .netrc, .aws,
 # .gnupg, and .config/gh are refused even when configured.
-LANE_HOME_LINKS=''
+# This retains Codex authentication while lane-env writes a credential-neutral
+# Git configuration and exposes no GitHub CLI credentials.
+LANE_HOME_LINKS="$HOME/.codex"
+
+# Metsuke UX observation lane. These values are embedded in LANE_CMD_1 because
+# lane_exec intentionally starts with env -i and does not inherit config vars.
+# Paths are operator-controlled shell config and must not contain single quotes.
+METSUKE_TARGET_URL=''
+METSUKE_LP_CHECKOUT='/absolute/path/to/caty-talk-LP'
+METSUKE_PORT=4173
+METSUKE_PERSONAS='beginner expert impatient'
+PLAYWRIGHT_BROWSERS_PATH_REAL='/absolute/path/to/ms-playwright'
+METSUKE_CODEX_BIN='codex'
+# LANE_CMD_1="METSUKE_TARGET_URL='$METSUKE_TARGET_URL' METSUKE_LP_CHECKOUT='$METSUKE_LP_CHECKOUT' METSUKE_PORT='$METSUKE_PORT' METSUKE_PERSONAS='$METSUKE_PERSONAS' PLAYWRIGHT_BROWSERS_PATH_REAL='$PLAYWRIGHT_BROWSERS_PATH_REAL' METSUKE_CODEX_BIN='$METSUKE_CODEX_BIN' /bin/bash '$REPO_ROOT/lanes/metsuke/run.sh'"

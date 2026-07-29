@@ -1,0 +1,105 @@
+{
+  "flows": [
+    {
+      "id": "land-on-hero",
+      "steps": [
+        {
+          "id": "hero-visible",
+          "action": "observe",
+          "locator": {
+            "role": "heading",
+            "name": ".+"
+          }
+        },
+        {
+          "id": "primary-cta-visible",
+          "action": "observe",
+          "locator": {
+            "role": "link",
+            "name": "始め|試す|デモ|詳しく|無料|体験|start|try|demo|learn"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scroll-full-page",
+      "steps": [
+        {
+          "id": "scroll-to-bottom",
+          "action": "scroll-full-page"
+        }
+      ]
+    },
+    {
+      "id": "nav-anchor-links",
+      "steps": [
+        {
+          "id": "features-anchor",
+          "action": "click",
+          "locator": {
+            "role": "link",
+            "name": "機能|特徴|できること|feature"
+          }
+        },
+        {
+          "id": "how-it-works-anchor",
+          "action": "click",
+          "locator": {
+            "role": "link",
+            "name": "使い方|仕組み|利用方法|how"
+          }
+        },
+        {
+          "id": "faq-anchor",
+          "action": "click",
+          "locator": {
+            "role": "link",
+            "name": "よくある質問|質問|FAQ"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cta-click-paths",
+      "steps": [
+        {
+          "id": "primary-cta",
+          "action": "click",
+          "locator": {
+            "role": "link",
+            "name": "始め|試す|デモ|無料|体験|start|try|demo"
+          }
+        },
+        {
+          "id": "secondary-cta",
+          "action": "click",
+          "locator": {
+            "role": "link",
+            "name": "詳しく|問い合わせ|連絡|learn|contact"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mobile-menu",
+      "steps": [
+        {
+          "id": "menu-trigger",
+          "action": "click",
+          "locator": {
+            "role": "button",
+            "name": "メニュー|ナビゲーション|menu|navigation"
+          }
+        },
+        {
+          "id": "menu-link-visible",
+          "action": "observe",
+          "locator": {
+            "role": "link",
+            "name": ".+"
+          }
+        }
+      ]
+    }
+  ]
+}
