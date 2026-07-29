@@ -179,18 +179,12 @@ ledger_project_findings() {
         (.declared_files | type == "array" and all(.[]; safe_relative_path)));
     def transition_allowed($from; $to; $actor):
       ($from == "open" and
-        ($to == "adopted" or $to == "fixed" or $to == "rejected" or
-          $to == "deferred")) or
-      ($from == "adopted" and
-        ($to == "fixed" or $to == "rejected" or $to == "deferred")) or
-      ($from == "deferred" and
         ($to == "adopted" or $to == "fixed" or $to == "rejected")) or
+      ($from == "adopted" and
+        ($to == "fixed" or $to == "rejected")) or
       ($from == "rejected" and $to == "adopted" and
         $actor != $night_bot_login) or
-      ($from == "fixed" and $to == "regression") or
-      ($from == "regression" and
-        ($to == "adopted" or $to == "fixed" or $to == "rejected" or
-          $to == "deferred"));
+      ($from == "fixed" and $to == "regression");
 
     reduce .[] as $record (
       {findings: {}, verdict_ids: {}, error: null};

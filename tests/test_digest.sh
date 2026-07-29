@@ -91,7 +91,7 @@ seed_record "$normal_state" "$(jq -n -c --arg night "$NIGHT_ID" \
 seed_record "$normal_state" "$(jq -n -c --arg night "$NIGHT_ID" \
   '{ts:"x", night_id:$night, type:"finding", id:"f4", repo:"r", target:"d", symptom:"rejected symptom", kind:"Bug", status:"open", confirm_cost:"1分", date:$night}')"
 seed_record "$normal_state" "$(jq -n -c --arg night "$NIGHT_ID" \
-  '{ts:"x", night_id:$night, type:"finding", id:"f5", repo:"r", target:"e", symptom:"deferred symptom", kind:"Bug", status:"open", confirm_cost:"1分", date:$night}')"
+  '{ts:"x", night_id:$night, type:"finding", id:"f5", repo:"r", target:"e", symptom:"another open symptom", kind:"Bug", status:"open", confirm_cost:"1分", date:$night}')"
 seed_record "$normal_state" "$(jq -n -c --arg night "$NIGHT_ID" \
   '{ts:"x", night_id:$night, type:"finding", id:"f6", repo:"r", target:"f", symptom:"regression symptom", kind:"Bug", status:"open", confirm_cost:"1分", date:$night, evidence:["evidence/regression.png"]}')"
 seed_record "$normal_state" \
@@ -100,8 +100,6 @@ seed_record "$normal_state" \
   '{"type":"verdict","verdict_id":"v-f3","ts":"2026-07-29T01:00:00Z","finding_id":"f3","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:f3","observed_at":"2026-07-29T01:00:01Z"}'
 seed_record "$normal_state" \
   '{"type":"verdict","verdict_id":"v-f4","ts":"2026-07-29T01:00:00Z","finding_id":"f4","status":"rejected","actor":"human","source":"manual-comment","source_ref":"c:f4","observed_at":"2026-07-29T01:00:02Z","rejection_reason":"not appropriate"}'
-seed_record "$normal_state" \
-  '{"type":"verdict","verdict_id":"v-f5","ts":"2026-07-29T01:00:00Z","finding_id":"f5","status":"deferred","actor":"human","source":"manual-comment","source_ref":"c:f5","observed_at":"2026-07-29T01:00:03Z"}'
 seed_record "$normal_state" \
   '{"type":"verdict","verdict_id":"v-f6-fixed","ts":"2026-07-29T01:00:00Z","finding_id":"f6","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:f6-fixed","observed_at":"2026-07-29T01:00:04Z"}'
 seed_record "$normal_state" \
@@ -114,17 +112,17 @@ assert_file_exists "$normal_digest"
 assert_contains NORMAL "$normal_digest"
 assert_contains 'first symptom（確認: 即断）' "$normal_digest"
 assert_contains 'second symptom（確認: 3分）' "$normal_digest"
+assert_contains 'another open symptom（確認: 1分）' "$normal_digest"
 assert_contains '[regression] regression symptom' "$normal_digest"
 assert_not_contains 'fixed symptom' "$normal_digest"
 assert_not_contains 'rejected symptom' "$normal_digest"
-assert_not_contains 'deferred symptom' "$normal_digest"
 assert_contains 'total: 6' "$normal_digest"
-assert_contains 'open: 1' "$normal_digest"
+assert_contains 'open: 2' "$normal_digest"
 assert_contains 'adopted: 1' "$normal_digest"
 assert_contains 'fixed: 1' "$normal_digest"
 assert_contains 'rejected: 1' "$normal_digest"
 assert_contains 'regression: 1' "$normal_digest"
-assert_contains 'deferred: 1' "$normal_digest"
+assert_contains 'deferred: 0' "$normal_digest"
 assert_contains 'decision_rate: 3/6' "$normal_digest"
 assert_contains 'completion_rate: 1/6' "$normal_digest"
 assert_contains 'rejection_rate: 1/3' "$normal_digest"

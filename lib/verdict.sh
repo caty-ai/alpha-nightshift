@@ -170,6 +170,13 @@ verdict_github_labels() {
   '
 }
 
+verdict_github_page_is_complete() {
+  verdict_page_file=$1
+  jq -e '
+    type == "array" and length < 100
+  ' "$verdict_page_file" >/dev/null 2>&1
+}
+
 verdict_github_label_decision() {
   verdict_label_events_file=$1
   verdict_label_name=$2
@@ -178,6 +185,7 @@ verdict_github_label_decision() {
   verdict_resource_number=$5
   verdict_status=$6
 
+  verdict_github_page_is_complete "$verdict_label_events_file" || return 1
   jq -e -S -c \
     --arg label "$verdict_label_name" \
     --arg repo "$verdict_repo" \
@@ -232,6 +240,7 @@ verdict_github_rejection_marker() {
   verdict_resource_kind=$4
   verdict_resource_number=$5
 
+  verdict_github_page_is_complete "$verdict_comments_file" || return 1
   jq -e -S -c \
     --arg finding_id "$verdict_finding_id" \
     --arg repo "$verdict_repo" \
@@ -317,7 +326,8 @@ verdict_github_issue_decision() {
   verdict_has_ready=$(printf '%s\n' "$verdict_labels" |
     jq -r 'index("night:ready") != null')
 
-  if [ "$verdict_has_done" = true ] && [ "$verdict_has_rejected" = true ]; then
+  if [ "$verdict_has_rejected" = true ] &&
+    { [ "$verdict_has_done" = true ] || [ "$verdict_has_ready" = true ]; }; then
     return 1
   fi
   if [ "$verdict_has_done" = true ] || [ "$verdict_has_ready" = true ]; then
@@ -373,7 +383,10 @@ verdict_github_pr_decision() {
     jq -r 'index("night:done") != null')
   verdict_has_rejected=$(printf '%s\n' "$verdict_labels" |
     jq -r 'index("night:rejected") != null')
-  if [ "$verdict_has_done" = true ] && [ "$verdict_has_rejected" = true ]; then
+  verdict_has_ready=$(printf '%s\n' "$verdict_labels" |
+    jq -r 'index("night:ready") != null')
+  if [ "$verdict_has_rejected" = true ] &&
+    { [ "$verdict_has_done" = true ] || [ "$verdict_has_ready" = true ]; }; then
     return 1
   fi
 
@@ -494,19 +507,48 @@ verdict_choose_github_decision() {
   [ "$verdict_candidate_count" -gt 0 ] || return 1
 
   jq -e -S -c -s '
-    def rank:
-      if .status == "fixed" then 3
-      elif .status == "rejected" then 2
-      elif .status == "adopted" then 1
-      else 0
-      end;
-    if (
-      (map(select(.status == "fixed")) | length) > 0 and
-      (map(select(.status == "rejected")) | length) > 0
-    ) then
-      error("conflicting terminal decisions")
+    def nonempty_string:
+      type == "string" and length > 0;
+    def utc_timestamp:
+      . as $timestamp |
+      type == "string" and
+      test("^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$") and
+      ((try (fromdateiso8601 | strftime("%Y-%m-%dT%H:%M:%SZ"))
+        catch null) == $timestamp);
+    def candidate_valid:
+      type == "object" and
+      ((keys_unsorted - [
+        "status", "actor", "source", "source_ref", "observed_at",
+        "rejection_reason", "candidate_sha"
+      ]) | length == 0) and
+      (.status == "adopted" or .status == "fixed" or
+        .status == "rejected") and
+      (.actor | nonempty_string) and
+      .source == "github" and
+      (.source_ref | nonempty_string) and
+      (.observed_at | utc_timestamp) and
+      (if .status == "rejected" then
+        (.rejection_reason | nonempty_string)
+      else
+        (has("rejection_reason") | not)
+      end) and
+      ((has("candidate_sha") | not) or
+        (.candidate_sha |
+          type == "string" and test("^[0-9a-f]{40}$")));
+    unique as $candidates |
+    ($candidates | map(.status) | unique) as $statuses |
+    if ($candidates | all(.[]; candidate_valid) | not) then
+      error("malformed decision candidate")
+    elif ($statuses | length) != 1 then
+      error("conflicting candidate statuses")
     else
-      sort_by(rank, .source_ref) | .[-1]
+      ($candidates | map(.observed_at) | max) as $newest |
+      ($candidates | map(select(.observed_at == $newest))) as $newest_candidates |
+      if ($newest_candidates | length) != 1 then
+        error("ambiguous newest candidate time")
+      else
+        $newest_candidates[0]
+      end
     end
   ' "$verdict_candidates_file"
 }

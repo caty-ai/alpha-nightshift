@@ -63,6 +63,7 @@ run_github() {
   verdict_log=$4
   FAKE_GH_SCENARIO="$verdict_scenario" \
     FAKE_GH_LOG="$verdict_log" \
+    FAKE_GH_FIXTURE_DIR="$TEST_TMP" \
     NIGHTSHIFT_CONFIG="$verdict_config" \
     /bin/bash "$ROOT/bin/verdict-sync" --github-links "$verdict_links" \
     >/dev/null
@@ -307,6 +308,41 @@ run_manual "$append_config" "$append_input" || append_rc=$?
   fail "append failure produced a success-looking draft"
 chmod u+w "$append_state/ledger" "$append_state/ledger/ledger.jsonl"
 
+jq -n -c '
+  [
+    range(0; 100) as $index |
+    {
+      id: (3100 + $index),
+      body: ({
+        schema: "alpha-nightshift/verdict-marker/v1",
+        finding_id: "gh-finding",
+        status: "rejected",
+        rejection_reason: ("human reason " + ($index | tostring))
+      } | tojson),
+      user: {login: "human", type: "User"},
+      created_at: (
+        1785297600 + ($index * 60) |
+        strftime("%Y-%m-%dT%H:%M:%SZ")
+      )
+    }
+  ]
+' > "$TEST_TMP/pagination-comments.json"
+jq -n -c '
+  [
+    range(0; 100) as $index |
+    {
+      id: (3200 + $index),
+      event: "labeled",
+      label: {name: "night:ready"},
+      actor: {login: "triager"},
+      created_at: (
+        1785297600 + ($index * 60) |
+        strftime("%Y-%m-%dT%H:%M:%SZ")
+      )
+    }
+  ]
+' > "$TEST_TMP/pagination-events.json"
+
 fake_gh="$TEST_TMP/fake-gh"
 printf '%s\n' \
   '#!/bin/bash' \
@@ -335,6 +371,36 @@ printf '%s\n' \
   "    printf '%s\\n' '{\"state\":\"closed\",\"labels\":[{\"name\":\"night:done\"}]}' ;;" \
   '  done-label:repos/demo/repo/issues/22/events?per_page=100)' \
   "    printf '%s\\n' '[{\"id\":2201,\"event\":\"labeled\",\"label\":{\"name\":\"night:done\"},\"actor\":{\"login\":\"triager\"},\"created_at\":\"2026-07-29T05:01:00Z\"}]' ;;" \
+  '  pagination-comments:repos/demo/repo/pulls/31)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"merged\":false,\"merged_at\":null,\"merged_by\":null,\"labels\":[{\"name\":\"night:rejected\"}],\"html_url\":\"https://example/pr/31\",\"user\":{\"login\":\"author\"},\"created_at\":\"2026-07-29T03:00:00Z\",\"head\":{\"sha\":null}}' ;;" \
+  '  pagination-comments:repos/demo/repo/issues/31/comments?per_page=100)' \
+  '    command cat "$FAKE_GH_FIXTURE_DIR/pagination-comments.json" ;;' \
+  '  pagination-events:repos/demo/repo/issues/32)' \
+  "    printf '%s\\n' '{\"state\":\"open\",\"labels\":[{\"name\":\"night:ready\"}]}' ;;" \
+  '  pagination-events:repos/demo/repo/issues/32/events?per_page=100)' \
+  '    command cat "$FAKE_GH_FIXTURE_DIR/pagination-events.json" ;;' \
+  '  ready-rejected:repos/demo/repo/issues/33)' \
+  "    printf '%s\\n' '{\"state\":\"open\",\"labels\":[{\"name\":\"night:ready\"},{\"name\":\"night:rejected\"}]}' ;;" \
+  '  issue-pr-conflict:repos/demo/repo/issues/34)' \
+  "    printf '%s\\n' '{\"state\":\"open\",\"labels\":[{\"name\":\"night:ready\"}]}' ;;" \
+  '  issue-pr-conflict:repos/demo/repo/issues/34/events?per_page=100)' \
+  "    printf '%s\\n' '[{\"id\":3401,\"event\":\"labeled\",\"label\":{\"name\":\"night:ready\"},\"actor\":{\"login\":\"triager\"},\"created_at\":\"2026-07-29T04:00:00Z\"}]' ;;" \
+  '  issue-pr-conflict:repos/demo/repo/pulls/35)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"merged\":false,\"merged_at\":null,\"merged_by\":null,\"labels\":[{\"name\":\"night:rejected\"}],\"html_url\":\"https://example/pr/35\",\"user\":{\"login\":\"author\"},\"created_at\":\"2026-07-29T03:00:00Z\",\"head\":{\"sha\":null}}' ;;" \
+  '  issue-pr-conflict:repos/demo/repo/issues/35/comments?per_page=100)' \
+  "    printf '%s\\n' '[{\"id\":3501,\"body\":\"{\\\"schema\\\":\\\"alpha-nightshift/verdict-marker/v1\\\",\\\"finding_id\\\":\\\"gh-finding\\\",\\\"status\\\":\\\"rejected\\\",\\\"rejection_reason\\\":\\\"human reason\\\"}\",\"user\":{\"login\":\"human\",\"type\":\"User\"},\"created_at\":\"2026-07-29T05:00:00Z\"}]' ;;" \
+  '  newer-fixed:repos/demo/repo/issues/36)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"labels\":[{\"name\":\"night:done\"}]}' ;;" \
+  '  newer-fixed:repos/demo/repo/issues/36/events?per_page=100)' \
+  "    printf '%s\\n' '[{\"id\":3601,\"event\":\"labeled\",\"label\":{\"name\":\"night:done\"},\"actor\":{\"login\":\"triager\"},\"created_at\":\"2026-07-29T06:00:00Z\"}]' ;;" \
+  '  newer-fixed:repos/demo/repo/pulls/37)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"merged\":true,\"merged_at\":\"2026-07-29T04:00:00Z\",\"merged_by\":{\"login\":\"merger\"},\"labels\":[],\"html_url\":\"https://example/pr/37\",\"user\":{\"login\":\"author\"},\"created_at\":\"2026-07-29T03:00:00Z\",\"head\":{\"sha\":null}}' ;;" \
+  '  equal-fixed:repos/demo/repo/issues/38)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"labels\":[{\"name\":\"night:done\"}]}' ;;" \
+  '  equal-fixed:repos/demo/repo/issues/38/events?per_page=100)' \
+  "    printf '%s\\n' '[{\"id\":3801,\"event\":\"labeled\",\"label\":{\"name\":\"night:done\"},\"actor\":{\"login\":\"triager\"},\"created_at\":\"2026-07-29T04:00:00Z\"}]' ;;" \
+  '  equal-fixed:repos/demo/repo/pulls/39)' \
+  "    printf '%s\\n' '{\"state\":\"closed\",\"merged\":true,\"merged_at\":\"2026-07-29T04:00:00Z\",\"merged_by\":{\"login\":\"merger\"},\"labels\":[],\"html_url\":\"https://example/pr/39\",\"user\":{\"login\":\"author\"},\"created_at\":\"2026-07-29T03:00:00Z\",\"head\":{\"sha\":null}}' ;;" \
   '  malformed:*) printf "%s\n" "{broken" ;;' \
   '  api-failure:*) exit 42 ;;' \
   '  *) exit 92 ;;' \
@@ -409,18 +475,16 @@ assert_github_issue_case() {
 assert_github_issue_case ready-label 21 adopted
 assert_github_issue_case done-label 22 fixed
 
-assert_github_failure() {
+assert_github_link_failure() {
   github_name=$1
-  github_pr=$2
+  github_link=$2
   github_state="$TEST_TMP/github-$github_name-state"
   github_config="$TEST_TMP/github-$github_name.conf"
   github_links="$TEST_TMP/github-$github_name.jsonl"
   github_log="$TEST_TMP/github-$github_name.log"
   write_config "$github_config" "$github_state" "$fake_gh"
   seed_finding "$github_state" gh-finding
-  jq -n -c --argjson pr "$github_pr" \
-    '{finding_id:"gh-finding",repo_full_name:"demo/repo",pr:$pr}' \
-    > "$github_links"
+  printf '%s\n' "$github_link" > "$github_links"
   github_before=$(cksum "$github_state/ledger/ledger.jsonl")
   github_rc=0
   run_github "$github_config" "$github_links" "$github_name" "$github_log" ||
@@ -433,9 +497,48 @@ assert_github_failure() {
     fail "GitHub $github_name published a draft"
 }
 
+assert_github_failure() {
+  github_name=$1
+  github_pr=$2
+  github_link=$(jq -n -c --argjson pr "$github_pr" \
+    '{finding_id:"gh-finding",repo_full_name:"demo/repo",pr:$pr}')
+  assert_github_link_failure "$github_name" "$github_link"
+}
+
 assert_github_failure missing-reason 13
 assert_github_failure conflict 14
 assert_github_failure malformed 15
 assert_github_failure api-failure 16
+assert_github_link_failure pagination-comments \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","pr":31}'
+assert_github_link_failure pagination-events \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","issue":32}'
+assert_github_link_failure ready-rejected \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","issue":33}'
+assert_github_link_failure issue-pr-conflict \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","issue":34,"pr":35}'
+assert_github_link_failure equal-fixed \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","issue":38,"pr":39}'
+
+newer_state="$TEST_TMP/github-newer-fixed-state"
+newer_config="$TEST_TMP/github-newer-fixed.conf"
+newer_links="$TEST_TMP/github-newer-fixed.jsonl"
+newer_log="$TEST_TMP/github-newer-fixed.log"
+write_config "$newer_config" "$newer_state" "$fake_gh"
+seed_finding "$newer_state" gh-finding
+printf '%s\n' \
+  '{"finding_id":"gh-finding","repo_full_name":"demo/repo","issue":36,"pr":37}' \
+  > "$newer_links"
+run_github "$newer_config" "$newer_links" newer-fixed "$newer_log"
+jq -e '
+  select(
+    .type == "verdict" and
+    .finding_id == "gh-finding" and
+    .status == "fixed" and
+    .source_ref == "github:demo/repo:issue:36:label-event:3601" and
+    .observed_at == "2026-07-29T06:00:00Z"
+  )
+' "$newer_state/ledger/ledger.jsonl" >/dev/null ||
+  fail "newer same-status GitHub observation was not selected"
 
 printf 'test_verdict_sync: PASS\n'

@@ -116,6 +116,11 @@ gh api --method GET repos/OWNER/REPO/issues/NUMBER/comments?per_page=100
 ```
 
 It does not create, edit, label, close, comment on, or merge GitHub resources.
+An events or comments response containing 100 items is treated as potentially
+truncated and fails the complete invocation. Conflicting decision labels also
+fail closed. When a link supplies both issue and PR observations, their
+inferred statuses must agree; the unique newest UTC observation is selected,
+and an equal-time tie between distinct candidates is rejected.
 An unmerged closed PR or `night:rejected` label is accepted only with a human
 comment whose entire body parses as this exact versioned JSON object (no extra
 keys):

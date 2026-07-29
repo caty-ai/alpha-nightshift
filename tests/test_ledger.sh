@@ -117,4 +117,29 @@ projected=$(ledger_project_findings)
   "$(printf '%s\n' "$projected" | jq -r '.id' | sort)" ] ||
   fail "current findings were not returned deterministically"
 
+ledger_append '{
+  "type": "verdict",
+  "verdict_id": "projection-fixed",
+  "ts": "2026-07-29T03:01:00Z",
+  "finding_id": "f-2",
+  "status": "fixed",
+  "actor": "human",
+  "source": "manual-comment",
+  "source_ref": "comment:fixed",
+  "observed_at": "2026-07-29T02:01:00Z"
+}'
+ledger_append '{
+  "type": "verdict",
+  "verdict_id": "projection-regression",
+  "ts": "2026-07-29T03:02:00Z",
+  "finding_id": "f-2",
+  "status": "regression",
+  "actor": "observer",
+  "source": "manual-comment",
+  "source_ref": "observation:regression",
+  "observed_at": "2026-07-29T02:02:00Z"
+}'
+[ "$(ledger_get_current_finding f-2 | jq -r '.current_status')" = regression ] ||
+  fail "projection rejected the documented fixed-to-regression edge"
+
 printf 'test_ledger: PASS\n'
