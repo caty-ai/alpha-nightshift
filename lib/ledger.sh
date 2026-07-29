@@ -82,7 +82,20 @@ ledger_ingest_proposals() {
         (.kind | type == "string" and length > 0) and
         (.confirm_cost | type == "string" and
           (. == "即断" or . == "1分" or . == "3分")) and
-        (.date | type == "string" and length > 0)
+        (.date | type == "string" and length > 0) and
+        ((has("interpretation") | not) or
+          (.interpretation | type == "string")) and
+        ((has("persona") | not) or
+          (.persona | type == "string")) and
+        ((has("evidence") | not) or
+          (.evidence | type == "array" and all(.[];
+            type == "string" and
+            length > 0 and
+            (startswith("/") | not) and
+            (startswith("//") | not) and
+            (test("^[A-Za-z][A-Za-z0-9+.-]*:") | not) and
+            (test("(^|/)\\.\\.?(?:/|$)") | not)
+          )))
       )
       | {
           id: .id,
@@ -93,6 +106,15 @@ ledger_ingest_proposals() {
           confirm_cost: .confirm_cost,
           date: .date
         }
+        + (if has("interpretation") then
+            {interpretation: .interpretation}
+          else {} end)
+        + (if has("persona") then
+            {persona: .persona}
+          else {} end)
+        + (if has("evidence") then
+            {evidence: .evidence}
+          else {} end)
     ' 2>/dev/null); then
       LEDGER_SKIPPED_COUNT=$((LEDGER_SKIPPED_COUNT + 1))
       nightshift_log WARN "Skipping malformed finding proposal in $proposal_file"

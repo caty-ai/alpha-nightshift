@@ -37,27 +37,51 @@ query_output=$(ledger_query_night 2026-07-28 run_start)
 
 proposal="$TEST_TMP/findings.jsonl"
 printf '%s\n' \
-  '{"id":"f-1","repo":"demo","target":"screen","symptom":"button is hidden","kind":"UX","status":"rejected","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"f-1","repo":"demo","target":"screen","symptom":"button is hidden","interpretation":"a beginner cannot discover the action","persona":"beginner","evidence":["evidence/01-hero-mobile.png","evidence/01-hero-mobile.txt"],"kind":"UX","status":"rejected","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"f-2","repo":"demo","target":"footer","symptom":"legal link is visible","kind":"UX","confirm_cost":"即断","date":"2026-07-28"}' \
   '{malformed' \
   '{"id":"","repo":"demo","target":"screen","symptom":"bad schema","kind":"UX","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"bad-interpretation","repo":"demo","target":"screen","symptom":"bad schema","interpretation":[],"kind":"UX","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"bad-persona","repo":"demo","target":"screen","symptom":"bad schema","persona":42,"kind":"UX","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"bad-evidence-type","repo":"demo","target":"screen","symptom":"bad schema","evidence":"shot.png","kind":"UX","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"id":"bad-evidence-path","repo":"demo","target":"screen","symptom":"bad schema","evidence":["../shot.png"],"kind":"UX","confirm_cost":"1分","date":"2026-07-28"}' \
   > "$proposal"
 
 ledger_ingest_proposals "$proposal"
-[ "$LEDGER_INGESTED_COUNT" -eq 1 ] || fail "valid proposal was not ingested"
-[ "$LEDGER_SKIPPED_COUNT" -eq 2 ] || fail "malformed proposals were not skipped"
+[ "$LEDGER_INGESTED_COUNT" -eq 2 ] || fail "valid proposals were not ingested"
+[ "$LEDGER_SKIPPED_COUNT" -eq 6 ] || fail "malformed proposals were not skipped"
 [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] || fail "first proposal ingest reported duplicates"
-finding=$(ledger_query_night 2026-07-28 finding)
+finding=$(ledger_query_night 2026-07-28 finding | jq -c 'select(.id == "f-1")')
 [ "$(printf '%s\n' "$finding" | jq -r '.status')" = open ] ||
   fail "dispatcher did not force finding status to open"
 [ "$(printf '%s\n' "$finding" | jq -r '.symptom')" = "button is hidden" ] ||
   fail "finding fields were not retained"
+[ "$(printf '%s\n' "$finding" | jq -r '.interpretation')" = \
+  "a beginner cannot discover the action" ] ||
+  fail "optional interpretation was not retained"
+[ "$(printf '%s\n' "$finding" | jq -r '.persona')" = beginner ] ||
+  fail "optional persona was not retained"
+[ "$(printf '%s\n' "$finding" | jq -c '.evidence')" = \
+  '["evidence/01-hero-mobile.png","evidence/01-hero-mobile.txt"]' ] ||
+  fail "optional evidence was not retained"
+without_optional=$(
+  ledger_query_night 2026-07-28 finding |
+    jq -c 'select(.id == "f-2")'
+)
+printf '%s\n' "$without_optional" |
+  jq -e '
+    has("interpretation") == false and
+    has("persona") == false and
+    has("evidence") == false
+  ' >/dev/null ||
+  fail "absent optional fields were not omitted"
 
 first_ingested=$LEDGER_INGESTED_COUNT
 ledger_ingest_proposals "$proposal"
 [ "$LEDGER_INGESTED_COUNT" -eq 0 ] || fail "duplicate proposal was ingested twice"
 [ "$LEDGER_DUPLICATE_COUNT" -eq "$first_ingested" ] ||
   fail "duplicate proposal count did not match the first ingest"
-[ "$LEDGER_SKIPPED_COUNT" -eq 2 ] ||
+[ "$LEDGER_SKIPPED_COUNT" -eq 6 ] ||
   fail "malformed proposal count changed during duplicate ingest"
 
 printf 'test_ledger: PASS\n'
