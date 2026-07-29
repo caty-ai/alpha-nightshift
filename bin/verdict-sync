@@ -1,0 +1,150 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+# shellcheck source=../lib/common.sh
+. "$REPO_ROOT/lib/common.sh"
+nightshift_init "$REPO_ROOT"
+
+# shellcheck source=../lib/lock.sh
+. "$REPO_ROOT/lib/lock.sh"
+# shellcheck source=../lib/ledger.sh
+. "$REPO_ROOT/lib/ledger.sh"
+# shellcheck source=../lib/verdict.sh
+. "$REPO_ROOT/lib/verdict.sh"
+
+usage() {
+  printf 'Usage: %s {--input|--github-links} /absolute/path/to/file.jsonl\n' \
+    "$0" >&2
+}
+
+if [ "$#" -ne 2 ]; then
+  usage
+  exit 2
+fi
+case "$1" in
+  --input|--github-links) verdict_mode=$1 ;;
+  *) usage; exit 2 ;;
+esac
+verdict_source_file=$2
+if ! verdict_require_absolute_file "$verdict_source_file"; then
+  printf 'verdict-sync requires a readable absolute file path\n' >&2
+  exit 2
+fi
+
+NIGHT_BOT_LOGIN=${NIGHT_BOT_LOGIN:-night-bot}
+VERDICT_GH_BIN=${VERDICT_GH_BIN:-gh}
+[ -n "$NIGHT_BOT_LOGIN" ] || {
+  printf 'NIGHT_BOT_LOGIN must be non-empty\n' >&2
+  exit 2
+}
+[ -n "$VERDICT_GH_BIN" ] || {
+  printf 'VERDICT_GH_BIN must be non-empty\n' >&2
+  exit 2
+}
+
+nightshift_prepare_state
+lock_dir="$STATE_DIR/locks/nightshift.lock"
+lock_rc=0
+lock_acquire "$lock_dir" || lock_rc=$?
+if [ "$lock_rc" -ne 0 ]; then
+  printf 'verdict-sync could not acquire the nightshift lock\n' >&2
+  exit 1
+fi
+
+VERDICT_SYNC_WORK_DIR=
+verdict_cleanup() {
+  if [ -n "$VERDICT_SYNC_WORK_DIR" ] &&
+    [ -d "$VERDICT_SYNC_WORK_DIR" ]; then
+    rm -rf "$VERDICT_SYNC_WORK_DIR" || true
+  fi
+  lock_release "$lock_dir" || true
+}
+trap verdict_cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if ! VERDICT_SYNC_WORK_DIR=$(mktemp -d \
+  "$STATE_DIR/.verdict-sync.XXXXXX"); then
+  printf 'verdict-sync could not create its staging directory\n' >&2
+  exit 1
+fi
+decisions_file="$VERDICT_SYNC_WORK_DIR/decisions.jsonl"
+seen_file="$VERDICT_SYNC_WORK_DIR/seen-findings"
+current_before_file="$VERDICT_SYNC_WORK_DIR/current-before.jsonl"
+events_file="$VERDICT_SYNC_WORK_DIR/events.jsonl"
+draft_queue="$VERDICT_SYNC_WORK_DIR/draft-queue.jsonl"
+event_ids_file="$VERDICT_SYNC_WORK_DIR/event-ids"
+current_after_file="$VERDICT_SYNC_WORK_DIR/current-after.jsonl"
+completion_template="$REPO_ROOT/templates/completion-record.md"
+
+[ -f "$completion_template" ] && [ -r "$completion_template" ] || {
+  printf 'completion-record template is unavailable\n' >&2
+  exit 1
+}
+
+case "$verdict_mode" in
+  --input)
+    if ! verdict_stage_manual_source \
+      "$verdict_source_file" "$decisions_file" "$seen_file"; then
+      printf 'manual decision snapshot is malformed or ambiguous\n' >&2
+      exit 1
+    fi
+    ;;
+  --github-links)
+    if ! verdict_stage_github_source \
+      "$verdict_source_file" \
+      "$decisions_file" \
+      "$seen_file" \
+      "$VERDICT_SYNC_WORK_DIR"; then
+      printf 'GitHub decision inspection failed closed\n' >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if ! ledger_project_findings > "$current_before_file"; then
+  printf 'ledger history is malformed or ambiguous\n' >&2
+  exit 1
+fi
+if ! verdict_stage_events \
+  "$decisions_file" \
+  "$current_before_file" \
+  "$events_file" \
+  "$draft_queue" \
+  "$event_ids_file"; then
+  printf 'decision batch contains an unknown, stale, or illegal verdict\n' >&2
+  exit 1
+fi
+
+verdict_appended_count=0
+if [ -s "$events_file" ]; then
+  if ! ledger_append_batch "$events_file"; then
+    printf 'verdict ledger append failed\n' >&2
+    exit 1
+  fi
+  verdict_appended_count=$(wc -l < "$events_file" | tr -d ' ')
+fi
+
+if ! ledger_project_findings > "$current_after_file"; then
+  printf 'ledger projection failed after verdict append\n' >&2
+  exit 1
+fi
+if ! verdict_publish_drafts \
+  "$draft_queue" \
+  "$current_after_file" \
+  "$VERDICT_SYNC_WORK_DIR" \
+  "$completion_template"; then
+  printf 'verdict was recorded, but draft publication failed\n' >&2
+  exit 1
+fi
+
+verdict_observed_count=$(wc -l < "$decisions_file" | tr -d ' ')
+verdict_noop_count=$((verdict_observed_count - verdict_appended_count))
+printf 'verdict-sync: observed=%s appended=%s idempotent=%s\n' \
+  "$verdict_observed_count" \
+  "$verdict_appended_count" \
+  "$verdict_noop_count"

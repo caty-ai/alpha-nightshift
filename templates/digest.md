@@ -20,3 +20,6 @@
 
 レーン統計:
 {{LANE_STATS}}
+
+累積 KPI:
+{{KPI_BLOCK}}

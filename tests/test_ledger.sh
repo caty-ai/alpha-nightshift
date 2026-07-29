@@ -84,4 +84,37 @@ ledger_ingest_proposals "$proposal"
 [ "$LEDGER_SKIPPED_COUNT" -eq 6 ] ||
   fail "malformed proposal count changed during duplicate ingest"
 
+ledger_append '{
+  "type": "verdict",
+  "verdict_id": "projection-v1",
+  "ts": "2026-07-29T03:00:00Z",
+  "finding_id": "f-1",
+  "status": "adopted",
+  "actor": "human",
+  "source": "manual-comment",
+  "source_ref": "comment:projection",
+  "observed_at": "2026-07-29T02:00:00Z"
+}'
+projected=$(ledger_project_findings)
+[ "$(printf '%s\n' "$projected" |
+  jq -r 'select(.id == "f-1") | .current_status')" = adopted ] ||
+  fail "current-state projection did not apply the verdict"
+[ "$(printf '%s\n' "$projected" |
+  jq -r 'select(.id == "f-1") | .status')" = adopted ] ||
+  fail "projected status was not the effective current status"
+[ "$(printf '%s\n' "$projected" |
+  jq -r 'select(.id == "f-1") | .base_status')" = open ] ||
+  fail "current-state projection did not retain the base status"
+[ "$(printf '%s\n' "$projected" |
+  jq -c 'select(.id == "f-1") | .evidence')" = \
+  '["evidence/01-hero-mobile.png","evidence/01-hero-mobile.txt"]' ] ||
+  fail "current-state projection dropped finding evidence"
+[ "$(printf '%s\n' "$projected" |
+  jq -r 'select(.id == "f-1") | .latest_verdict.source_ref')" = \
+  comment:projection ] ||
+  fail "current-state projection omitted latest verdict metadata"
+[ "$(printf '%s\n' "$projected" | jq -r '.id')" = \
+  "$(printf '%s\n' "$projected" | jq -r '.id' | sort)" ] ||
+  fail "current findings were not returned deterministically"
+
 printf 'test_ledger: PASS\n'

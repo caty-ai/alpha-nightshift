@@ -12,6 +12,10 @@ LANE_TIMEBOX_MIN=60
 NIGHT_BUDGET_TOKENS=0
 BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 
+# Daytime verdict-sync settings. These are not exported into lane processes.
+NIGHT_BOT_LOGIN='night-bot'
+VERDICT_GH_BIN='gh'
+
 # Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
 # isolated lane HOME. Metsuke requires the Codex auth/config directory below.
 # Sensitive basenames such as .ssh, .config, .git-credentials, .netrc, .aws,

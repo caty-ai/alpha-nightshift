@@ -99,4 +99,17 @@ NIGHTSHIFT_CONFIG="$digest_config" \
 [ "$digest_rc" -ne 0 ] || fail "digest succeeded when digest_written append failed"
 assert_file_exists "$digest_state/digests/$NIGHT_ID.md"
 
+projection_state="$TEST_TMP/projection-state"
+mkdir -p "$projection_state/ledger"
+printf '%s\n' \
+  '{"ts":"2026-07-29T00:00:00Z","night_id":"2026-07-28","type":"finding","id":"known","repo":"r","target":"t","symptom":"s","kind":"Bug","status":"open","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"type":"verdict","verdict_id":"bad-history","ts":"2026-07-29T01:00:00Z","finding_id":"missing","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:bad","observed_at":"2026-07-29T01:00:00Z"}' \
+  > "$projection_state/ledger/ledger.jsonl"
+STATE_DIR="$projection_state"
+. "$ROOT/lib/common.sh"
+. "$ROOT/lib/ledger.sh"
+if ledger_project_findings >/dev/null 2>&1; then
+  fail "projection accepted a verdict for an unknown finding"
+fi
+
 printf 'test_ledger_failclosed: PASS\n'
