@@ -255,6 +255,52 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 
 - Phase 0 の完了条件（誤検知率・ダイジェスト品質）は**較正**であり数値ゲートではない。Phase 1 以降のゲート数値は Phase 0 実測から設定する
 
+### 14.1 Phase 1a local enforcement（inactive）
+
+Issue #6 の Phase 1a として、`guard/` に credential-free のローカル
+enforcement package を実装した。Phase 0 dispatcher/lane からは呼ばれず、
+opt-in かつ inactive であり、全 report の mode は
+`LOCAL_ONLY_REMOTE_UNPROVEN`、write mode は常に false である。gateway と
+broker に Git/GitHub の自由形式 write command、lane 指定 destination ref、
+credential/API path は存在しない。将来の
+`refs/heads/night/YYYYMMDD-NNNN` は broker 生成のみとする。
+
+Phase 1a は、strict grammar/preflight、固定環境での local Git object
+enumeration、pinned gitleaks 8.30.1 stdin scanner、candidate-introduced
+commit/tree/blob の representation gate、sandbox-exec profile の render と
+ローカル bypass regression を提供する。Phase 1a の base は caller が指定
+した local base reachability であり、protected-tip equality や remote
+provenance の証明ではない。resident-base/outgoing の object
+ID/type/size/raw SHA-256 record を local-only aggregate として残し、
+candidate-introduced object だけを full representation/scanner/canary gate
+へ通す。protected-tip refetch と remote equality は Phase 1b の未証明要件
+である。
+
+binary/archive/executable/document/media/opaque class は Phase 1a では deny
+する。MIME allowlist も意図的に `text/plain`、`application/json`、empty
+class へ限定するため、byte-valid UTF-8 の一般的な source file でも
+`text/x-shellscript` や `text/x-c` 等に分類されれば deny し得る。
+whole-payload の Base64、hex、percent、Base64url-shaped content と
+normalization-ambiguous wrapper は fail-closed であり、無害な encoded text
+や checksum-shaped content も Phase 1a では false-deny し得る。
+sandbox-exec で表現・実測不能な process/Mach/sysctl/keychain/descriptor/
+signal/trace cell は `UNSUPPORTED` の hard-disable residual であり、
+containment 済みとは扱わない。fixed profile の実行可否は
+`sandbox_runtime_capability` として独立に記録し、実行不能時は named
+fixture proof もそれぞれ `UNSUPPORTED` のままにする。
+
+この round では user、account、PAT、protection、ruleset を作成・変更して
+おらず、real GitHub write/negative proof も試行していない。orchestrator
+preflight では private GitHub Free の protection が 403 を返したため、
+Phase 1b activation には protection を支える private-repository plan/host、
+night-bot account、fine-grained PAT、potentially mutating proof への owner
+明示承認が必要である。default-branch negative proof は直前 main tip の
+content-identical descendant を使い、予期せず受理された場合は cleanup
+成功ではなく incident とする。
+
+したがって Phase 1 と Issue #6 は未完了である。owner-authorized Phase 1b
+remote proof と protection readback が完了するまで close してはならない。
+
 ## 15. OSS 化ロードマップ
 
 - repo: `shojikumaru/alpha-nightshift` を PRIVATE で新設 → 公開同等整備（LICENSE=MIT・EN README 正本＋README.ja・COC/SECURITY・gitleaks クリーン）→ 翔さん flip（handbook 実証済みコース）

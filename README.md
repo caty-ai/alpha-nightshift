@@ -1,5 +1,35 @@
 # alpha-nightshift
 
+Phase 1a now includes an opt-in local guard under `guard/`, but it is inactive
+and incapable of publication. Its mode is
+`LOCAL_ONLY_REMOTE_UNPROVEN`; preflight always reports `write_mode:false`.
+Nothing in this round created or changed a user, GitHub account, PAT,
+protection, or ruleset, and no real GitHub write or negative proof was
+attempted. The existing Phase 0 dispatcher and lane behavior is unchanged.
+
+The local package provides a strict typed gateway, deterministic hard-disable
+preflight, a real Git-object scanner using pinned gitleaks 8.30.1 stdin, a
+rendered macOS sandbox-exec measurement profile, and offline bypass tests.
+Candidate-introduced binary, archive, executable, document, media, and opaque
+objects deny in Phase 1a. Sandbox cells that cannot be expressed or measured
+remain `UNSUPPORTED` hard-disable residuals rather than containment claims.
+The local base evidence is only a deterministic aggregate of locally read
+object records; it does not prove protected-tip or remote equality. The MIME
+allowlist is deliberately narrow, so common source MIME types such as
+`text/x-shellscript` or `text/x-c` can also deny in Phase 1a.
+Whole-payload wrapper or checksum shapes are also fail-closed, so otherwise
+innocent Base64, hex, percent, or Base64url-shaped content may false-deny.
+See `guard/README.md` for the local interface.
+
+Phase 1b remains unproven. An orchestrator preflight found that protection for
+a private repository on GitHub Free returned 403. Activation therefore still
+requires a supporting private-repository plan/host, a dedicated night-bot
+account, a fine-grained PAT, and explicit owner authorization for potentially
+mutating remote proofs. The default-branch proof uses a content-identical
+descendant; unexpected acceptance remains an incident and is never silently
+cleaned up. Phase 1 and Issue #6 must not be marked complete until those remote
+proofs and protection readback succeed.
+
 Phase 0 is a macOS nightly observation harness. At 23:30 the dispatcher runs
 credential-free observation lanes and serially ingests their JSONL proposals.
 At 06:30 a separate machine-template digest reports findings, a clean zero, or

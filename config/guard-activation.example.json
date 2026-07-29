@@ -1,0 +1,54 @@
+{
+  "schema": "alpha-nightshift/guard-activation/v1",
+  "mode": "LOCAL_ONLY_REMOTE_UNPROVEN",
+  "expected_manifest_sha256": null,
+  "tools": {
+    "git": {"path": "/opt/homebrew/Cellar/git/2.48.1/bin/git", "sha256": null, "uid": 0, "mode": "755"},
+    "gitleaks": {"path": "/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks", "sha256": null, "uid": 0, "mode": "755"},
+    "jq": {"path": "/usr/bin/jq", "sha256": null, "uid": 0, "mode": "755"},
+    "file": {"path": "/usr/bin/file", "sha256": null, "uid": 0, "mode": "755"},
+    "sandbox_exec": {"path": "/usr/bin/sandbox-exec", "sha256": null, "uid": 0, "mode": "755"},
+    "shell": {"path": "/bin/bash", "sha256": null, "uid": 0, "mode": "755"}
+  },
+  "programs": {
+    "gateway": {"path": "/ABSOLUTE/CHECKOUT/guard/gateway.sh", "sha256": null, "uid": null, "mode": "755"},
+    "broker": {"path": "/ABSOLUTE/CHECKOUT/guard/broker.sh", "sha256": null, "uid": null, "mode": "755"},
+    "preflight": {"path": "/ABSOLUTE/CHECKOUT/guard/preflight.sh", "sha256": null, "uid": null, "mode": "755"},
+    "scanner": {"path": "/ABSOLUTE/CHECKOUT/guard/scan.sh", "sha256": null, "uid": null, "mode": "755"},
+    "renderer": {"path": "/ABSOLUTE/CHECKOUT/guard/render-sandbox.sh", "sha256": null, "uid": null, "mode": "755"}
+  },
+  "policy": {
+    "scanner_config_sha256": null,
+    "sandbox_template_sha256": null,
+    "test_contract_sha256": null
+  },
+  "night_bot": {
+    "name": "night-bot",
+    "email": "night-bot@users.noreply.github.com"
+  },
+  "identities": [
+    {"name": "night-broker", "uid": null},
+    {"name": "night-lane", "uid": null},
+    {"name": "night-verify", "uid": null},
+    {"name": "night-import", "uid": null},
+    {"name": "night-attest", "uid": null},
+    {"name": "night-publish", "uid": null}
+  ],
+  "mounts": [],
+  "matrix": [],
+  "fixture": {
+    "endpoint": null,
+    "exact_port_proof": "UNPROVEN",
+    "second_port_denial": "UNPROVEN",
+    "direct_network_denial": "UNPROVEN"
+  },
+  "remote": {
+    "private_repository": false,
+    "supporting_plan_or_host": false,
+    "night_bot_account": false,
+    "fine_grained_pat": false,
+    "owner_authorized_phase1b_proofs": false,
+    "protection_readback": "UNPROVEN",
+    "negative_write_proofs": "UNPROVEN"
+  }
+}

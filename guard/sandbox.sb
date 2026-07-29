@@ -1,0 +1,44 @@
+(version 1)
+(deny default)
+
+; Phase 1a measurement template. This profile is not an activation claim.
+(allow process-exec
+  (literal "/bin/bash")
+  (literal "/bin/sh")
+  (literal "/usr/bin/env")
+  (literal "/usr/bin/true")
+  (literal "/usr/bin/false")
+  (literal "/usr/bin/nc")
+  (literal "/usr/bin/python3")
+  (literal "/opt/homebrew/Cellar/git/2.48.1/bin/git")
+  (literal "/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks"))
+(allow process-fork)
+
+(allow file-read-metadata)
+(allow file-read*
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/private/var/db/timezone")
+  (subpath "/dev")
+  (subpath "@@WORKSPACE@@")
+  (subpath "@@STATE@@"))
+(allow file-write*
+  (subpath "@@WORKSPACE@@")
+  (subpath "@@STATE@@")
+  (literal "/dev/null"))
+
+(deny file-read* file-write*
+  (subpath "/private/var/root")
+  (subpath "/Library/Keychains")
+  (subpath "/Users/Shared"))
+
+(deny network*)
+@@FIXTURE_RULE@@
+
+; sandbox-exec has no accepted Phase 1a proof for all of these cells.
+(deny process-info*)
+(deny signal)
+(deny system-socket)
+(deny mach-lookup)
+(deny sysctl-read)
