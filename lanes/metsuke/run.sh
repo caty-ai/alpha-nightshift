@@ -22,6 +22,7 @@ PERSONAS_SUCCEEDED=0
 PERSONAS_FAILED=0
 SERVE_ATTEMPTED=false
 SERVE_STATUS=not_attempted
+SERVE_CLEANUP_STATUS=not_attempted
 CAPTURE_ATTEMPTED=false
 CAPTURE_STATUS=not_attempted
 ANALYSIS_ATTEMPTED=false
@@ -30,6 +31,8 @@ GOALS_ATTEMPTED=false
 GOALS_STATUS=not_attempted
 PERSONA_FAILURES_FILE=
 CAPTURE_TRUST_DIR=
+FINDINGS_STAGING_FILE=
+FINDINGS_METADATA_FILE=
 
 log() {
   printf '%s\n' "metsuke: $*" >&2
@@ -193,6 +196,134 @@ normalize_finding() {
     }'
 }
 
+stage_normalized_finding() {
+  local normalized_finding=$1
+  local persona=$2
+  local sequence=$3
+  local finding_digest
+  local finding_metadata
+  finding_digest=$(printf '%s\n' "$normalized_finding" |
+    shasum -a 256 | awk '{print $1}') || return 1
+  finding_metadata=$(jq -n -c \
+    --argjson sequence "$sequence" \
+    --arg persona "$persona" \
+    --arg digest "$finding_digest" \
+    '{sequence: $sequence, persona: $persona, digest: $digest}') || return 1
+  printf '%s\n' "$normalized_finding" >> "$FINDINGS_STAGING_FILE" || return 1
+  printf '%s\n' "$finding_metadata" >> "$FINDINGS_METADATA_FILE"
+}
+
+publish_staged_findings() {
+  local findings_tmp
+  local staged_line
+  local compact_line
+  local metadata_line
+  local metadata
+  local expected_sequence
+  local expected_persona
+  local expected_digest
+  local actual_digest
+  local canonical_finding
+  local publication_sequence=1
+  local publication_failed=0
+  local extra_metadata
+
+  findings_tmp=$(mktemp "$LANE_DIR/.findings-publication.XXXXXX") || return 1
+  : > "$findings_tmp"
+  exec 3< "$FINDINGS_METADATA_FILE"
+  while IFS= read -r staged_line || [ -n "$staged_line" ]; do
+    if ! IFS= read -r metadata_line <&3; then
+      log "finding staging metadata ended before the staged findings"
+      publication_failed=1
+      break
+    fi
+    if ! metadata=$(printf '%s\n' "$metadata_line" | jq -e -c '
+      select(
+        type == "object" and
+        (.sequence | type == "number" and floor == . and . > 0) and
+        (.persona | type == "string" and length > 0) and
+        (.digest | type == "string" and test("^[0-9a-f]{64}$"))
+      )
+      | {sequence: .sequence, persona: .persona, digest: .digest}
+    ' 2>/dev/null); then
+      log "rejected staged finding with malformed shell contract metadata"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      continue
+    fi
+    expected_sequence=$(printf '%s\n' "$metadata" | jq -r '.sequence')
+    expected_persona=$(printf '%s\n' "$metadata" | jq -r '.persona')
+    expected_digest=$(printf '%s\n' "$metadata" | jq -r '.digest')
+    case "$expected_persona" in
+      beginner|expert|impatient) ;;
+      *)
+        log "rejected staged finding with an invalid shell-assigned persona"
+        INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+        publication_failed=1
+        continue
+        ;;
+    esac
+    if [ "$expected_sequence" -ne "$publication_sequence" ]; then
+      log "rejected staged finding with a mismatched shell-assigned sequence"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      publication_sequence=$((publication_sequence + 1))
+      continue
+    fi
+    actual_digest=$(printf '%s\n' "$staged_line" |
+      shasum -a 256 | awk '{print $1}') || {
+      publication_failed=1
+      break
+    }
+    if [ "$actual_digest" != "$expected_digest" ]; then
+      log "rejected staged finding whose shell-normalized content was tampered"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      publication_sequence=$((publication_sequence + 1))
+      continue
+    fi
+    if ! compact_line=$(printf '%s\n' "$staged_line" |
+      jq -e -c 'select(type == "object")' 2>/dev/null); then
+      log "rejected staged finding that is no longer valid JSON"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      publication_sequence=$((publication_sequence + 1))
+      continue
+    fi
+    if ! canonical_finding=$(normalize_finding \
+      "$compact_line" "$expected_persona" "$expected_sequence"); then
+      log "rejected staged finding that failed final evidence or hedge validation"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      publication_sequence=$((publication_sequence + 1))
+      continue
+    fi
+    if [ "$canonical_finding" != "$compact_line" ]; then
+      log "rejected staged finding with mismatched shell-assigned contract fields"
+      INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
+      publication_failed=1
+      publication_sequence=$((publication_sequence + 1))
+      continue
+    fi
+    printf '%s\n' "$canonical_finding" >> "$findings_tmp" || {
+      publication_failed=1
+      break
+    }
+    publication_sequence=$((publication_sequence + 1))
+  done < "$FINDINGS_STAGING_FILE"
+  if IFS= read -r extra_metadata <&3; then
+    log "finding staging metadata contains entries without staged findings"
+    publication_failed=1
+  fi
+  exec 3<&-
+
+  if ! mv "$findings_tmp" "$LANE_DIR/findings.jsonl"; then
+    rm -f "$findings_tmp"
+    return 1
+  fi
+  [ "$publication_failed" -eq 0 ]
+}
+
 record_persona_failure() {
   local failed_persona=$1
   jq -n -c --arg persona "$failed_persona" '$persona' >> "$PERSONA_FAILURES_FILE"
@@ -264,7 +395,34 @@ goals_set_complete() {
     [ ! -L "$goals_dir/range-map.md" ]
 }
 
-remove_goals_destinations() {
+prepare_goals_directory() {
+  local goals_dir=$1
+  if [ -L "$goals_dir" ] || { [ -e "$goals_dir" ] && [ ! -d "$goals_dir" ]; }; then
+    log "unsafe goals directory refused: $goals_dir"
+    return 1
+  fi
+  mkdir -p "$goals_dir"
+}
+
+validate_goals_destinations() {
+  local goals_dir=$1
+  local destination
+  for destination in \
+    "$goals_dir/GOALS-draft.md" \
+    "$goals_dir/feature-map.md" \
+    "$goals_dir/range-map.md"; do
+    if [ -L "$destination" ]; then
+      log "goals destination is unexpectedly a symlink: $destination"
+      return 1
+    fi
+    if [ -e "$destination" ] && [ ! -f "$destination" ]; then
+      log "goals destination is unexpectedly not a regular file: $destination"
+      return 1
+    fi
+  done
+}
+
+clear_goals_destinations() {
   local goals_dir=$1
   local destination
   for destination in \
@@ -272,7 +430,7 @@ remove_goals_destinations() {
     "$goals_dir/feature-map.md" \
     "$goals_dir/range-map.md"; do
     if [ -d "$destination" ] && [ ! -L "$destination" ]; then
-      log "goals destination is unexpectedly a directory: $destination"
+      log "cannot clear goals destination directory during publication: $destination"
       return 1
     fi
   done
@@ -282,26 +440,77 @@ remove_goals_destinations() {
     "$goals_dir/range-map.md"
 }
 
+restore_goals_set() {
+  local backup_dir=$1
+  local goals_dir=$2
+  local file_name
+  local restore_failed=0
+  clear_goals_destinations "$goals_dir" || restore_failed=1
+  for file_name in GOALS-draft.md feature-map.md range-map.md; do
+    if [ -f "$backup_dir/$file_name" ]; then
+      if ! cp -p "$backup_dir/$file_name" "$goals_dir/$file_name"; then
+        restore_failed=1
+      elif ! cmp -s "$backup_dir/$file_name" "$goals_dir/$file_name"; then
+        restore_failed=1
+      fi
+    fi
+  done
+  [ "$restore_failed" -eq 0 ]
+}
+
+remove_goals_backup() {
+  local backup_dir=$1
+  rm -f \
+    "$backup_dir/GOALS-draft.md" \
+    "$backup_dir/feature-map.md" \
+    "$backup_dir/range-map.md"
+  rmdir "$backup_dir"
+}
+
 publish_goals_set() {
   local staged_dir=$1
   local goals_dir=$2
   local source_path
   local file_name
+  local backup_dir
+  local publication_failed=0
   for file_name in GOALS-draft.md feature-map.md range-map.md; do
     source_path="$staged_dir/$file_name"
     [ -f "$source_path" ] && [ ! -L "$source_path" ] || return 1
   done
-  remove_goals_destinations "$goals_dir" || return 1
+  validate_goals_destinations "$goals_dir" || return 1
+  backup_dir=$(mktemp -d "$goals_dir/.goals-backup.XXXXXX") || return 1
   for file_name in GOALS-draft.md feature-map.md range-map.md; do
-    if ! mv "$staged_dir/$file_name" "$goals_dir/$file_name"; then
-      remove_goals_destinations "$goals_dir" || true
-      return 1
+    if [ -f "$goals_dir/$file_name" ]; then
+      if ! cp -p "$goals_dir/$file_name" "$backup_dir/$file_name"; then
+        remove_goals_backup "$backup_dir" || true
+        return 1
+      fi
     fi
   done
-  if ! goals_set_complete "$goals_dir"; then
-    remove_goals_destinations "$goals_dir" || true
+  if ! clear_goals_destinations "$goals_dir"; then
+    if restore_goals_set "$backup_dir" "$goals_dir"; then
+      remove_goals_backup "$backup_dir" || true
+    else
+      log "goals destinations could not be cleared; recovery backup retained at $backup_dir"
+    fi
     return 1
   fi
+  for file_name in GOALS-draft.md feature-map.md range-map.md; do
+    if ! mv "$staged_dir/$file_name" "$goals_dir/$file_name"; then
+      publication_failed=1
+      break
+    fi
+  done
+  if [ "$publication_failed" -ne 0 ] || ! goals_set_complete "$goals_dir"; then
+    if restore_goals_set "$backup_dir" "$goals_dir"; then
+      remove_goals_backup "$backup_dir" || true
+    else
+      log "goals/map publication failed; recovery backup retained at $backup_dir"
+    fi
+    return 1
+  fi
+  remove_goals_backup "$backup_dir"
 }
 
 write_metrics() {
@@ -326,6 +535,7 @@ write_metrics() {
     --argjson goals_failed "$GOALS_FAILED" \
     --argjson serve_attempted "$SERVE_ATTEMPTED" \
     --arg serve_status "$SERVE_STATUS" \
+    --arg serve_cleanup_status "$SERVE_CLEANUP_STATUS" \
     --argjson capture_attempted "$CAPTURE_ATTEMPTED" \
     --arg capture_status "$CAPTURE_STATUS" \
     --argjson analysis_attempted "$ANALYSIS_ATTEMPTED" \
@@ -345,7 +555,11 @@ write_metrics() {
       capture_failed: $capture_failed,
       goals_failed: $goals_failed,
       stages: {
-        serve: {attempted: $serve_attempted, status: $serve_status},
+        serve: {
+          attempted: $serve_attempted,
+          status: $serve_status,
+          cleanup_status: $serve_cleanup_status
+        },
         capture: {attempted: $capture_attempted, status: $capture_status},
         analysis: {attempted: $analysis_attempted, status: $analysis_status},
         goals: {attempted: $goals_attempted, status: $goals_status}
@@ -356,17 +570,34 @@ write_metrics() {
 
 on_exit() {
   local original_status=$1
-  local cleanup_status=0
+  local final_status=0
+  local action_status=0
   trap - EXIT
   if [ "$SERVER_STARTED" = true ]; then
-    "$SCRIPT_DIR/serve-lp.sh" stop || cleanup_status=$?
+    if "$SCRIPT_DIR/serve-lp.sh" stop; then
+      SERVE_CLEANUP_STATUS=succeeded
+    else
+      action_status=$?
+      SERVE_CLEANUP_STATUS=failed
+    fi
   fi
-  write_metrics || cleanup_status=$?
-  rm -f "$PERSONA_FAILURES_FILE"
+  if ! publish_staged_findings; then
+    [ "$action_status" -ne 0 ] || action_status=1
+    log "final findings publication rejected tampered staging or failed"
+  fi
+  if ! write_metrics; then
+    [ "$action_status" -ne 0 ] || action_status=1
+  fi
+  rm -f \
+    "$PERSONA_FAILURES_FILE" \
+    "$FINDINGS_STAGING_FILE" \
+    "$FINDINGS_METADATA_FILE"
   if [ "$original_status" -ne 0 ]; then
-    exit "$original_status"
+    final_status=$original_status
+  else
+    final_status=$action_status
   fi
-  exit "$cleanup_status"
+  exit "$final_status"
 }
 
 run_lane() {
@@ -399,19 +630,27 @@ run_lane() {
     STATE_DIR=$(cd "$LANE_DIR/../../.." && pwd)
   fi
   export LANE_DIR NIGHT_ID STATE_DIR
+  goals_dir="$STATE_DIR/goals"
   PERSONA_FAILURES_FILE="$LANE_DIR/.persona-failures.jsonl"
   CAPTURE_TRUST_DIR="$LANE_DIR/capture-trust"
   : > "$PERSONA_FAILURES_FILE"
+  : > "$LANE_DIR/findings.jsonl"
+  FINDINGS_STAGING_FILE=$(mktemp "$LANE_DIR/.accepted-findings.XXXXXX")
+  FINDINGS_METADATA_FILE=$(mktemp "$LANE_DIR/.accepted-findings-metadata.XXXXXX")
   trap 'on_exit $?' EXIT
 
-  mkdir -p "$STATE_DIR/goals"
-  : > "$LANE_DIR/findings.jsonl"
+  if ! prepare_goals_directory "$goals_dir"; then
+    GOALS_FAILED=true
+    GOALS_STATUS=failed
+    return 1
+  fi
   evidence_prepare_dir
 
   phase_started=$(date '+%s')
   if [ -n "${METSUKE_TARGET_URL:-}" ]; then
     base_url=$METSUKE_TARGET_URL
     SERVE_STATUS=skipped
+    SERVE_CLEANUP_STATUS=skipped
     log "using configured target URL $base_url"
   else
     SERVE_ATTEMPTED=true
@@ -512,7 +751,12 @@ run_lane() {
       [ -n "$candidate_line" ] || continue
       persona_candidates=$((persona_candidates + 1))
       if finding=$(normalize_finding "$candidate_line" "$persona" "$finding_sequence"); then
-        printf '%s\n' "$finding" >> "$LANE_DIR/findings.jsonl"
+        if ! stage_normalized_finding "$finding" "$persona" "$finding_sequence"; then
+          ANALYSIS_STATUS=failed
+          T_ANALYSIS=$(( $(date '+%s') - phase_started ))
+          log "failed to stage a shell-normalized finding"
+          return 1
+        fi
         finding_sequence=$((finding_sequence + 1))
         persona_valid=$((persona_valid + 1))
       else
@@ -543,7 +787,6 @@ run_lane() {
   fi
 
   phase_started=$(date '+%s')
-  goals_dir="$STATE_DIR/goals"
   if goals_set_complete "$goals_dir"; then
     GOALS_STATUS=skipped
   else
@@ -559,7 +802,7 @@ run_lane() {
     staged_feature_map_path="$goals_work_dir/feature-map.md"
     staged_range_map_path="$goals_work_dir/range-map.md"
     goals_prompt="$goals_work_dir/prompt.md"
-    if ! remove_goals_destinations "$goals_dir"; then
+    if ! validate_goals_destinations "$goals_dir"; then
       GOALS_FAILED=true
       GOALS_STATUS=failed
       log "unsafe partial goals destination prevented regeneration"

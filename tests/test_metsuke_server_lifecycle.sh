@@ -10,6 +10,7 @@ TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-metsuke-server.XXXXXX")
 SERVER_PID=
 CHILD_PID=
 LATE_CHILD_PID=
+PROTECTED_PID=
 cleanup() {
   if [ -n "$SERVER_PID" ]; then
     kill -KILL "$SERVER_PID" 2>/dev/null || true
@@ -20,9 +21,24 @@ cleanup() {
   if [ -n "$LATE_CHILD_PID" ]; then
     kill -KILL "$LATE_CHILD_PID" 2>/dev/null || true
   fi
+  if [ -n "$PROTECTED_PID" ]; then
+    kill -KILL "$PROTECTED_PID" 2>/dev/null || true
+    wait "$PROTECTED_PID" 2>/dev/null || true
+  fi
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
+
+wait_for_dead() {
+  local process_pid=$1
+  local wait_ticks=0
+  while [ "$wait_ticks" -lt 50 ]; do
+    kill -0 "$process_pid" 2>/dev/null || return 0
+    sleep 0.02
+    wait_ticks=$((wait_ticks + 1))
+  done
+  return 1
+}
 
 SERVE_SH="$ROOT/lanes/metsuke/serve-lp.sh"
 REAL_PYTHON=$(command -v python3)
@@ -32,25 +48,44 @@ lane="$TEST_TMP/lane"
 port_state="$TEST_TMP/port-occupied"
 mkdir -p "$fake_bin" "$checkout/node_modules" "$lane"
 
-server_source="$TEST_TMP/fake-server.sh"
-# shellcheck disable=SC2016
+server_source="$TEST_TMP/fake-server.py"
 printf '%s\n' \
-  '#!/bin/bash' \
-  'set -euo pipefail' \
-  '/bin/sh -c '\''while :; do sleep 60; done'\'' &' \
-  'child_pid=$!' \
-  'printf "%s\n" "$child_pid" > "$FAKE_CHILD_PID_FILE"' \
-  ': > "$FAKE_PORT_STATE"' \
-  'stop() {' \
-  '  /bin/sh -c '\''while :; do sleep 60; done'\'' &' \
-  '  late_child_pid=$!' \
-  '  printf "%s\n" "$late_child_pid" > "$FAKE_LATE_CHILD_PID_FILE"' \
-  '  rm -f "$FAKE_PORT_STATE"' \
-  '  while [ ! -e "$FAKE_LATE_CHILD_DISCOVERED" ]; do sleep 0.01; done' \
-  '  exit 0' \
-  '}' \
-  'trap stop TERM INT' \
-  'while :; do sleep 1; done' \
+  '#!/usr/bin/env python3' \
+  'import os' \
+  'import signal' \
+  'import subprocess' \
+  'import time' \
+  '' \
+  'early = subprocess.Popen(["/bin/sh", "-c", "while :; do sleep 60; done"])' \
+  'with open(os.environ["FAKE_CHILD_PID_FILE"], "w", encoding="utf-8") as handle:' \
+  '    handle.write(f"{early.pid}\n")' \
+  'open(os.environ["FAKE_PORT_STATE"], "w", encoding="utf-8").close()' \
+  '' \
+  'def stop(_signum, _frame):' \
+  '    signal.signal(signal.SIGTERM, signal.SIG_IGN)' \
+  '    late_pid = os.fork()' \
+  '    if late_pid == 0:' \
+  '        with open(os.environ["FAKE_LATE_CHILD_PGID_FILE"], "w", encoding="utf-8") as handle:' \
+  '            handle.write(f"{os.getpgrp()}\n")' \
+  '        deadline = time.time() + 1.0' \
+  '        while os.getppid() != 1 and time.time() < deadline:' \
+  '            time.sleep(0.001)' \
+  '        with open(os.environ["FAKE_LATE_CHILD_PPID_FILE"], "w", encoding="utf-8") as handle:' \
+  '            handle.write(f"{os.getppid()}\n")' \
+  '        while True:' \
+  '            time.sleep(60)' \
+  '    with open(os.environ["FAKE_LATE_CHILD_PID_FILE"], "w", encoding="utf-8") as handle:' \
+  '        handle.write(f"{late_pid}\n")' \
+  '    try:' \
+  '        os.unlink(os.environ["FAKE_PORT_STATE"])' \
+  '    except FileNotFoundError:' \
+  '        pass' \
+  '    raise SystemExit(0)' \
+  '' \
+  'signal.signal(signal.SIGTERM, stop)' \
+  'signal.signal(signal.SIGINT, stop)' \
+  'while True:' \
+  '    time.sleep(1)' \
   > "$server_source"
 chmod +x "$server_source"
 
@@ -62,7 +97,7 @@ printf '%s\n' \
   '  run)' \
   '    case "${2:-}" in' \
   '      build) printf "%s\n" built >> "$FAKE_BUILD_LOG"; exit 0 ;;' \
-  '      start) exec "$FAKE_SERVER_SOURCE" ;;' \
+  '      start) exec "$REAL_PYTHON" "$FAKE_SERVER_SOURCE" ;;' \
   '    esac' \
   '    ;;' \
   'esac' \
@@ -89,26 +124,59 @@ printf '%s\n' \
   'exit 7' \
   > "$fake_bin/curl"
 
-# Process inspection is also denied by this test sandbox. Model only the two
-# ps queries used by serve-lp.sh from the real PIDs written by the fixtures.
+# Process inspection is also denied by this test sandbox. Model the production
+# PPID and retained-PGID queries from real PIDs written by the fixtures.
 # shellcheck disable=SC2016
 printf '%s\n' \
   '#!/bin/bash' \
   'set -euo pipefail' \
+  'process_alive() {' \
+  '  kill -0 "$1" 2>/dev/null' \
+  '}' \
+  'emit_if_alive() {' \
+  '  process_alive "$1" || return 0' \
+  '  printf "%s %s\n" "$1" "$2"' \
+  '}' \
   'case " $* " in' \
   '  *" -o stat= -p "*)' \
   '    target=${!#}' \
-  '    if kill -0 "$target" 2>/dev/null; then printf "%s\n" S; exit 0; fi' \
+  '    if process_alive "$target"; then printf "%s\n" S; exit 0; fi' \
   '    exit 1' \
+  '    ;;' \
+  '  *" -o pgid= -p "*)' \
+  '    printf "%s\n" "$FAKE_EXPECTED_PGID"' \
   '    ;;' \
   '  *" -axo pid=,ppid= "*)' \
   '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
-  '    child=$(sed -n "1p" "$FAKE_CHILD_PID_FILE")' \
-  '    printf "%s %s\n" "$root" 1 "$child" "$root"' \
+  '    emit_if_alive "$root" 1' \
+  '    if [ -s "$FAKE_CHILD_PID_FILE" ]; then' \
+  '      child=$(sed -n "1p" "$FAKE_CHILD_PID_FILE")' \
+  '      emit_if_alive "$child" "$root"' \
+  '    fi' \
+  '    if [ -s "$FAKE_LATE_CHILD_PID_FILE" ] && ! process_alive "$root"; then' \
+  '      late_child=$(sed -n "1p" "$FAKE_LATE_CHILD_PID_FILE")' \
+  '      if process_alive "$late_child"; then' \
+  '        : > "$FAKE_PPID_OMITTED_MARKER"' \
+  '      fi' \
+  '    fi' \
+  '    ;;' \
+  '  *" -axo pid=,pgid= "*)' \
+  '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
+  '    emit_if_alive "$root" "$FAKE_EXPECTED_PGID"' \
+  '    if [ -s "$FAKE_CHILD_PID_FILE" ]; then' \
+  '      child=$(sed -n "1p" "$FAKE_CHILD_PID_FILE")' \
+  '      emit_if_alive "$child" "$FAKE_EXPECTED_PGID"' \
+  '    fi' \
+  '    if [ -s "$FAKE_PROTECTED_PID_FILE" ]; then' \
+  '      protected=$(sed -n "1p" "$FAKE_PROTECTED_PID_FILE")' \
+  '      emit_if_alive "$protected" "$FAKE_EXPECTED_PGID"' \
+  '    fi' \
   '    if [ -s "$FAKE_LATE_CHILD_PID_FILE" ]; then' \
   '      late_child=$(sed -n "1p" "$FAKE_LATE_CHILD_PID_FILE")' \
-  '      printf "%s %s\n" "$late_child" "$root"' \
-  '      : > "$FAKE_LATE_CHILD_DISCOVERED"' \
+  '      if process_alive "$late_child"; then' \
+  '        printf "%s %s\n" "$late_child" "$FAKE_EXPECTED_PGID"' \
+  '        if ! process_alive "$root"; then : > "$FAKE_PGID_DISCOVERED_MARKER"; fi' \
+  '      fi' \
   '    fi' \
   '    ;;' \
   '  *) exit 2 ;;' \
@@ -120,9 +188,12 @@ port=43123
 caller_pgid=$("$REAL_PYTHON" -c 'import os; print(os.getpgrp())')
 PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
 FAKE_SERVER_SOURCE="$server_source" \
+REAL_PYTHON="$REAL_PYTHON" \
 FAKE_CHILD_PID_FILE="$TEST_TMP/child.pid" \
 FAKE_LATE_CHILD_PID_FILE="$TEST_TMP/late-child.pid" \
-FAKE_LATE_CHILD_DISCOVERED="$TEST_TMP/late-child-discovered" \
+FAKE_LATE_CHILD_PGID_FILE="$TEST_TMP/late-child.pgid" \
+FAKE_LATE_CHILD_PPID_FILE="$TEST_TMP/late-child.ppid" \
+FAKE_EXPECTED_PGID="$caller_pgid" \
 FAKE_PORT_STATE="$port_state" \
 FAKE_BUILD_LOG="$TEST_TMP/build.log" \
 LANE_DIR="$lane" \
@@ -140,20 +211,39 @@ kill -0 "$SERVER_PID" 2>/dev/null || fail "fake LP server is not running"
 kill -0 "$child_pid" 2>/dev/null || fail "fake LP descendant is not running"
 [ -e "$port_state" ] || fail "offline port probe did not become occupied"
 
+/bin/sh -c 'while :; do sleep 60; done' &
+PROTECTED_PID=$!
+printf '%s\n' "$PROTECTED_PID" > "$TEST_TMP/protected.pid"
+protected_pgid=$("$REAL_PYTHON" -c \
+  'import os,sys; print(os.getpgid(int(sys.argv[1])))' "$PROTECTED_PID")
+[ "$protected_pgid" = "$caller_pgid" ] ||
+  fail "protected sibling did not share the caller process group"
+
 PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
 FAKE_PORT_STATE="$port_state" \
 FAKE_CHILD_PID_FILE="$TEST_TMP/child.pid" \
 FAKE_LATE_CHILD_PID_FILE="$TEST_TMP/late-child.pid" \
-FAKE_LATE_CHILD_DISCOVERED="$TEST_TMP/late-child-discovered" \
+FAKE_PROTECTED_PID_FILE="$TEST_TMP/protected.pid" \
+FAKE_EXPECTED_PGID="$caller_pgid" \
+FAKE_PPID_OMITTED_MARKER="$TEST_TMP/late-child-omitted-from-ppid" \
+FAKE_PGID_DISCOVERED_MARKER="$TEST_TMP/late-child-discovered-by-pgid" \
 LANE_DIR="$lane" METSUKE_PORT="$port" \
   /bin/bash "$SERVE_SH" stop
 LATE_CHILD_PID=$(sed -n '1p' "$TEST_TMP/late-child.pid")
-if kill -0 "$child_pid" 2>/dev/null; then
+wait_for_dead "$child_pid" ||
   fail "serve stop left a live descendant process"
-fi
-if kill -0 "$LATE_CHILD_PID" 2>/dev/null; then
+wait_for_dead "$LATE_CHILD_PID" ||
   fail "serve stop left a late descendant process"
-fi
+[ -e "$TEST_TMP/late-child-omitted-from-ppid" ] ||
+  fail "late descendant was not omitted from the PPID-only refresh"
+[ -e "$TEST_TMP/late-child-discovered-by-pgid" ] ||
+  fail "late descendant was not recovered through retained-PGID discovery"
+[ "$(sed -n '1p' "$TEST_TMP/late-child.ppid")" = 1 ] ||
+  fail "late descendant was not reparented before PGID cleanup"
+[ "$(sed -n '1p' "$TEST_TMP/late-child.pgid")" = "$caller_pgid" ] ||
+  fail "late descendant did not retain the server/caller process group"
+kill -0 "$PROTECTED_PID" 2>/dev/null ||
+  fail "serve stop killed a protected same-PGID sibling"
 SERVER_PID=
 CHILD_PID=
 LATE_CHILD_PID=
@@ -163,7 +253,11 @@ LATE_CHILD_PID=
 : > "$TEST_TMP/occupied-build.log"
 if PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
   FAKE_SERVER_SOURCE="$server_source" \
+  REAL_PYTHON="$REAL_PYTHON" \
   FAKE_CHILD_PID_FILE="$TEST_TMP/occupied-child.pid" \
+  FAKE_LATE_CHILD_PID_FILE="$TEST_TMP/occupied-late-child.pid" \
+  FAKE_LATE_CHILD_PGID_FILE="$TEST_TMP/occupied-late-child.pgid" \
+  FAKE_LATE_CHILD_PPID_FILE="$TEST_TMP/occupied-late-child.ppid" \
   FAKE_PORT_STATE="$port_state" \
   FAKE_BUILD_LOG="$TEST_TMP/occupied-build.log" \
   LANE_DIR="$lane" \

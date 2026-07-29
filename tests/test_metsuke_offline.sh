@@ -195,9 +195,14 @@ printf '%s\n' \
   'trap '\''rm -f "$prompt"'\'' EXIT' \
   'cat > "$prompt"' \
   'output=$(sed -n "s/^OUTPUT_PATH: //p" "$prompt" | sed -n "1p")' \
+  'lane_dir=$(cd "$PWD/../.." && pwd)' \
   'if [ -n "$output" ]; then' \
   '  persona=$(basename "$PWD" | sed "s/^persona-//; s/\\..*$//")' \
   '  case " ${FAKE_PERSONA_FAILURES:-} " in *" $persona "*) exit 9 ;; esac' \
+  '  case "${FAKE_DIRECT_FORGE:-}" in persona|both)' \
+  '    printf "%s\n" "{\"id\":\"mk-FORGED-999\",\"repo\":\"caty-talk-LP\",\"target\":\"hero/cta\",\"kind\":\"ux\",\"symptom\":\"CTA is maybe brokenかもしれない\",\"interpretation\":\"fabricated\",\"persona\":\"$persona\",\"confirm_cost\":\"即断\",\"evidence\":[\"evidence/totally-fabricated.txt\"],\"status\":\"open\",\"date\":\"forged\"}" >> "$lane_dir/findings.jsonl"' \
+  '    ;;' \
+  '  esac' \
   '  mkdir -p "$(dirname "$output")"' \
   '  if [ "${FAKE_PERSONA_EMPTY:-}" = "$persona" ]; then : > "$output"; exit 0; fi' \
   '  evidence_dir=$(sed -n "s/^EVIDENCE_DIR: //p" "$prompt" | sed -n "1p")' \
@@ -221,6 +226,16 @@ printf '%s\n' \
   '  printf "%s\n" "{\"target\":\"$target\",\"symptom\":\"CTA text is visible\",\"interpretation\":\"the persona cannot quickly connect it to value\",\"confirm_cost\":\"即断\",\"evidence\":[\"$evidence\"]}" > "$output"' \
   '  exit 0' \
   'fi' \
+  'case "${FAKE_DIRECT_FORGE:-}" in goals|both)' \
+  '  printf "%s\n" "{\"id\":\"mk-FORGED-GOALS\",\"repo\":\"caty-talk-LP\",\"target\":\"hero/cta\",\"kind\":\"ux\",\"symptom\":\"Goals maybe prove a finding\",\"interpretation\":\"fabricated\",\"persona\":\"beginner\",\"confirm_cost\":\"1分\",\"evidence\":[\"evidence/totally-fabricated.txt\"],\"status\":\"open\",\"date\":\"forged\"}" >> "$lane_dir/findings.jsonl"' \
+  '  ;;' \
+  'esac' \
+  'if [ "${FAKE_STAGE_TAMPER:-0}" = 1 ]; then' \
+  '  stage=$(find "$lane_dir" -maxdepth 1 -type f -name ".accepted-findings.*" ! -name "*metadata*" | sed -n "1p")' \
+  '  tampered=$(mktemp "${TMPDIR:-/tmp}/fake-stage-tamper.XXXXXX")' \
+  '  jq -c '\''.persona = "impatient"'\'' "$stage" > "$tampered"' \
+  '  mv "$tampered" "$stage"' \
+  'fi' \
   'if [ "${FAKE_GOALS_FAIL:-0}" = 1 ]; then exit 10; fi' \
   'for marker in GOALS_OUTPUT_PATH FEATURE_MAP_OUTPUT_PATH RANGE_MAP_OUTPUT_PATH; do' \
   '  destination=$(sed -n "s/^${marker}: //p" "$prompt" | sed -n "1p")' \
@@ -240,7 +255,72 @@ printf '%s\n' \
   'fi' \
   'exec /bin/mv "$@"' \
   > "$fake_bin/mv"
-chmod +x "$fake_bin/node" "$fake_bin/codex" "$fake_bin/mv"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
+  'set -euo pipefail' \
+  'case "${1:-}" in' \
+  '  run)' \
+  '    case "${2:-}" in' \
+  '      build) exit 0 ;;' \
+  '      start)' \
+  '        : > "$FAKE_PORT_STATE"' \
+  '        trap '\''exit 0'\'' TERM INT' \
+  '        while :; do read -r -t 1 _ || true; done' \
+  '        ;;' \
+  '    esac' \
+  '    ;;' \
+  'esac' \
+  'exit 2' \
+  > "$fake_bin/npm"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
+  '[ -n "${FAKE_PORT_STATE:-}" ] && [ -e "$FAKE_PORT_STATE" ]' \
+  > "$fake_bin/lsof"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
+  'if [ -n "${FAKE_PORT_STATE:-}" ] && [ -e "$FAKE_PORT_STATE" ]; then' \
+  '  case " $* " in *" -w "*) printf 200 ;; esac' \
+  '  exit 0' \
+  'fi' \
+  'exit 7' \
+  > "$fake_bin/curl"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
+  'set -euo pipefail' \
+  'case " $* " in' \
+  '  *" -o stat= -p "*)' \
+  '    target=${!#}' \
+  '    if kill -0 "$target" 2>/dev/null; then printf "%s\n" S; exit 0; fi' \
+  '    exit 1' \
+  '    ;;' \
+  '  *" -o pgid= -p "*) printf "%s\n" "$FAKE_EXPECTED_PGID" ;;' \
+  '  *" -axo pid=,ppid= "*)' \
+  '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
+  '    if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" 1; fi' \
+  '    ;;' \
+  '  *" -axo pid=,pgid= "*)' \
+  '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
+  '    if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" "$FAKE_EXPECTED_PGID"; fi' \
+  '    ;;' \
+  '  *) exit 2 ;;' \
+  'esac' \
+  > "$fake_bin/ps"
+chmod +x \
+  "$fake_bin/node" \
+  "$fake_bin/codex" \
+  "$fake_bin/mv" \
+  "$fake_bin/npm" \
+  "$fake_bin/lsof" \
+  "$fake_bin/curl" \
+  "$fake_bin/ps"
 
 if [ ! -d "$PLAYWRIGHT_MARKER" ]; then
   mkdir -p "$PLAYWRIGHT_MARKER"
@@ -262,6 +342,8 @@ run_lane_case() {
   local goals_fail=${6:-0}
   local mv_fail=${7:-0}
   local empty_persona=${8:-}
+  local direct_forge=${9:-}
+  local stage_tamper=${10:-0}
   local night_id="2026-07-29-$case_name"
   CASE_STATE="$TEST_TMP/cases/$case_name/state"
   CASE_LANE="$CASE_STATE/lanes/$night_id/lane_1"
@@ -285,6 +367,8 @@ run_lane_case() {
     FAKE_GOALS_FAIL="$goals_fail" \
     FAKE_MV_FAIL="$mv_fail" \
     FAKE_PERSONA_EMPTY="$empty_persona" \
+    FAKE_DIRECT_FORGE="$direct_forge" \
+    FAKE_STAGE_TAMPER="$stage_tamper" \
     /bin/bash "$RUN_SH" >"$CASE_LANE/stdout" 2>"$CASE_LANE/stderr"
   CASE_RC=$?
   set -e
@@ -304,7 +388,11 @@ jq -e '
   .personas_attempted == 3 and
   .personas_succeeded == 3 and
   .personas_failed == 0 and
-  .stages.serve == {attempted:false,status:"skipped"} and
+  .stages.serve == {
+    attempted:false,
+    status:"skipped",
+    cleanup_status:"skipped"
+  } and
   .stages.capture == {attempted:true,status:"succeeded"} and
   .stages.analysis == {attempted:true,status:"succeeded"} and
   .stages.goals == {attempted:true,status:"succeeded"}
@@ -319,6 +407,49 @@ find "$CASE_LANE/codex-work" -maxdepth 1 -type d -name 'persona-*' |
   grep . >/dev/null || fail "persona Codex work directories were not isolated"
 find "$CASE_LANE/codex-work" -maxdepth 1 -type d -name 'goals.*' |
   grep . >/dev/null || fail "goals Codex work directory was not isolated"
+
+run_lane_case direct-dispatcher-forge "beginner" "" valid valid 0 0 "" both
+[ "$CASE_RC" -eq 0 ] || fail "direct dispatcher forgery changed honest lane exit behavior"
+[ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "final findings publication did not retain exactly the normalized finding"
+if grep -F 'FORGED' "$CASE_LANE/findings.jsonl" >/dev/null; then
+  fail "direct Codex write survived final findings publication"
+fi
+jq -e '
+  .invalid_findings == 0 and
+  .personas_attempted == 1 and
+  .personas_succeeded == 1 and
+  .stages.analysis.status == "succeeded" and
+  .stages.goals.status == "succeeded"
+' "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "direct dispatcher forgery made metrics dishonest"
+
+run_lane_case total-failure-direct-forge "beginner" beginner valid valid 0 0 "" both
+[ "$CASE_RC" -ne 0 ] ||
+  fail "total persona failure with direct forgery looked like a clean night"
+[ ! -s "$CASE_LANE/findings.jsonl" ] ||
+  fail "EXIT publication retained a forged finding on total persona failure"
+jq -e '
+  .personas_attempted == 1 and
+  .personas_succeeded == 0 and
+  .personas_failed == 1 and
+  .stages.analysis.status == "failed" and
+  .stages.goals.status == "succeeded"
+' "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "total failure cleanup did not retain honest metrics"
+
+run_lane_case staging-contract-tamper "beginner" "" valid valid 0 0 "" "" 1
+[ "$CASE_RC" -ne 0 ] ||
+  fail "tampered shell-assigned finding contract did not fail publication"
+[ ! -s "$CASE_LANE/findings.jsonl" ] ||
+  fail "tampered shell-assigned finding contract was published"
+assert_contains "shell-normalized content was tampered" "$CASE_LANE/stderr"
+jq -e '
+  .invalid_findings == 1 and
+  .personas_succeeded == 1 and
+  .stages.analysis.status == "succeeded"
+' "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "staging contract tamper was not recorded honestly"
 
 run_lane_case one-persona-fails "beginner expert impatient" beginner
 [ "$CASE_RC" -eq 0 ] || fail "one persona failure incorrectly failed the lane"
@@ -403,39 +534,66 @@ for mutation_mode in digest fabricated; do
   assert_contains "captured manifest/evidence changed" "$CASE_LANE/stderr"
 done
 
-partial_state="$TEST_TMP/cases/partial-goals/state"
-partial_night=2026-07-29-partial-goals
-partial_lane="$partial_state/lanes/$partial_night/lane_1"
-mkdir -p "$partial_lane/home" "$partial_lane/tmp" "$partial_state/goals"
-printf '%s\n' "# stale partial" > "$partial_state/goals/GOALS-draft.md"
-CASE_STATE="$partial_state"
-CASE_LANE="$partial_lane"
-set +e
-/usr/bin/env -i \
-  PATH="$stub_path" HOME="$partial_lane/home" TMPDIR="$partial_lane/tmp" LANG=C TERM=dumb \
-  NIGHT_ID="$partial_night" LANE_DIR="$partial_lane" \
-  METSUKE_TARGET_URL='http://127.0.0.1:9999' METSUKE_PERSONAS=beginner \
-  PLAYWRIGHT_BROWSERS_PATH_REAL="$browser_cache" METSUKE_CODEX_BIN=codex \
-  FAKE_FINDING_MODE=valid FAKE_CAPTURE_MODE=valid FAKE_GOALS_FAIL=0 FAKE_MV_FAIL=0 \
-  /bin/bash "$RUN_SH" >"$partial_lane/stdout" 2>"$partial_lane/stderr"
-CASE_RC=$?
-set -e
+partial_state="$TEST_TMP/cases/partial-goals-success/state"
+mkdir -p "$partial_state/goals"
+printf '%s\n' "# stale goals" > "$partial_state/goals/GOALS-draft.md"
+printf '%s\n' "# stale feature map" > "$partial_state/goals/feature-map.md"
+run_lane_case partial-goals-success "beginner"
 [ "$CASE_RC" -eq 0 ] || fail "partial goals set regeneration failed"
+partial_state="$CASE_STATE"
 assert_contains "# generated GOALS_OUTPUT_PATH" "$partial_state/goals/GOALS-draft.md"
+assert_contains "# generated FEATURE_MAP_OUTPUT_PATH" "$partial_state/goals/feature-map.md"
 assert_file_exists "$partial_state/goals/feature-map.md"
 assert_file_exists "$partial_state/goals/range-map.md"
 
+failed_goals_state="$TEST_TMP/cases/partial-goals-codex-fail/state"
+mkdir -p "$failed_goals_state/goals"
+printf '%s\n' "# curated goals" > "$failed_goals_state/goals/GOALS-draft.md"
+printf '%s\n' "# curated feature map" > "$failed_goals_state/goals/feature-map.md"
+cp "$failed_goals_state/goals/GOALS-draft.md" "$TEST_TMP/goals-before-codex-fail"
+cp "$failed_goals_state/goals/feature-map.md" "$TEST_TMP/feature-before-codex-fail"
+run_lane_case partial-goals-codex-fail "beginner" "" valid valid 1
+[ "$CASE_RC" -eq 0 ] || fail "goals Codex failure was incorrectly fatal"
+cmp -s "$TEST_TMP/goals-before-codex-fail" "$CASE_STATE/goals/GOALS-draft.md" ||
+  fail "goals Codex failure changed the existing GOALS draft"
+cmp -s "$TEST_TMP/feature-before-codex-fail" "$CASE_STATE/goals/feature-map.md" ||
+  fail "goals Codex failure changed the existing feature map"
+[ ! -e "$CASE_STATE/goals/range-map.md" ] ||
+  fail "goals Codex failure created a missing range map"
+
+publication_state="$TEST_TMP/cases/publication-fail/state"
+mkdir -p "$publication_state/goals"
+printf '%s\n' "# curated publication goals" > "$publication_state/goals/GOALS-draft.md"
+printf '%s\n' "# curated publication feature map" > "$publication_state/goals/feature-map.md"
+cp "$publication_state/goals/GOALS-draft.md" "$TEST_TMP/goals-before-publication-fail"
+cp "$publication_state/goals/feature-map.md" "$TEST_TMP/feature-before-publication-fail"
 run_lane_case publication-fail "beginner" "" valid valid 0 1
 [ "$CASE_RC" -eq 0 ] || fail "goals publication failure was incorrectly fatal"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
   fail "goals publication failure was not recorded"
-for goal_name in GOALS-draft.md feature-map.md range-map.md; do
-  [ ! -e "$CASE_STATE/goals/$goal_name" ] ||
-    fail "partial goals destination survived publication rollback: $goal_name"
-done
+cmp -s "$TEST_TMP/goals-before-publication-fail" "$CASE_STATE/goals/GOALS-draft.md" ||
+  fail "publication failure did not restore the previous GOALS draft"
+cmp -s "$TEST_TMP/feature-before-publication-fail" "$CASE_STATE/goals/feature-map.md" ||
+  fail "publication failure did not restore the previous feature map"
+[ ! -e "$CASE_STATE/goals/range-map.md" ] ||
+  fail "publication failure did not restore the previous missing range map"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "publication failure discarded findings"
+
+unsafe_goals_state="$TEST_TMP/cases/unsafe-goals-symlink/state"
+mkdir -p "$unsafe_goals_state/goals"
+printf '%s\n' "# protected target" > "$unsafe_goals_state/protected-feature-map"
+ln -s "$unsafe_goals_state/protected-feature-map" \
+  "$unsafe_goals_state/goals/feature-map.md"
+run_lane_case unsafe-goals-symlink "beginner"
+[ "$CASE_RC" -eq 0 ] || fail "unsafe goals destination made persona findings fatal"
+[ -L "$CASE_STATE/goals/feature-map.md" ] ||
+  fail "unsafe goals destination symlink was replaced"
+assert_contains "# protected target" "$unsafe_goals_state/protected-feature-map"
+jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
+  "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "unsafe goals destination refusal was not recorded"
 
 serve_failure_state="$TEST_TMP/cases/serve-failure/state"
 serve_failure_night=2026-07-29-serve-failure
@@ -452,11 +610,55 @@ serve_failure_rc=$?
 set -e
 [ "$serve_failure_rc" -ne 0 ] || fail "serve failure did not fail the lane"
 jq -e '
-  .stages.serve == {attempted:true,status:"failed"} and
+  .stages.serve == {
+    attempted:true,
+    status:"failed",
+    cleanup_status:"not_attempted"
+  } and
   .stages.capture == {attempted:false,status:"not_attempted"} and
   .stages.analysis == {attempted:false,status:"not_attempted"} and
   .stages.goals == {attempted:false,status:"not_attempted"}
 ' "$serve_failure_lane/metrics.json" >/dev/null ||
   fail "early serve failure reported later stages as successful"
+
+cleanup_failure_state="$TEST_TMP/cases/cleanup-failure/state"
+cleanup_failure_night=2026-07-29-cleanup-failure
+cleanup_failure_lane="$cleanup_failure_state/lanes/$cleanup_failure_night/lane_1"
+cleanup_failure_checkout="$TEST_TMP/cleanup-failure-checkout"
+cleanup_failure_port_state="$TEST_TMP/cleanup-failure-port"
+mkdir -p \
+  "$cleanup_failure_lane/home" \
+  "$cleanup_failure_lane/tmp" \
+  "$cleanup_failure_checkout/node_modules"
+set +e
+/usr/bin/env -i \
+  PATH="$stub_path" HOME="$cleanup_failure_lane/home" TMPDIR="$cleanup_failure_lane/tmp" \
+  LANG=C TERM=dumb NIGHT_ID="$cleanup_failure_night" LANE_DIR="$cleanup_failure_lane" \
+  METSUKE_LP_CHECKOUT="$cleanup_failure_checkout" METSUKE_PORT=43125 \
+  METSUKE_PERSONAS=beginner PLAYWRIGHT_BROWSERS_PATH_REAL="$browser_cache" \
+  METSUKE_CODEX_BIN=codex FAKE_PORT_STATE="$cleanup_failure_port_state" \
+  FAKE_EXPECTED_PGID=777 \
+  /bin/bash "$RUN_SH" >"$cleanup_failure_lane/stdout" 2>"$cleanup_failure_lane/stderr"
+cleanup_failure_rc=$?
+set -e
+[ "$cleanup_failure_rc" -ne 0 ] ||
+  fail "server cleanup failure did not fail the lane"
+jq -e '
+  .stages.serve == {
+    attempted:true,
+    status:"succeeded",
+    cleanup_status:"failed"
+  } and
+  .stages.capture.status == "succeeded" and
+  .stages.analysis.status == "succeeded"
+' "$cleanup_failure_lane/metrics.json" >/dev/null ||
+  {
+    jq . "$cleanup_failure_lane/metrics.json" >&2
+    cat "$cleanup_failure_lane/stderr" >&2
+    fail "server cleanup failure was absent from metrics"
+  }
+[ "$(wc -l < "$cleanup_failure_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "server cleanup failure prevented honest final findings publication"
+rm -f "$cleanup_failure_port_state"
 
 printf 'test_metsuke_offline: PASS\n'
