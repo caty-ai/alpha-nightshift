@@ -32,7 +32,7 @@ GOALS_STATUS=not_attempted
 PERSONA_FAILURES_FILE=
 CAPTURE_TRUST_DIR=
 FINDINGS_STAGING_FILE=
-FINDINGS_METADATA_FILE=
+FINDINGS_CONTRACT=
 
 log() {
   printf '%s\n' "metsuke: $*" >&2
@@ -201,24 +201,29 @@ stage_normalized_finding() {
   local persona=$2
   local sequence=$3
   local finding_digest
-  local finding_metadata
+  local finding_contract
   finding_digest=$(printf '%s\n' "$normalized_finding" |
     shasum -a 256 | awk '{print $1}') || return 1
-  finding_metadata=$(jq -n -c \
+  finding_contract=$(jq -n -c \
     --argjson sequence "$sequence" \
     --arg persona "$persona" \
     --arg digest "$finding_digest" \
     '{sequence: $sequence, persona: $persona, digest: $digest}') || return 1
   printf '%s\n' "$normalized_finding" >> "$FINDINGS_STAGING_FILE" || return 1
-  printf '%s\n' "$finding_metadata" >> "$FINDINGS_METADATA_FILE"
+  if [ -n "$FINDINGS_CONTRACT" ]; then
+    FINDINGS_CONTRACT="$FINDINGS_CONTRACT
+$finding_contract"
+  else
+    FINDINGS_CONTRACT=$finding_contract
+  fi
 }
 
 publish_staged_findings() {
   local findings_tmp
   local staged_line
   local compact_line
-  local metadata_line
-  local metadata
+  local contract_line
+  local contract
   local expected_sequence
   local expected_persona
   local expected_digest
@@ -226,18 +231,24 @@ publish_staged_findings() {
   local canonical_finding
   local publication_sequence=1
   local publication_failed=0
-  local extra_metadata
+  local extra_contract
 
   findings_tmp=$(mktemp "$LANE_DIR/.findings-publication.XXXXXX") || return 1
   : > "$findings_tmp"
-  exec 3< "$FINDINGS_METADATA_FILE"
+  if [ -n "$FINDINGS_CONTRACT" ]; then
+    exec 3<<EOF
+$FINDINGS_CONTRACT
+EOF
+  else
+    exec 3< /dev/null
+  fi
   while IFS= read -r staged_line || [ -n "$staged_line" ]; do
-    if ! IFS= read -r metadata_line <&3; then
-      log "finding staging metadata ended before the staged findings"
+    if ! IFS= read -r contract_line <&3; then
+      log "in-memory finding contract ended before the staged findings"
       publication_failed=1
       break
     fi
-    if ! metadata=$(printf '%s\n' "$metadata_line" | jq -e -c '
+    if ! contract=$(printf '%s\n' "$contract_line" | jq -e -c '
       select(
         type == "object" and
         (.sequence | type == "number" and floor == . and . > 0) and
@@ -246,14 +257,14 @@ publish_staged_findings() {
       )
       | {sequence: .sequence, persona: .persona, digest: .digest}
     ' 2>/dev/null); then
-      log "rejected staged finding with malformed shell contract metadata"
+      log "rejected staged finding with malformed in-memory shell contract"
       INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
       publication_failed=1
       continue
     fi
-    expected_sequence=$(printf '%s\n' "$metadata" | jq -r '.sequence')
-    expected_persona=$(printf '%s\n' "$metadata" | jq -r '.persona')
-    expected_digest=$(printf '%s\n' "$metadata" | jq -r '.digest')
+    expected_sequence=$(printf '%s\n' "$contract" | jq -r '.sequence')
+    expected_persona=$(printf '%s\n' "$contract" | jq -r '.persona')
+    expected_digest=$(printf '%s\n' "$contract" | jq -r '.digest')
     case "$expected_persona" in
       beginner|expert|impatient) ;;
       *)
@@ -311,8 +322,8 @@ publish_staged_findings() {
     }
     publication_sequence=$((publication_sequence + 1))
   done < "$FINDINGS_STAGING_FILE"
-  if IFS= read -r extra_metadata <&3; then
-    log "finding staging metadata contains entries without staged findings"
+  if IFS= read -r extra_contract <&3; then
+    log "in-memory finding contract contains entries without staged findings"
     publication_failed=1
   fi
   exec 3<&-
@@ -510,7 +521,7 @@ publish_goals_set() {
     fi
     return 1
   fi
-  remove_goals_backup "$backup_dir"
+  remove_goals_backup "$backup_dir" || true
 }
 
 write_metrics() {
@@ -573,6 +584,10 @@ on_exit() {
   local final_status=0
   local action_status=0
   trap - EXIT
+  if ! publish_staged_findings; then
+    [ "$action_status" -ne 0 ] || action_status=1
+    log "final findings publication rejected tampered staging or failed"
+  fi
   if [ "$SERVER_STARTED" = true ]; then
     if "$SCRIPT_DIR/serve-lp.sh" stop; then
       SERVE_CLEANUP_STATUS=succeeded
@@ -581,17 +596,12 @@ on_exit() {
       SERVE_CLEANUP_STATUS=failed
     fi
   fi
-  if ! publish_staged_findings; then
-    [ "$action_status" -ne 0 ] || action_status=1
-    log "final findings publication rejected tampered staging or failed"
-  fi
   if ! write_metrics; then
     [ "$action_status" -ne 0 ] || action_status=1
   fi
   rm -f \
     "$PERSONA_FAILURES_FILE" \
-    "$FINDINGS_STAGING_FILE" \
-    "$FINDINGS_METADATA_FILE"
+    "$FINDINGS_STAGING_FILE"
   if [ "$original_status" -ne 0 ]; then
     final_status=$original_status
   else
@@ -636,14 +646,9 @@ run_lane() {
   : > "$PERSONA_FAILURES_FILE"
   : > "$LANE_DIR/findings.jsonl"
   FINDINGS_STAGING_FILE=$(mktemp "$LANE_DIR/.accepted-findings.XXXXXX")
-  FINDINGS_METADATA_FILE=$(mktemp "$LANE_DIR/.accepted-findings-metadata.XXXXXX")
+  FINDINGS_CONTRACT=
   trap 'on_exit $?' EXIT
 
-  if ! prepare_goals_directory "$goals_dir"; then
-    GOALS_FAILED=true
-    GOALS_STATUS=failed
-    return 1
-  fi
   evidence_prepare_dir
 
   phase_started=$(date '+%s')
@@ -787,54 +792,56 @@ run_lane() {
   fi
 
   phase_started=$(date '+%s')
-  if goals_set_complete "$goals_dir"; then
+  if ! prepare_goals_directory "$goals_dir"; then
+    GOALS_ATTEMPTED=true
+    GOALS_FAILED=true
+    GOALS_STATUS=failed
+  elif goals_set_complete "$goals_dir"; then
     GOALS_STATUS=skipped
   else
     GOALS_ATTEMPTED=true
-    goals_work_dir=$(prepare_codex_work_dir goals) || {
+    if ! goals_work_dir=$(prepare_codex_work_dir goals); then
       GOALS_FAILED=true
       GOALS_STATUS=failed
-      T_GOALS=$(( $(date '+%s') - phase_started ))
-      [ "$analysis_total_failure" = false ] || return 1
-      return 0
-    }
-    staged_goals_path="$goals_work_dir/GOALS-draft.md"
-    staged_feature_map_path="$goals_work_dir/feature-map.md"
-    staged_range_map_path="$goals_work_dir/range-map.md"
-    goals_prompt="$goals_work_dir/prompt.md"
-    if ! validate_goals_destinations "$goals_dir"; then
-      GOALS_FAILED=true
-      GOALS_STATUS=failed
-      log "unsafe partial goals destination prevented regeneration"
     else
-      render_goals_prompt \
-        "$CAPTURE_TRUST_DIR/manifest.json" \
-        "$(evidence_dir_path)" \
-        "$staged_goals_path" \
-        "$staged_feature_map_path" \
-        "$staged_range_map_path" > "$goals_prompt"
-      goals_rc=0
-      run_codex_prompt "$goals_work_dir" "$goals_prompt" || goals_rc=$?
-      if ! evidence_verify_frozen_capture "$CAPTURE_TRUST_DIR"; then
+      staged_goals_path="$goals_work_dir/GOALS-draft.md"
+      staged_feature_map_path="$goals_work_dir/feature-map.md"
+      staged_range_map_path="$goals_work_dir/range-map.md"
+      goals_prompt="$goals_work_dir/prompt.md"
+      if ! validate_goals_destinations "$goals_dir"; then
         GOALS_FAILED=true
         GOALS_STATUS=failed
-        T_GOALS=$(( $(date '+%s') - phase_started ))
-        log "captured manifest/evidence changed during goals analysis; lane is failing closed"
-        return 1
-      fi
-      if [ "$goals_rc" -ne 0 ] ||
-        [ ! -f "$staged_goals_path" ] ||
-        [ ! -f "$staged_feature_map_path" ] ||
-        [ ! -f "$staged_range_map_path" ]; then
-        GOALS_FAILED=true
-        GOALS_STATUS=failed
-        log "goals/map generation failed (exit=$goals_rc); findings are retained"
-      elif ! publish_goals_set "$goals_work_dir" "$goals_dir"; then
-        GOALS_FAILED=true
-        GOALS_STATUS=failed
-        log "goals/map publication failed and partial destinations were rolled back; findings are retained"
+        log "unsafe partial goals destination prevented regeneration"
       else
-        GOALS_STATUS=succeeded
+        render_goals_prompt \
+          "$CAPTURE_TRUST_DIR/manifest.json" \
+          "$(evidence_dir_path)" \
+          "$staged_goals_path" \
+          "$staged_feature_map_path" \
+          "$staged_range_map_path" > "$goals_prompt"
+        goals_rc=0
+        run_codex_prompt "$goals_work_dir" "$goals_prompt" || goals_rc=$?
+        if ! evidence_verify_frozen_capture "$CAPTURE_TRUST_DIR"; then
+          GOALS_FAILED=true
+          GOALS_STATUS=failed
+          T_GOALS=$(( $(date '+%s') - phase_started ))
+          log "captured manifest/evidence changed during goals analysis; lane is failing closed"
+          return 1
+        fi
+        if [ "$goals_rc" -ne 0 ] ||
+          [ ! -f "$staged_goals_path" ] ||
+          [ ! -f "$staged_feature_map_path" ] ||
+          [ ! -f "$staged_range_map_path" ]; then
+          GOALS_FAILED=true
+          GOALS_STATUS=failed
+          log "goals/map generation failed (exit=$goals_rc); findings are retained"
+        elif ! publish_goals_set "$goals_work_dir" "$goals_dir"; then
+          GOALS_FAILED=true
+          GOALS_STATUS=failed
+          log "goals/map publication failed and partial destinations were rolled back; findings are retained"
+        else
+          GOALS_STATUS=succeeded
+        fi
       fi
     fi
   fi

@@ -6,6 +6,8 @@ METSUKE_PORT=${METSUKE_PORT:-4173}
 PID_FILE="$LANE_DIR/metsuke-server.pid"
 PGID_FILE="$LANE_DIR/metsuke-server.pgid"
 PORT_FILE="$LANE_DIR/metsuke-server.port"
+BASELINE_FILE="$LANE_DIR/metsuke-server.baseline"
+IDENTITY_FILE="$LANE_DIR/metsuke-server.identity"
 SERVER_LOG="$LANE_DIR/metsuke-server.log"
 
 log() {
@@ -42,12 +44,30 @@ candidate_is_active() {
   kill -0 "$process_pid" 2>/dev/null || return 1
   if ! process_state=$(ps -o stat= -p "$process_pid" 2>/dev/null |
     tr -d ' '); then
+    kill -0 "$process_pid" 2>/dev/null || return 1
     return 2
   fi
   case "$process_state" in
     ''|Z*) return 1 ;;
   esac
   return 0
+}
+
+process_identity_for_pid() {
+  local process_pid=$1
+  local process_started
+  kill -0 "$process_pid" 2>/dev/null || return 1
+  if ! process_started=$(ps -o lstart= -p "$process_pid" 2>/dev/null |
+    awk '{$1=$1; print}'); then
+    kill -0 "$process_pid" 2>/dev/null || return 1
+    return 2
+  fi
+  if [ -z "$process_started" ]; then
+    kill -0 "$process_pid" 2>/dev/null || return 1
+    return 2
+  fi
+  printf '%s\n' "$process_pid $process_started" |
+    shasum -a 256 | awk '{print $1}'
 }
 
 process_group_for_pid() {
@@ -59,6 +79,44 @@ process_group_for_pid() {
     ''|*[!0-9]*|0) return 1 ;;
   esac
   printf '%s\n' "$process_group"
+}
+
+write_atomic_state_line() {
+  local destination=$1
+  local value=$2
+  local state_tmp
+  state_tmp=$(mktemp "$LANE_DIR/.metsuke-state.XXXXXX") || return 1
+  if ! printf '%s\n' "$value" > "$state_tmp" ||
+    ! mv "$state_tmp" "$destination"; then
+    rm -f "$state_tmp"
+    return 1
+  fi
+}
+
+read_single_state_line() {
+  local state_file=$1
+  local state_value
+  [ -f "$state_file" ] && [ ! -L "$state_file" ] || return 1
+  state_value=$(awk '
+    NR == 1 {value = $0}
+    NR > 1 {exit 1}
+    END {
+      if (NR != 1 || value == "") {
+        exit 1
+      }
+      print value
+    }
+  ' "$state_file") || return 1
+  printf '%s\n' "$state_value"
+}
+
+clear_lifecycle_state() {
+  rm -f \
+    "$PID_FILE" \
+    "$PGID_FILE" \
+    "$PORT_FILE" \
+    "$BASELINE_FILE" \
+    "$IDENTITY_FILE"
 }
 
 port_is_occupied() {
@@ -128,6 +186,78 @@ collect_pgid_members() {
   rm -f "$process_snapshot"
 }
 
+collect_pid_forest() {
+  local root_pids=$1
+  local root_csv
+  local process_snapshot="$LANE_DIR/.metsuke-process-forest.$$.txt"
+  root_csv=$(printf '%s\n' "$root_pids" |
+    awk '/^[0-9]+$/ {values = values separator $1; separator = ","} END {print values}')
+  if ! ps -axo pid=,ppid= > "$process_snapshot"; then
+    rm -f "$process_snapshot"
+    return 1
+  fi
+  if ! awk -v roots="$root_csv" '
+    BEGIN {
+      root_count = split(roots, root_list, ",")
+      for (root_index = 1; root_index <= root_count; root_index += 1) {
+        if (root_list[root_index] ~ /^[0-9]+$/) {
+          selected[root_list[root_index]] = 1
+        }
+      }
+    }
+    {
+      pid[NR] = $1
+      parent[NR] = $2
+    }
+    END {
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (row = 1; row <= NR; row += 1) {
+          if (selected[parent[row]] && !selected[pid[row]]) {
+            selected[pid[row]] = 1
+            changed = 1
+          }
+        }
+      }
+      for (row = 1; row <= NR; row += 1) {
+        if (selected[pid[row]]) {
+          print pid[row]
+        }
+      }
+    }
+  ' "$process_snapshot"; then
+    rm -f "$process_snapshot"
+    return 1
+  fi
+  rm -f "$process_snapshot"
+}
+
+collect_pid_ancestry() {
+  local process_pid=$1
+  local process_snapshot="$LANE_DIR/.metsuke-process-ancestry.$$.txt"
+  if ! ps -axo pid=,ppid= > "$process_snapshot"; then
+    rm -f "$process_snapshot"
+    return 1
+  fi
+  if ! awk -v root="$process_pid" '
+    {
+      parent[$1] = $2
+    }
+    END {
+      current = root
+      while (current ~ /^[0-9]+$/ && current > 0 && !seen[current]++) {
+        print current
+        current = parent[current]
+      }
+    }
+  ' "$process_snapshot"; then
+    rm -f "$process_snapshot"
+    return 1
+  fi
+  rm -f "$process_snapshot"
+}
+
 merge_pid_lists() {
   printf '%s\n%s\n' "$1" "$2" |
     awk '/^[0-9]+$/ && !seen[$1]++ {print $1}'
@@ -155,26 +285,163 @@ $pid_list
 EOF
 }
 
+pid_list_intersection() {
+  local pid_list=$1
+  local retained_pids=$2
+  local process_pid
+  while IFS= read -r process_pid; do
+    case "$process_pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    if pid_list_contains "$process_pid" "$retained_pids"; then
+      printf '%s\n' "$process_pid"
+    fi
+  done <<EOF
+$pid_list
+EOF
+}
+
+record_prelaunch_baseline() {
+  local server_pgid=$1
+  local baseline_tmp
+  local baseline_members
+  local baseline_pid
+  local baseline_identity
+  local identity_status
+  baseline_tmp=$(mktemp "$LANE_DIR/.metsuke-baseline.XXXXXX") || return 1
+  : > "$baseline_tmp"
+  if ! baseline_members=$(collect_pgid_members "$server_pgid"); then
+    rm -f "$baseline_tmp"
+    return 1
+  fi
+  while IFS= read -r baseline_pid; do
+    case "$baseline_pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    identity_status=0
+    baseline_identity=$(process_identity_for_pid "$baseline_pid") ||
+      identity_status=$?
+    if [ "$identity_status" -eq 1 ]; then
+      continue
+    fi
+    if [ "$identity_status" -ne 0 ]; then
+      rm -f "$baseline_tmp"
+      return 1
+    fi
+    printf '%s %s\n' "$baseline_pid" "$baseline_identity" \
+      >> "$baseline_tmp" || {
+      rm -f "$baseline_tmp"
+      return 1
+    }
+  done <<EOF
+$baseline_members
+EOF
+  if [ ! -s "$baseline_tmp" ] ||
+    ! mv "$baseline_tmp" "$BASELINE_FILE"; then
+    rm -f "$baseline_tmp"
+    return 1
+  fi
+}
+
+collect_live_baseline_members() {
+  local baseline_pid
+  local expected_identity
+  local extra_field
+  local actual_identity
+  local identity_status
+  [ -f "$BASELINE_FILE" ] && [ ! -L "$BASELINE_FILE" ] ||
+    return 2
+  [ -s "$BASELINE_FILE" ] || return 2
+  while IFS=' ' read -r baseline_pid expected_identity extra_field; do
+    case "$baseline_pid" in
+      ''|*[!0-9]*) return 2 ;;
+    esac
+    case "$expected_identity" in
+      ''|*[!0-9a-f]*)
+        return 2
+        ;;
+    esac
+    [ "${#expected_identity}" -eq 64 ] || return 2
+    [ -z "$extra_field" ] || return 2
+    identity_status=0
+    actual_identity=$(process_identity_for_pid "$baseline_pid") ||
+      identity_status=$?
+    if [ "$identity_status" -eq 1 ]; then
+      continue
+    fi
+    if [ "$identity_status" -ne 0 ] ||
+      [ "$actual_identity" != "$expected_identity" ]; then
+      return 2
+    fi
+    printf '%s\n' "$baseline_pid"
+  done < "$BASELINE_FILE"
+}
+
+pid_list_has_pgid_member() {
+  local pid_list=$1
+  local wanted_pgid=$2
+  local process_pid
+  local process_pgid
+  while IFS= read -r process_pid; do
+    case "$process_pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    process_pgid=$(process_group_for_pid "$process_pid") || continue
+    if [ "$process_pgid" = "$wanted_pgid" ]; then
+      return 0
+    fi
+  done <<EOF
+$pid_list
+EOF
+  return 1
+}
+
 collect_server_candidates() {
   local server_pid=$1
   local server_pgid=$2
-  local protected_baseline=$3
+  local expected_server_identity=$3
+  local caller_ancestry=$4
+  local live_baseline
+  local baseline_status
+  local actual_server_identity
+  local identity_status
+  local actual_server_pgid
   local descendant_tree
-  local cleanup_tree
+  local protected_roots
+  local protected_tree
   local group_members
   local merged_candidates
   local candidate_pid
   local activity_status
-  cleanup_tree=$(collect_pid_tree "$$") || return 1
-  descendant_tree=$(collect_pid_tree "$server_pid") || return 1
+  baseline_status=0
+  live_baseline=$(collect_live_baseline_members) || baseline_status=$?
+  [ "$baseline_status" -eq 0 ] || return 1
+  identity_status=0
+  actual_server_identity=$(process_identity_for_pid "$server_pid") ||
+    identity_status=$?
+  if [ "$identity_status" -eq 0 ]; then
+    [ "$actual_server_identity" = "$expected_server_identity" ] || return 1
+    actual_server_pgid=$(process_group_for_pid "$server_pid") || return 1
+    [ "$actual_server_pgid" = "$server_pgid" ] || return 1
+    descendant_tree=$(collect_pid_tree "$server_pid") || return 1
+  elif [ "$identity_status" -eq 1 ]; then
+    descendant_tree=
+    pid_list_has_pgid_member "$live_baseline" "$server_pgid" || return 1
+  else
+    return 1
+  fi
   group_members=$(collect_pgid_members "$server_pgid") || return 1
+  caller_ancestry=$(pid_list_intersection "$caller_ancestry" "$group_members")
+  protected_roots=$(merge_pid_lists "$live_baseline" "$caller_ancestry")
+  protected_roots=$(pid_list_without "$protected_roots" "1")
+  protected_tree=$(collect_pid_forest "$protected_roots") || return 1
+  protected_tree=$(pid_list_without "$protected_tree" "$descendant_tree")
   merged_candidates=$(merge_pid_lists "$descendant_tree" "$group_members")
   while IFS= read -r candidate_pid; do
     case "$candidate_pid" in
       ''|*[!0-9]*) continue ;;
     esac
-    if pid_list_contains "$candidate_pid" "$protected_baseline" ||
-      pid_list_contains "$candidate_pid" "$cleanup_tree"; then
+    if pid_list_contains "$candidate_pid" "$protected_tree"; then
       continue
     fi
     activity_status=0
@@ -210,7 +477,10 @@ start_server() {
   local server_pgid
   local wait_ticks
   local pgid_ticks
+  local identity_ticks
   local http_status
+  local caller_pgid
+  local server_identity
 
   [ -n "$checkout" ] || {
     log "METSUKE_LP_CHECKOUT is required when METSUKE_TARGET_URL is unset"
@@ -245,12 +515,26 @@ start_server() {
   log "building local LP in $checkout"
   (cd "$checkout" && npm run build)
 
+  caller_pgid=$(process_group_for_pid "$$") || {
+    log "could not determine the pre-launch process group"
+    return 1
+  }
+  if ! record_prelaunch_baseline "$caller_pgid"; then
+    log "could not atomically record the pre-launch process identity baseline"
+    return 1
+  fi
   (
     cd "$checkout"
     exec npm run start -- -p "$METSUKE_PORT" -H 127.0.0.1
   ) >"$SERVER_LOG" 2>&1 &
   server_pid=$!
-  printf '%s\n' "$server_pid" > "$PID_FILE"
+  if ! write_atomic_state_line "$PID_FILE" "$server_pid" ||
+    ! write_atomic_state_line "$PGID_FILE" "$caller_pgid"; then
+    log "could not persist the LP server lifecycle state"
+    kill -KILL "$server_pid" 2>/dev/null || true
+    clear_lifecycle_state
+    return 1
+  fi
   pgid_ticks=0
   server_pgid=
   while [ "$pgid_ticks" -lt 50 ]; do
@@ -263,20 +547,39 @@ start_server() {
     sleep 0.01
     pgid_ticks=$((pgid_ticks + 1))
   done
-  if [ -z "$server_pgid" ]; then
-    log "could not record the LP server process group; refusing an untracked server"
+  if [ -z "$server_pgid" ] || [ "$server_pgid" != "$caller_pgid" ]; then
+    log "LP server did not retain the recorded pre-launch process group"
     kill -KILL "$server_pid" 2>/dev/null || true
-    rm -f "$PID_FILE" "$PGID_FILE" "$PORT_FILE"
+    clear_lifecycle_state
     return 1
   fi
-  printf '%s\n' "$server_pgid" > "$PGID_FILE"
-  printf '%s\n' "$METSUKE_PORT" > "$PORT_FILE"
+  identity_ticks=0
+  server_identity=
+  while [ "$identity_ticks" -lt 50 ]; do
+    if server_identity=$(process_identity_for_pid "$server_pid"); then
+      break
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.01
+    identity_ticks=$((identity_ticks + 1))
+  done
+  if [ -z "$server_identity" ] ||
+    ! write_atomic_state_line "$IDENTITY_FILE" "$server_identity" ||
+    ! write_atomic_state_line "$PORT_FILE" "$METSUKE_PORT"; then
+    log "could not persist the LP server process identity"
+    kill -KILL "$server_pid" 2>/dev/null || true
+    clear_lifecycle_state
+    return 1
+  fi
 
   wait_ticks=0
   while [ "$wait_ticks" -lt 180 ]; do
     if ! server_is_alive "$server_pid"; then
       log "LP server exited before becoming ready; see $SERVER_LOG"
       stop_server || true
+      clear_lifecycle_state
       return 1
     fi
     http_status=$(curl --max-time 2 -s -o /dev/null -w '%{http_code}' \
@@ -290,15 +593,20 @@ start_server() {
   done
   log "LP server did not return HTTP 200 within 180 seconds; see $SERVER_LOG"
   stop_server || true
+  clear_lifecycle_state
   return 1
 }
 
 stop_server() {
   local server_pid
   local server_pgid
-  local initial_tree
-  local initial_group
-  local protected_baseline
+  local expected_server_identity
+  local actual_server_identity
+  local identity_status
+  local actual_server_pgid
+  local caller_ancestry
+  local live_baseline
+  local baseline_status
   local candidates
   local refreshed_candidates
   local term_ticks
@@ -311,7 +619,10 @@ stop_server() {
   local port_free=false
 
   [ -s "$PID_FILE" ] || return 0
-  server_pid=$(sed -n '1p' "$PID_FILE")
+  server_pid=$(read_single_state_line "$PID_FILE") || {
+    log "missing or unsafe server pid state: $PID_FILE"
+    return 1
+  }
   case "$server_pid" in
     ''|*[!0-9]*)
       log "invalid server pid file: $PID_FILE"
@@ -319,38 +630,75 @@ stop_server() {
       ;;
   esac
   if [ -s "$PORT_FILE" ]; then
-    METSUKE_PORT=$(sed -n '1p' "$PORT_FILE")
-  fi
-  validate_port
-
-  if [ -s "$PGID_FILE" ]; then
-    server_pgid=$(sed -n '1p' "$PGID_FILE")
-  else
-    server_pgid=$(process_group_for_pid "$server_pid") || {
-      log "server process group is missing and cannot be recovered for pid $server_pid"
+    METSUKE_PORT=$(read_single_state_line "$PORT_FILE") || {
+      log "missing or unsafe server port state: $PORT_FILE"
       return 1
     }
   fi
+  validate_port
+
+  server_pgid=$(read_single_state_line "$PGID_FILE") || {
+    log "missing or unsafe server process-group state: $PGID_FILE"
+    return 1
+  }
   case "$server_pgid" in
     ''|*[!0-9]*|0)
       log "invalid server process-group file: $PGID_FILE"
       return 1
       ;;
   esac
-
-  if ! initial_group=$(collect_pgid_members "$server_pgid"); then
-    log "could not inspect retained server process group $server_pgid"
+  expected_server_identity=$(read_single_state_line "$IDENTITY_FILE") || {
+    log "missing or unsafe server identity state: $IDENTITY_FILE"
+    return 1
+  }
+  case "$expected_server_identity" in
+    *[!0-9a-f]*)
+      log "malformed server identity state: $IDENTITY_FILE"
+      return 1
+      ;;
+  esac
+  [ "${#expected_server_identity}" -eq 64 ] || {
+    log "malformed server identity state: $IDENTITY_FILE"
+    return 1
+  }
+  baseline_status=0
+  live_baseline=$(collect_live_baseline_members) || baseline_status=$?
+  if [ "$baseline_status" -ne 0 ]; then
+    log "missing, malformed, or stale pre-launch process baseline: $BASELINE_FILE"
     return 1
   fi
-  if ! initial_tree=$(collect_pid_tree "$server_pid"); then
-    log "could not inspect the recorded server descendant tree"
+  identity_status=0
+  actual_server_identity=$(process_identity_for_pid "$server_pid") ||
+    identity_status=$?
+  if [ "$identity_status" -eq 0 ]; then
+    if [ "$actual_server_identity" != "$expected_server_identity" ]; then
+      log "recorded server pid $server_pid has been reused; refusing to signal it or its process tree"
+      return 1
+    fi
+    actual_server_pgid=$(process_group_for_pid "$server_pid") || {
+      log "could not verify the live recorded server process group"
+      return 1
+    }
+    if [ "$actual_server_pgid" != "$server_pgid" ]; then
+      log "live recorded server pid $server_pid moved from retained process group $server_pgid; refusing cleanup"
+      return 1
+    fi
+  elif [ "$identity_status" -eq 1 ]; then
+    if ! pid_list_has_pgid_member "$live_baseline" "$server_pgid"; then
+      log "server root is gone and no identity-matching pre-launch baseline anchor retains process group $server_pgid"
+      return 1
+    fi
+  else
+    log "could not verify the recorded server process identity"
     return 1
   fi
-  protected_baseline=$(pid_list_without "$initial_group" "$initial_tree")
-  protected_baseline=$(merge_pid_lists "$protected_baseline" "$$
-$PPID")
+  caller_ancestry=$(collect_pid_ancestry "$$") || {
+    log "could not inspect cleanup caller ancestry"
+    return 1
+  }
   if ! candidates=$(collect_server_candidates \
-    "$server_pid" "$server_pgid" "$protected_baseline"); then
+    "$server_pid" "$server_pgid" "$expected_server_identity" \
+    "$caller_ancestry"); then
     log "could not build the initial server cleanup candidate set"
     return 1
   fi
@@ -360,7 +708,8 @@ $PPID")
   while [ "$term_ticks" -lt 30 ]; do
     sleep 0.1
     if ! refreshed_candidates=$(collect_server_candidates \
-      "$server_pid" "$server_pgid" "$protected_baseline"); then
+      "$server_pid" "$server_pgid" "$expected_server_identity" \
+      "$caller_ancestry"); then
       process_inspection_failed=1
       break
     fi
@@ -377,7 +726,8 @@ $PPID")
   previous_candidates=
   while [ "$kill_ticks" -lt 30 ]; do
     if ! candidates=$(collect_server_candidates \
-      "$server_pid" "$server_pgid" "$protected_baseline"); then
+      "$server_pid" "$server_pgid" "$expected_server_identity" \
+      "$caller_ancestry"); then
       process_inspection_failed=1
       break
     fi
@@ -387,7 +737,8 @@ $PPID")
     signal_pid_list KILL "$candidates"
     sleep 0.1
     if ! refreshed_candidates=$(collect_server_candidates \
-      "$server_pid" "$server_pgid" "$protected_baseline"); then
+      "$server_pid" "$server_pgid" "$expected_server_identity" \
+      "$caller_ancestry"); then
       process_inspection_failed=1
       break
     fi
@@ -411,7 +762,8 @@ $PPID")
     process_cleanup_failed=1
     log "server cleanup process inspection failed; refusing to report a clean stop"
   elif ! candidates=$(collect_server_candidates \
-    "$server_pid" "$server_pgid" "$protected_baseline"); then
+    "$server_pid" "$server_pgid" "$expected_server_identity" \
+    "$caller_ancestry"); then
     process_cleanup_failed=1
     log "final server cleanup process inspection failed"
   elif [ -n "$candidates" ]; then
@@ -433,11 +785,11 @@ $PPID")
     process_cleanup_failed=1
   fi
   if [ "$process_cleanup_failed" -ne 0 ]; then
-    log "server stop incomplete; protected same-group baseline was not signaled: $protected_baseline"
+    log "server stop incomplete; pre-launch baseline and caller ancestry were not signaled"
     return 1
   fi
 
-  rm -f "$PID_FILE" "$PGID_FILE" "$PORT_FILE"
+  clear_lifecycle_state
   log "stopped server tree and verified port $METSUKE_PORT is free"
 }
 

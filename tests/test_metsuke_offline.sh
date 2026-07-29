@@ -231,10 +231,21 @@ printf '%s\n' \
   '  ;;' \
   'esac' \
   'if [ "${FAKE_STAGE_TAMPER:-0}" = 1 ]; then' \
-  '  stage=$(find "$lane_dir" -maxdepth 1 -type f -name ".accepted-findings.*" ! -name "*metadata*" | sed -n "1p")' \
+  '  stage=$(find "$lane_dir" -maxdepth 1 -type f -name ".accepted-findings.*" | sed -n "1p")' \
   '  tampered=$(mktemp "${TMPDIR:-/tmp}/fake-stage-tamper.XXXXXX")' \
   '  jq -c '\''.persona = "impatient"'\'' "$stage" > "$tampered"' \
   '  mv "$tampered" "$stage"' \
+  'fi' \
+  'if [ "${FAKE_CONSISTENT_FORGE:-0}" = 1 ]; then' \
+  '  stage=$(find "$lane_dir" -maxdepth 1 -type f -name ".accepted-findings.*" | sed -n "1p")' \
+  '  metadata=$(find "$lane_dir" -maxdepth 1 -type f -name ".accepted-findings-metadata.*" | sed -n "1p")' \
+  '  [ -z "$metadata" ] && : > "$FAKE_NO_METADATA_MARKER"' \
+  '  forged=$(jq -n -c --arg id "mk-${NIGHT_ID}-002" '\''{id:$id,repo:"caty-talk-LP",target:"hero/cta",kind:"ux",symptom:"Fabricated CTA observation",interpretation:"forged interpretation",persona:"beginner",confirm_cost:"即断",evidence:["evidence/proof.txt"],status:"open",date:env.NIGHT_ID}'\'')' \
+  '  digest=$(printf "%s\n" "$forged" | shasum -a 256 | awk '\''{print $1}'\'')' \
+  '  printf "%s\n" "$forged" >> "$stage"' \
+  '  if [ -n "$metadata" ]; then' \
+  '    jq -n -c --arg digest "$digest" '\''{sequence:2,persona:"beginner",digest:$digest}'\'' >> "$metadata"' \
+  '  fi' \
   'fi' \
   'if [ "${FAKE_GOALS_FAIL:-0}" = 1 ]; then exit 10; fi' \
   'for marker in GOALS_OUTPUT_PATH FEATURE_MAP_OUTPUT_PATH RANGE_MAP_OUTPUT_PATH; do' \
@@ -259,6 +270,13 @@ printf '%s\n' \
 # shellcheck disable=SC2016
 printf '%s\n' \
   '#!/bin/bash' \
+  'if [ "${FAKE_RMDIR_FAIL:-0}" = 1 ]; then exit 13; fi' \
+  'exec /bin/rmdir "$@"' \
+  > "$fake_bin/rmdir"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
   'set -euo pipefail' \
   'case "${1:-}" in' \
   '  run)' \
@@ -278,7 +296,14 @@ printf '%s\n' \
 # shellcheck disable=SC2016
 printf '%s\n' \
   '#!/bin/bash' \
-  '[ -n "${FAKE_PORT_STATE:-}" ] && [ -e "$FAKE_PORT_STATE" ]' \
+  'if [ -n "${FAKE_PORT_STATE:-}" ] && [ -e "$FAKE_PORT_STATE" ]; then' \
+  '  if [ -n "${FAKE_CLEANUP_BLOCK_FILE:-}" ] && [ -s "$LANE_DIR/metsuke-server.pid" ]; then' \
+  '    : > "$FAKE_CLEANUP_STARTED_FILE"' \
+  '    while [ -e "$FAKE_CLEANUP_BLOCK_FILE" ]; do sleep 0.02; done' \
+  '  fi' \
+  '  exit 0' \
+  'fi' \
+  'exit 1' \
   > "$fake_bin/lsof"
 
 # shellcheck disable=SC2016
@@ -296,6 +321,7 @@ printf '%s\n' \
   '#!/bin/bash' \
   'set -euo pipefail' \
   'case " $* " in' \
+  '  *" -o lstart= -p "*) printf "%s\n" "Mon Jan  1 00:00:00 2024" ;;' \
   '  *" -o stat= -p "*)' \
   '    target=${!#}' \
   '    if kill -0 "$target" 2>/dev/null; then printf "%s\n" S; exit 0; fi' \
@@ -303,12 +329,20 @@ printf '%s\n' \
   '    ;;' \
   '  *" -o pgid= -p "*) printf "%s\n" "$FAKE_EXPECTED_PGID" ;;' \
   '  *" -axo pid=,ppid= "*)' \
-  '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
-  '    if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" 1; fi' \
+  '    printf "%s %s\n" "$PPID" 1' \
+  '    if [ -n "${FAKE_BASELINE_ANCHOR_PID:-}" ]; then printf "%s %s\n" "$FAKE_BASELINE_ANCHOR_PID" 1; fi' \
+  '    if [ -s "$LANE_DIR/metsuke-server.pid" ]; then' \
+  '      root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
+  '      if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" 1; fi' \
+  '    fi' \
   '    ;;' \
   '  *" -axo pid=,pgid= "*)' \
-  '    root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
-  '    if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" "$FAKE_EXPECTED_PGID"; fi' \
+  '    printf "%s %s\n" "$PPID" "$FAKE_EXPECTED_PGID"' \
+  '    if [ -n "${FAKE_BASELINE_ANCHOR_PID:-}" ]; then printf "%s %s\n" "$FAKE_BASELINE_ANCHOR_PID" "$FAKE_EXPECTED_PGID"; fi' \
+  '    if [ -s "$LANE_DIR/metsuke-server.pid" ]; then' \
+  '      root=$(sed -n "1p" "$LANE_DIR/metsuke-server.pid")' \
+  '      if kill -0 "$root" 2>/dev/null; then printf "%s %s\n" "$root" "$FAKE_EXPECTED_PGID"; fi' \
+  '    fi' \
   '    ;;' \
   '  *) exit 2 ;;' \
   'esac' \
@@ -320,7 +354,8 @@ chmod +x \
   "$fake_bin/npm" \
   "$fake_bin/lsof" \
   "$fake_bin/curl" \
-  "$fake_bin/ps"
+  "$fake_bin/ps" \
+  "$fake_bin/rmdir"
 
 if [ ! -d "$PLAYWRIGHT_MARKER" ]; then
   mkdir -p "$PLAYWRIGHT_MARKER"
@@ -344,6 +379,8 @@ run_lane_case() {
   local empty_persona=${8:-}
   local direct_forge=${9:-}
   local stage_tamper=${10:-0}
+  local consistent_forge=${11:-0}
+  local rmdir_fail=${12:-0}
   local night_id="2026-07-29-$case_name"
   CASE_STATE="$TEST_TMP/cases/$case_name/state"
   CASE_LANE="$CASE_STATE/lanes/$night_id/lane_1"
@@ -369,6 +406,10 @@ run_lane_case() {
     FAKE_PERSONA_EMPTY="$empty_persona" \
     FAKE_DIRECT_FORGE="$direct_forge" \
     FAKE_STAGE_TAMPER="$stage_tamper" \
+    FAKE_CONSISTENT_FORGE="$consistent_forge" \
+    FAKE_NO_METADATA_MARKER="$CASE_LANE/no-metadata-file" \
+    FAKE_RMDIR_FAIL="$rmdir_fail" \
+    FAKE_BASELINE_ANCHOR_PID="$$" \
     /bin/bash "$RUN_SH" >"$CASE_LANE/stdout" 2>"$CASE_LANE/stderr"
   CASE_RC=$?
   set -e
@@ -450,6 +491,21 @@ jq -e '
   .stages.analysis.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
   fail "staging contract tamper was not recorded honestly"
+
+run_lane_case consistent-staging-forge "beginner" "" valid valid 0 0 "" "" 0 1
+[ "$CASE_RC" -ne 0 ] ||
+  fail "consistent staging/metadata forgery did not fail publication"
+[ -e "$CASE_LANE/no-metadata-file" ] ||
+  fail "fake Codex found writable file-backed finding contract metadata"
+if find "$CASE_LANE" -maxdepth 1 -type f \
+  -name '.accepted-findings-metadata.*' | grep . >/dev/null; then
+  fail "file-backed finding contract metadata still exists"
+fi
+if grep -F 'Fabricated CTA observation' "$CASE_LANE/findings.jsonl" >/dev/null; then
+  fail "consistent staging/metadata forgery reached final findings"
+fi
+assert_contains "in-memory finding contract ended before the staged findings" \
+  "$CASE_LANE/stderr"
 
 run_lane_case one-persona-fails "beginner expert impatient" beginner
 [ "$CASE_RC" -eq 0 ] || fail "one persona failure incorrectly failed the lane"
@@ -546,6 +602,19 @@ assert_contains "# generated FEATURE_MAP_OUTPUT_PATH" "$partial_state/goals/feat
 assert_file_exists "$partial_state/goals/feature-map.md"
 assert_file_exists "$partial_state/goals/range-map.md"
 
+run_lane_case goals-backup-housekeeping-fail \
+  "beginner" "" valid valid 0 0 "" "" 0 0 1
+[ "$CASE_RC" -eq 0 ] ||
+  fail "backup cleanup inverted a successfully published GOALS set"
+jq -e '
+  .goals_failed == false and
+  .stages.goals == {attempted:true,status:"succeeded"}
+' "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "backup cleanup failure made GOALS publication status dishonest"
+assert_file_exists "$CASE_STATE/goals/GOALS-draft.md"
+assert_file_exists "$CASE_STATE/goals/feature-map.md"
+assert_file_exists "$CASE_STATE/goals/range-map.md"
+
 failed_goals_state="$TEST_TMP/cases/partial-goals-codex-fail/state"
 mkdir -p "$failed_goals_state/goals"
 printf '%s\n' "# curated goals" > "$failed_goals_state/goals/GOALS-draft.md"
@@ -595,6 +664,31 @@ jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
   fail "unsafe goals destination refusal was not recorded"
 
+unsafe_goals_dir_state="$TEST_TMP/cases/unsafe-goals-directory/state"
+mkdir -p "$unsafe_goals_dir_state/protected-goals"
+printf '%s\n' "# protected goals directory" \
+  > "$unsafe_goals_dir_state/protected-goals/keep.md"
+for protected_goal_file in GOALS-draft.md feature-map.md range-map.md; do
+  printf '%s\n' "# protected $protected_goal_file" \
+    > "$unsafe_goals_dir_state/protected-goals/$protected_goal_file"
+done
+ln -s "$unsafe_goals_dir_state/protected-goals" \
+  "$unsafe_goals_dir_state/goals"
+run_lane_case unsafe-goals-directory "beginner"
+[ "$CASE_RC" -eq 0 ] ||
+  fail "unsafe goals directory aborted independent capture/persona analysis"
+[ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "unsafe goals directory discarded accepted persona findings"
+assert_contains "# protected goals directory" \
+  "$unsafe_goals_dir_state/protected-goals/keep.md"
+jq -e '
+  .goals_failed == true and
+  .stages.capture.status == "succeeded" and
+  .stages.analysis.status == "succeeded" and
+  .stages.goals == {attempted:true,status:"failed"}
+' "$CASE_LANE/metrics.json" >/dev/null ||
+  fail "unsafe goals directory was not isolated to the goals stage"
+
 serve_failure_state="$TEST_TMP/cases/serve-failure/state"
 serve_failure_night=2026-07-29-serve-failure
 serve_failure_lane="$serve_failure_state/lanes/$serve_failure_night/lane_1"
@@ -637,7 +731,7 @@ set +e
   METSUKE_LP_CHECKOUT="$cleanup_failure_checkout" METSUKE_PORT=43125 \
   METSUKE_PERSONAS=beginner PLAYWRIGHT_BROWSERS_PATH_REAL="$browser_cache" \
   METSUKE_CODEX_BIN=codex FAKE_PORT_STATE="$cleanup_failure_port_state" \
-  FAKE_EXPECTED_PGID=777 \
+  FAKE_EXPECTED_PGID=777 FAKE_BASELINE_ANCHOR_PID="$$" \
   /bin/bash "$RUN_SH" >"$cleanup_failure_lane/stdout" 2>"$cleanup_failure_lane/stderr"
 cleanup_failure_rc=$?
 set -e
@@ -660,5 +754,73 @@ jq -e '
 [ "$(wc -l < "$cleanup_failure_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "server cleanup failure prevented honest final findings publication"
 rm -f "$cleanup_failure_port_state"
+
+publication_order_state="$TEST_TMP/cases/publication-before-cleanup/state"
+publication_order_night=2026-07-29-publication-before-cleanup
+publication_order_lane="$publication_order_state/lanes/$publication_order_night/lane_1"
+publication_order_checkout="$TEST_TMP/publication-order-checkout"
+publication_order_port_state="$TEST_TMP/publication-order-port"
+publication_order_block="$TEST_TMP/publication-order-block"
+publication_order_started="$TEST_TMP/publication-order-cleanup-started"
+mkdir -p \
+  "$publication_order_lane/home" \
+  "$publication_order_lane/tmp" \
+  "$publication_order_checkout/node_modules"
+: > "$publication_order_block"
+/usr/bin/env -i \
+  PATH="$stub_path" HOME="$publication_order_lane/home" \
+  TMPDIR="$publication_order_lane/tmp" LANG=C TERM=dumb \
+  NIGHT_ID="$publication_order_night" LANE_DIR="$publication_order_lane" \
+  METSUKE_LP_CHECKOUT="$publication_order_checkout" METSUKE_PORT=43126 \
+  METSUKE_PERSONAS=beginner PLAYWRIGHT_BROWSERS_PATH_REAL="$browser_cache" \
+  METSUKE_CODEX_BIN=codex FAKE_PORT_STATE="$publication_order_port_state" \
+  FAKE_EXPECTED_PGID=778 FAKE_BASELINE_ANCHOR_PID="$$" \
+  FAKE_CLEANUP_BLOCK_FILE="$publication_order_block" \
+  FAKE_CLEANUP_STARTED_FILE="$publication_order_started" \
+  /bin/bash "$RUN_SH" >"$publication_order_lane/stdout" \
+  2>"$publication_order_lane/stderr" &
+publication_order_pid=$!
+publication_order_ticks=0
+while [ ! -e "$publication_order_started" ] &&
+  [ "$publication_order_ticks" -lt 500 ]; do
+  sleep 0.02
+  publication_order_ticks=$((publication_order_ticks + 1))
+done
+[ -e "$publication_order_started" ] || {
+  rm -f "$publication_order_block"
+  wait "$publication_order_pid" 2>/dev/null || true
+  cat "$publication_order_lane/stderr" >&2
+  fail "blocking cleanup seam never began"
+}
+[ "$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "accepted finding was not atomically published before cleanup began"
+kill -TERM "$publication_order_pid" 2>/dev/null || true
+rm -f "$publication_order_block"
+wait "$publication_order_pid" 2>/dev/null || true
+[ "$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "termination during cleanup lost an already accepted finding"
+
+candidate_probe="$TEST_TMP/candidate-race-probe.sh"
+{
+  printf '%s\n' '#!/bin/bash'
+  sed -n '/^candidate_is_active()/,/^}/p' "$SERVE_SH"
+  cat <<'EOF'
+kill_calls=0
+kill() {
+  kill_calls=$((kill_calls + 1))
+  [ "$kill_calls" -eq 1 ]
+}
+ps() {
+  return 1
+}
+set +e
+candidate_is_active 424242
+candidate_status=$?
+set -e
+[ "$candidate_status" -eq 1 ]
+EOF
+} > "$candidate_probe"
+/bin/bash "$candidate_probe" ||
+  fail "candidate exit between kill -0 and ps was reported as inspection failure"
 
 printf 'test_metsuke_offline: PASS\n'
