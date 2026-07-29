@@ -169,11 +169,15 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 
 **Phase 0 の残存リスク**: Phase 0 の timebox は process group を TERM/KILL
 した後、`pgrep -P` で収集した子孫を再帰 sweep し、`setsid()` で group を
-離れたプロセスも停止を試みる。停止後も生存する PID は
-`lane_end.survivors` に記録し、lane 失敗かつ当夜の後続 lane 停止とする。
-これは検知と fail-closed 化であり封じ込めではない。観測前に親子関係を
-解消する race、同一 UID で読める host secret、lane 外 filesystem への
-アクセスを防止する完全な containment は Phase 1 sandbox の責務である。
+離れたプロセスも、離脱前後に観測できた場合は停止を試みる。停止後も
+Phase 0 inspector が識別できる生存 PID は `lane_end.survivors` に記録し、
+lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspector が
+識別できた集合だけであり、不在証明ではない。特に classic double fork
+（`fork` → `setsid` → `fork`）で中間親が観測前に終了すると、reparent
+された孫は parent/PGID model から不可視になり、配列へ記録されずに生存
+し得る。これは検知と fail-closed 化であり封じ込めではない。この逃避の
+防止、同一 UID で読める host secret、lane 外 filesystem へのアクセスを
+含む完全な containment は Phase 1 sandbox の責務である。
 
 ### 10.4 L4: 公開ゲート層
 - 対象: **GitHub へ出る全て**——push の全 commit range（中間 commit 含む）・commit message・PR/Issue の title/body/comment

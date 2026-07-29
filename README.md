@@ -18,18 +18,23 @@ numbered `LANE_CMD_n` values. Runtime state is stored under `state/` by default.
 
 `LANE_HOME_LINKS` is empty by default. Any opted-in path is reachable
 **read-write** through its lane HOME symlink; linking it grants the lane the
-same access. The dispatcher refuses sensitive basenames (`.ssh`, `.config`,
-`.git-credentials`, `.netrc`, `.aws`, `.gnupg`, and `.config/gh`) even when an
-operator opts in. Link only the minimum path needed for Codex authentication.
-Other host secret stores readable by the same macOS user remain reachable until
-the Phase 1 sandbox is available.
+same access. Before linking, the dispatcher resolves and case-normalizes the
+security comparison and refuses `.ssh`, `.config/gh`, `.git-credentials`,
+`.netrc`, `.aws`, `.gnupg`, and all of their descendants; `.config` itself is
+also refused. Unresolvable entries fail closed. Link only the minimum path
+needed for Codex authentication. Other host secret stores readable by the same
+macOS user remain reachable until the Phase 1 sandbox is available.
 
-Phase 0 timeboxes kill the lane process group and recursively sweep descendants,
-including children that call `setsid()`. A survivor is recorded in
-`lane_end.survivors`, fails the lane, and aborts the rest of the night. This is
-detection and fail-closed cleanup, not containment: a process can still race or
-evade observation. Full filesystem, credential, and process containment
-requires the Phase 1 sandbox.
+Phase 0 timeboxes terminate observed process-group members and recursively
+sweep discoverable descendants, including children observed before they call
+`setsid()`. Any process the Phase 0 inspector can still identify after cleanup
+is recorded in `lane_end.survivors`, fails the lane, and aborts the rest of the
+night. The array is therefore an inspector result, not proof that no other
+process exists. A classic double fork (`fork` → `setsid` → `fork`) can reparent
+the grandchild before Phase 0 observes it; that process can be invisible to the
+parent/PGID inspector and survive without appearing in `survivors`. Prevention
+and full filesystem, credential, and process containment require the Phase 1
+sandbox.
 
 ## Run manually
 

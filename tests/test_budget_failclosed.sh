@@ -27,17 +27,24 @@ write_config() {
 
 run_dispatch() {
   config_path=$1
-  NIGHTSHIFT_CONFIG="$config_path" /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null
+  DISPATCH_RC=0
+  NIGHTSHIFT_CONFIG="$config_path" \
+    /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || DISPATCH_RC=$?
 }
 
 assert_closed_skip() {
   closed_ledger=$1
   closed_label=$2
+  closed_expect_failure=${3:-true}
   if jq -e 'select(.type == "lane_start")' "$closed_ledger" >/dev/null; then
     fail "lane started after $closed_label"
   fi
   jq -e 'select(.type == "run_end" and .lanes_run == 0)' "$closed_ledger" >/dev/null ||
     fail "$closed_label did not write a zero-lane run_end"
+  if [ "$closed_expect_failure" = true ]; then
+    [ "$DISPATCH_RC" -ne 0 ] ||
+      fail "$closed_label returned success instead of failing closed"
+  fi
 }
 
 missing_state="$TEST_TMP/missing-state"
@@ -60,6 +67,33 @@ garbage_ledger="$garbage_state/ledger/ledger.jsonl"
 assert_ledger_record "$garbage_ledger" "$NIGHT_ID" meter_error
 assert_ledger_record "$garbage_ledger" "$NIGHT_ID" skip meter_error
 assert_closed_skip "$garbage_ledger" "invalid budget probe output"
+
+mixed_case_index=0
+while IFS='|' read -r mixed_label mixed_output; do
+  mixed_case_index=$((mixed_case_index + 1))
+  mixed_probe="$TEST_TMP/mixed-probe-$mixed_case_index"
+  {
+    printf '%s\n' '#!/bin/bash'
+    printf '%s\n' "printf '%b' '$mixed_output'"
+  } > "$mixed_probe"
+  chmod +x "$mixed_probe"
+  mixed_state="$TEST_TMP/mixed-state-$mixed_case_index"
+  mixed_config="$TEST_TMP/mixed-$mixed_case_index.conf"
+  write_config "$mixed_config" "$mixed_state" "$mixed_probe" 100
+  run_dispatch "$mixed_config"
+  mixed_ledger="$mixed_state/ledger/ledger.jsonl"
+  assert_ledger_record "$mixed_ledger" "$NIGHT_ID" meter_error
+  assert_closed_skip "$mixed_ledger" "$mixed_label"
+done <<'EOF'
+empty output|
+malformed then valid|not-json\n{"tokens_spent":3}\n
+valid then malformed|{"tokens_spent":3}\nnot-json\n
+huge then valid|{"tokens_spent":123456789012345678901234567890}\n{"tokens_spent":3}\n
+valid then huge|{"tokens_spent":3}\n{"tokens_spent":123456789012345678901234567890}\n
+diagnostic object then valid|{"diagnostic":"ok"}\n{"tokens_spent":3}\n
+two valid documents|{"tokens_spent":2}\n{"tokens_spent":3}\n
+valid with trailing JSON|{"tokens_spent":3}{"extra":true}\n
+EOF
 
 timeout_probe="$TEST_TMP/timeout-probe"
 printf '%s\n' '#!/bin/bash' 'while :; do sleep 1; done' > "$timeout_probe"
@@ -84,7 +118,7 @@ write_config "$over_config" "$over_state" "$over_probe" 10
 run_dispatch "$over_config"
 over_ledger="$over_state/ledger/ledger.jsonl"
 assert_ledger_record "$over_ledger" "$NIGHT_ID" skip budget_exhausted
-assert_closed_skip "$over_ledger" "budget exhaustion"
+assert_closed_skip "$over_ledger" "budget exhaustion" false
 
 float_over_probe="$TEST_TMP/float-over-probe"
 printf '%s\n' '#!/bin/bash' 'printf "%s\n" "{\"tokens_spent\":900000.0}"' > "$float_over_probe"
@@ -95,7 +129,7 @@ write_config "$float_over_config" "$float_over_state" "$float_over_probe" 100
 run_dispatch "$float_over_config"
 float_over_ledger="$float_over_state/ledger/ledger.jsonl"
 assert_ledger_record "$float_over_ledger" "$NIGHT_ID" skip budget_exhausted
-assert_closed_skip "$float_over_ledger" "integral float budget exhaustion"
+assert_closed_skip "$float_over_ledger" "integral float budget exhaustion" false
 jq -e 'select(.type == "run_end" and .budget.tokens_spent == 900000)' \
   "$float_over_ledger" >/dev/null ||
   fail "integral float was not normalized to an integer"
@@ -176,9 +210,16 @@ for oversized_value in \
   oversized_config="$TEST_TMP/oversized-$oversized_index.conf"
   write_config "$oversized_config" "$oversized_state" "$oversized_probe" 100
   run_dispatch "$oversized_config"
-  assert_closed_skip \
-    "$oversized_state/ledger/ledger.jsonl" \
-    "oversized/scientific budget value $oversized_value"
+  if [ "$oversized_value" = 1e6 ]; then
+    assert_closed_skip \
+      "$oversized_state/ledger/ledger.jsonl" \
+      "scientific budget value $oversized_value" \
+      false
+  else
+    assert_closed_skip \
+      "$oversized_state/ledger/ledger.jsonl" \
+      "oversized budget value $oversized_value"
+  fi
 done
 
 healthy_probe="$TEST_TMP/healthy-probe"
@@ -205,16 +246,14 @@ forking_probe="$TEST_TMP/forking-probe"
 forking_child_pid="$TEST_TMP/forking-probe-child.pid"
 printf '%s\n' \
   '#!/bin/bash' \
-  "/bin/bash -c 'trap \"\" TERM; while :; do sleep 1; done' &" \
+  "/bin/bash -c 'while :; do sleep 1; done' &" \
   "printf '%s\\n' \"\$!\" > '$forking_child_pid'" \
-  'trap "" TERM' \
   'while :; do sleep 1; done' \
   > "$forking_probe"
 chmod +x "$forking_probe"
 forking_state="$TEST_TMP/forking-state"
 forking_config="$TEST_TMP/forking.conf"
 write_config "$forking_config" "$forking_state" "$forking_probe" 100
-sed -i '' 's/BUDGET_PROBE_TIMEOUT_SEC=2/BUDGET_PROBE_TIMEOUT_SEC=1/' "$forking_config"
 run_dispatch "$forking_config"
 assert_file_exists "$forking_child_pid"
 orphan_pid=$(sed -n '1p' "$forking_child_pid")

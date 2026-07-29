@@ -1,6 +1,61 @@
 #!/bin/bash
 set -euo pipefail
 
+lane_resolve_existing_path() {
+  resolve_path=$1
+  resolve_limit=40
+
+  if [ -d "$resolve_path" ]; then
+    (cd -P "$resolve_path" 2>/dev/null && pwd -P)
+    return $?
+  fi
+
+  while [ "$resolve_limit" -gt 0 ]; do
+    if ! resolve_parent=$(dirname "$resolve_path"); then
+      return 1
+    fi
+    if ! resolve_leaf=$(basename "$resolve_path"); then
+      return 1
+    fi
+    if ! resolve_parent=$(cd -P "$resolve_parent" 2>/dev/null && pwd -P); then
+      return 1
+    fi
+    resolve_path="$resolve_parent/$resolve_leaf"
+    if [ ! -L "$resolve_path" ]; then
+      [ -e "$resolve_path" ] || return 1
+      printf '%s\n' "$resolve_path"
+      return 0
+    fi
+    if ! resolve_target=$(readlink "$resolve_path"); then
+      return 1
+    fi
+    case "$resolve_target" in
+      /*) resolve_path=$resolve_target ;;
+      *) resolve_path="$resolve_parent/$resolve_target" ;;
+    esac
+    resolve_limit=$((resolve_limit - 1))
+  done
+  return 1
+}
+
+lane_path_is_sensitive() {
+  if ! sensitive_path=$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]'); then
+    return 2
+  fi
+  if ! sensitive_leaf=$(basename "$sensitive_path"); then
+    return 2
+  fi
+  case "$sensitive_leaf" in
+    .gitconfig|.config) return 0 ;;
+  esac
+  case "$sensitive_path/" in
+    */.ssh/*|*/.config/gh/*|*/.git-credentials/*|*/.netrc/*|*/.aws/*|*/.gnupg/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 lane_exec() {
   lane_dir=$1
   shift
@@ -9,6 +64,8 @@ lane_exec() {
   LANE_EXIT_CODE=1
   LANE_WALLCLOCK_SEC=0
   LANE_SURVIVORS_JSON='[]'
+  LANE_PROCESS_INSPECTION_FAILED=false
+  LANE_LIFECYCLE_VIOLATION=false
   LANE_SETUP_FAILED=true
   NIGHTSHIFT_ACTIVE_LANE_PID=
   NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS=
@@ -50,18 +107,35 @@ lane_exec() {
       nightshift_log WARN "Ignoring missing LANE_HOME_LINKS entry: $home_link"
       continue
     fi
-    link_name=$(basename "$home_link")
-    case "$link_name:$home_link" in
-      .gitconfig:*|.ssh:*|.config:*|.git-credentials:*|.netrc:*|.aws:*|.gnupg:*|gh:*/.config/gh)
-        nightshift_log WARN "Refusing sensitive LANE_HOME_LINKS entry: $home_link"
+    if ! resolved_home_link=$(lane_resolve_existing_path "$home_link"); then
+      nightshift_log WARN "Refusing unresolvable LANE_HOME_LINKS entry: $home_link"
+      continue
+    fi
+    link_sensitivity=0
+    lane_path_is_sensitive "$resolved_home_link" || link_sensitivity=$?
+    case "$link_sensitivity" in
+      0)
+        nightshift_log WARN "Refusing sensitive LANE_HOME_LINKS entry: $home_link (resolved: $resolved_home_link)"
+        continue
+        ;;
+      1) ;;
+      *)
+        nightshift_log WARN "Refusing unclassifiable LANE_HOME_LINKS entry: $home_link"
         continue
         ;;
     esac
+    if ! link_name=$(basename "$home_link"); then
+      IFS=$old_ifs
+      nightshift_log ERROR "Failed to classify lane HOME link name: $home_link"
+      export LANE_TIMED_OUT LANE_EXIT_CODE LANE_WALLCLOCK_SEC
+      export LANE_SURVIVORS_JSON LANE_SETUP_FAILED
+      return 1
+    fi
     if [ -e "$lane_home/$link_name" ] || [ -L "$lane_home/$link_name" ]; then
       nightshift_log WARN "Ignoring duplicate lane HOME link name: $link_name"
       continue
     fi
-    if ! ln -s "$home_link" "$lane_home/$link_name"; then
+    if ! ln -s "$resolved_home_link" "$lane_home/$link_name"; then
       IFS=$old_ifs
       nightshift_log ERROR "Failed to link lane HOME entry: $home_link"
       export LANE_TIMED_OUT LANE_EXIT_CODE LANE_WALLCLOCK_SEC
@@ -108,8 +182,9 @@ lane_exec() {
     lane_launch_ticks=$((lane_launch_ticks - 1))
   done
 
-  while nightshift_process_tree_alive "$lane_pid" "$NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS"; do
-    NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS=$NIGHTSHIFT_PROCESS_KNOWN
+  while nightshift_pid_alive "$lane_pid"; do
+    nightshift_refresh_process_tree "$lane_pid" "$NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS"
+    NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS=$NIGHTSHIFT_PROCESS_PIDS
     lane_now=$(date '+%s')
     if [ $((lane_now - lane_started)) -ge "$lane_deadline_sec" ]; then
       LANE_TIMED_OUT=true
@@ -126,8 +201,15 @@ lane_exec() {
     LANE_EXIT_CODE=$?
   fi
 
-  # Always sweep after the leader is reaped. This catches same-group children
-  # whose leader exited first as well as descendants that escaped with setsid().
+  for lane_known_pid in $NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS; do
+    if nightshift_pid_alive "$lane_known_pid"; then
+      LANE_LIFECYCLE_VIOLATION=true
+      break
+    fi
+  done
+
+  # Leader exit ends useful lane work. Sweep observed remaining processes
+  # immediately rather than allowing them to consume the rest of the timebox.
   nightshift_stop_process_tree "$lane_pid" "$NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS"
   lane_survivors=$NIGHTSHIFT_PROCESS_SURVIVORS
   NIGHTSHIFT_ACTIVE_LANE_PID=
@@ -143,19 +225,25 @@ lane_exec() {
     LANE_SURVIVORS_JSON='[]'
     LANE_EXIT_CODE=125
   fi
-  if [ "$LANE_TIMED_OUT" = true ] &&
-    [ "$NIGHTSHIFT_PROCESS_INSPECTION_FAILED" = true ]; then
-    nightshift_log ERROR "Lane descendant inspection was unavailable after timeout"
-    if ! LANE_SURVIVORS_JSON=$(printf '%s\n' "$LANE_SURVIVORS_JSON" |
-      jq -c '. + ["process_inspection_unavailable"]'); then
-      LANE_SURVIVORS_JSON='["process_inspection_unavailable"]'
-    fi
+  if [ "$NIGHTSHIFT_PROCESS_INSPECTION_FAILED" = true ]; then
+    nightshift_log ERROR "Lane descendant inspection was unavailable"
+    LANE_PROCESS_INSPECTION_FAILED=true
     if [ "$LANE_EXIT_CODE" -eq 0 ]; then
       LANE_EXIT_CODE=125
     fi
   fi
+  if [ "$LANE_LIFECYCLE_VIOLATION" = true ]; then
+    nightshift_log ERROR "Lane leader exited while observed descendants remained"
+    if [ "$LANE_EXIT_CODE" -eq 0 ]; then
+      LANE_EXIT_CODE=125
+    fi
+  fi
+  if [ "$LANE_TIMED_OUT" = true ] && [ "$LANE_EXIT_CODE" -eq 0 ]; then
+    LANE_EXIT_CODE=124
+  fi
   LANE_WALLCLOCK_SEC=$(( $(date '+%s') - lane_started ))
   export LANE_TIMED_OUT LANE_EXIT_CODE LANE_WALLCLOCK_SEC
-  export LANE_SURVIVORS_JSON LANE_SETUP_FAILED
+  export LANE_SURVIVORS_JSON LANE_PROCESS_INSPECTION_FAILED
+  export LANE_LIFECYCLE_VIOLATION LANE_SETUP_FAILED
   return 0
 }

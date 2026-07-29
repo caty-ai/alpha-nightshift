@@ -26,6 +26,7 @@ budget_fail_with_meter_error() {
 }
 
 budget_check() {
+  NIGHTSHIFT_PROCESS_INSPECTION_FAILED=false
   if ! budget_tmp_dir=$(mktemp -d "$STATE_DIR/.budget.XXXXXX"); then
     budget_fail_with_meter_error "probe_setup_failed"
     return $?
@@ -43,22 +44,34 @@ budget_check() {
   budget_pid=$!
   NIGHTSHIFT_ACTIVE_PROBE_PID=$budget_pid
   set +m
-  budget_started=$(date '+%s')
   budget_timed_out=false
-  # Give the exec'd probe one scheduler tick to enter its process group before
-  # enforcing the timeout.
-  sleep 0.1
+  budget_timeout_ticks=$((BUDGET_PROBE_TIMEOUT_SEC * 10))
+  budget_elapsed_ticks=0
+  budget_launch_ticks=10
+
+  # Observe the launch for a bounded interval before charging timeout ticks.
+  # This closes the integer-second boundary where a newly forked child could
+  # escape the first and only inspection performed by a one-second probe.
+  while [ "$budget_launch_ticks" -gt 0 ]; do
+    nightshift_refresh_process_tree "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"
+    NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=$NIGHTSHIFT_PROCESS_PIDS
+    if ! nightshift_pid_alive "$budget_pid"; then
+      break
+    fi
+    sleep 0.01
+    budget_launch_ticks=$((budget_launch_ticks - 1))
+  done
 
   while nightshift_process_tree_alive "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"; do
     NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=$NIGHTSHIFT_PROCESS_KNOWN
-    budget_now=$(date '+%s')
-    if [ $((budget_now - budget_started)) -ge "$BUDGET_PROBE_TIMEOUT_SEC" ]; then
+    if [ "$budget_elapsed_ticks" -ge "$budget_timeout_ticks" ]; then
       budget_timed_out=true
       nightshift_stop_process_tree "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"
       NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=$NIGHTSHIFT_PROCESS_KNOWN
       break
     fi
     sleep 0.1
+    budget_elapsed_ticks=$((budget_elapsed_ticks + 1))
   done
 
   if wait "$budget_pid"; then
@@ -70,6 +83,14 @@ budget_check() {
   budget_survivors=$NIGHTSHIFT_PROCESS_SURVIVORS
   NIGHTSHIFT_ACTIVE_PROBE_PID=
   NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=
+
+  if [ "$NIGHTSHIFT_PROCESS_INSPECTION_FAILED" = true ]; then
+    nightshift_log ERROR "Budget probe process inspection was unavailable"
+    rm -rf "$budget_tmp_dir"
+    NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
+    budget_fail_with_meter_error "process_inspection_unavailable"
+    return $?
+  fi
 
   if [ "$budget_timed_out" = true ]; then
     if [ -n "$(printf '%s' "$budget_survivors" | tr -d '[:space:]')" ]; then
@@ -96,12 +117,14 @@ budget_check() {
     return $?
   fi
 
-  if ! budget_result=$(jq -e -c --arg budget_cap "$NIGHT_BUDGET_TOKENS" '
-    select(
-      type == "object" and
-      has("tokens_spent") and
-      (.tokens_spent | type == "number" and . >= 0 and . == floor)
-    )
+  if ! budget_result=$(jq -e -c -s --arg budget_cap "$NIGHT_BUDGET_TOKENS" '
+    select(length == 1)
+    | .[0]
+    | select(
+        type == "object" and
+        has("tokens_spent") and
+        (.tokens_spent | type == "number" and . >= 0 and . == floor)
+      )
     | (.tokens_spent | floor | tostring) as $spent_text
     | select($spent_text | test("^[0-9]{1,15}$"))
     | ($spent_text | tonumber) as $spent

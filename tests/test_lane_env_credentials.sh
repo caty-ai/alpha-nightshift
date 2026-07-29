@@ -108,14 +108,22 @@ mkdir -p \
   "$sensitive_home/.gnupg"
 printf '%s\n' secret > "$sensitive_home/.git-credentials"
 printf '%s\n' secret > "$sensitive_home/.netrc"
-LANE_HOME_LINKS="$sensitive_home/.ssh:$sensitive_home/.config:$sensitive_home/.config/gh:$sensitive_home/.git-credentials:$sensitive_home/.netrc:$sensitive_home/.aws:$sensitive_home/.gnupg"
+printf '%s\n' planted-github-token > "$sensitive_home/.config/gh/hosts.yml"
+ln -s "$sensitive_home/.config/gh" "$sensitive_home/github-alias"
+LANE_HOME_LINKS="$sensitive_home/.ssh/:$sensitive_home//.ssh:$sensitive_home/./.ssh:$sensitive_home/.config:$sensitive_home/.config/gh:$sensitive_home/.config/gh/hosts.yml:$sensitive_home/.git-credentials:$sensitive_home/.netrc:$sensitive_home/.aws:$sensitive_home/.gnupg:$sensitive_home/github-alias"
+if [ -e "$sensitive_home/.SsH" ]; then
+  LANE_HOME_LINKS="$LANE_HOME_LINKS:$sensitive_home/.SsH"
+fi
 sensitive_lane="$STATE_DIR/sensitive-lane"
 lane_exec "$sensitive_lane" /usr/bin/true
 [ "$LANE_EXIT_CODE" -eq 0 ] || fail "denylisted HOME-link lane failed"
-for refused_name in .ssh .config gh .git-credentials .netrc .aws .gnupg; do
+for refused_name in .ssh .config gh hosts.yml .git-credentials .netrc .aws .gnupg github-alias .SsH; do
   [ ! -L "$sensitive_lane/home/$refused_name" ] ||
     fail "sensitive HOME link $refused_name was accepted"
 done
+if grep -R -F 'planted-github-token' "$sensitive_lane/home" >/dev/null 2>&1; then
+  fail "a planted GitHub token was readable through lane HOME"
+fi
 
 setup_failure_lane="$STATE_DIR/setup-failure-lane"
 mkdir -p "$setup_failure_lane/home/.gitconfig"
@@ -155,17 +163,29 @@ if kill -0 "$child_pid" 2>/dev/null; then
 fi
 
 leader_exit_lane="$STATE_DIR/leader-exit-lane"
+LANE_TIMEBOX_MIN=1
+leader_exit_started=$(date '+%s')
 lane_exec "$leader_exit_lane" /bin/bash -c '
-  sleep 300 &
+  /bin/bash -c '\''trap "" HUP; exec sleep 300'\'' &
   printf "%s\n" "$!" > "$LANE_DIR/leader-exit-child.pid"
   exit 0
 '
+leader_exit_elapsed=$(( $(date '+%s') - leader_exit_started ))
+[ "$leader_exit_elapsed" -lt 5 ] ||
+  fail "leader-exit lane waited $leader_exit_elapsed seconds instead of stopping promptly"
+[ "$LANE_LIFECYCLE_VIOLATION" = true ] ||
+  fail "leader-exit lane did not report a lifecycle violation"
+[ "$LANE_EXIT_CODE" -ne 0 ] ||
+  fail "leader-exit lane reported a success-like exit"
+[ "$LANE_TIMED_OUT" = false ] ||
+  fail "leader-exit lane was incorrectly reported as timed out"
 leader_exit_pid=$(sed -n '1p' "$leader_exit_lane/leader-exit-child.pid")
 if kill -0 "$leader_exit_pid" 2>/dev/null; then
   fail "child survived after its lane leader exited first"
 fi
 
 setsid_lane="$STATE_DIR/setsid-lane"
+LANE_TIMEBOX_MIN=0
 lane_exec "$setsid_lane" /bin/bash -c "
   \"$PYTHON_BIN\" -c 'import os,time; time.sleep(0.2); os.setsid(); open(os.environ[\"LANE_DIR\"] + \"/setsid-child.pid\", \"w\").write(str(os.getpid())); time.sleep(300)' &
   wait
@@ -181,8 +201,7 @@ if kill -0 "$setsid_pid" 2>/dev/null; then
     jq -e --argjson pid "$setsid_pid" 'index($pid) != null' >/dev/null; then
     :
   elif [ "$process_inspection_available" = false ]; then
-    printf '%s\n' "$LANE_SURVIVORS_JSON" |
-      jq -e 'index("process_inspection_unavailable") != null' >/dev/null ||
+    [ "$LANE_PROCESS_INSPECTION_FAILED" = true ] ||
       fail "unavailable descendant inspection was not recorded"
     kill -KILL "$setsid_pid" 2>/dev/null || true
   else

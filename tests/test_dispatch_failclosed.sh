@@ -142,4 +142,41 @@ if kill -0 "$setsid_pid" 2>/dev/null; then
   kill -KILL "$setsid_pid" 2>/dev/null || true
 fi
 
+leader_state="$TEST_TMP/leader-state"
+leader_config="$TEST_TMP/leader.conf"
+leader_child_pid="$TEST_TMP/leader-child.pid"
+leader_lane_two="$TEST_TMP/leader-lane-two-ran"
+leader_command="/bin/bash -c 'trap \"\" HUP; exec sleep 300' & printf '%s\\n' \"\$!\" > \"$leader_child_pid\"; exit 0"
+write_config \
+  "$leader_config" \
+  "$leader_state" \
+  "$leader_command" \
+  "printf ran > \"$leader_lane_two\"" \
+  1
+leader_started=$(date '+%s')
+leader_rc=0
+NIGHTSHIFT_CONFIG="$leader_config" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || leader_rc=$?
+leader_elapsed=$(( $(date '+%s') - leader_started ))
+[ "$leader_elapsed" -lt 5 ] ||
+  fail "leader-exit dispatch waited $leader_elapsed seconds"
+[ "$leader_rc" -ne 0 ] || fail "leader-exit dispatch returned success"
+[ ! -e "$leader_lane_two" ] || fail "lane 2 started after a leader lifecycle violation"
+leader_ledger="$leader_state/ledger/ledger.jsonl"
+jq -e '
+  select(
+    .type == "lane_end" and
+    .lane == "lane_1" and
+    .lifecycle_violation == true and
+    .timed_out == false and
+    .exit_code != 0 and
+    (.survivors | type == "array")
+  )
+' "$leader_ledger" >/dev/null ||
+  fail "leader-exit lane_end was not a consistent failure"
+leader_pid=$(sed -n '1p' "$leader_child_pid")
+if kill -0 "$leader_pid" 2>/dev/null; then
+  fail "leader-exit dispatch orphaned its observed child"
+fi
+
 printf 'test_dispatch_failclosed: PASS\n'
