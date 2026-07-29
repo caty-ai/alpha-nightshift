@@ -133,7 +133,7 @@ fi
 [ "$LANE_SETUP_FAILED" = true ] ||
   fail "lane_exec did not classify its setup failure"
 
-REPO_LANE_TMP=$(mktemp -d "$ROOT/state/lane-ceiling.XXXXXX")
+REPO_LANE_TMP=$(mktemp -d "$ROOT/.lane-ceiling.XXXXXX")
 LANE_HOME_LINKS=
 lane_exec "$REPO_LANE_TMP/lane" /bin/bash -c '
   git rev-parse --show-toplevel > "$LANE_DIR/git-root.txt" 2>&1
