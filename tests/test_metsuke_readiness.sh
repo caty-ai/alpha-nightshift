@@ -31,8 +31,8 @@ write_fixture_metadata() {
     "$LANE/node_modules/playwright" \
     "$LANE/node_modules/playwright-core" \
     "$LP/node_modules" \
-    "$CACHE/chromium-1187/chrome-mac/Chromium.app/Contents/MacOS" \
-    "$CACHE/chromium_headless_shell-1187/chrome-mac" \
+    "$CACHE/chromium-1193/chrome-mac/Chromium.app/Contents/MacOS" \
+    "$CACHE/chromium_headless_shell-1193/chrome-mac" \
     "$FIXTURE_ROOT/bin" \
     "$FIXTURE_ROOT/state"
   cp "$CHECKER_SOURCE" "$LANE/check-readiness.sh"
@@ -46,13 +46,13 @@ write_fixture_metadata() {
     "$headless_shell_revision" \
     > "$LANE/node_modules/playwright-core/browsers.json"
   printf '#!/bin/bash\n: > "$MARKER"\n' \
-    > "$CACHE/chromium-1187/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+    > "$CACHE/chromium-1193/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
   printf '#!/bin/bash\n: > "$MARKER"\n' \
-    > "$CACHE/chromium_headless_shell-1187/chrome-mac/headless_shell"
+    > "$CACHE/chromium_headless_shell-1193/chrome-mac/headless_shell"
   printf '#!/bin/bash\n: > "$MARKER"\n' > "$CODEX"
   chmod +x \
-    "$CACHE/chromium-1187/chrome-mac/Chromium.app/Contents/MacOS/Chromium" \
-    "$CACHE/chromium_headless_shell-1187/chrome-mac/headless_shell" \
+    "$CACHE/chromium-1193/chrome-mac/Chromium.app/Contents/MacOS/Chromium" \
+    "$CACHE/chromium_headless_shell-1193/chrome-mac/headless_shell" \
     "$CODEX"
 }
 
@@ -77,11 +77,11 @@ expect_failure() {
 
 "$REAL_JQ" -e '
   .lockfileVersion == 3 and
-  .packages[""].dependencies.playwright == "1.55.0" and
-  .packages["node_modules/playwright"].version == "1.55.0" and
-  .packages["node_modules/playwright"].dependencies["playwright-core"] == "1.55.0" and
+  .packages[""].dependencies.playwright == "1.55.1" and
+  .packages["node_modules/playwright"].version == "1.55.1" and
+  .packages["node_modules/playwright"].dependencies["playwright-core"] == "1.55.1" and
   .packages["node_modules/playwright"].optionalDependencies.fsevents == "2.3.2" and
-  .packages["node_modules/playwright-core"].version == "1.55.0" and
+  .packages["node_modules/playwright-core"].version == "1.55.1" and
   .packages["node_modules/fsevents"].version == "2.3.2" and
   (.packages | keys | sort) == [
     "",
@@ -102,7 +102,7 @@ done
 PATH="$fake_bin:/usr/bin:/bin"
 export PATH
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 ready_output="$TEST_TMP/ready.out"
 MARKER="$MARKER" \
   PLANTED_SECRET="$SECRET" \
@@ -121,8 +121,8 @@ assert_not_contains "$SECRET" "$ready_output"
   --arg state "$STATE" '
     . == {
       ready: true,
-      playwright_version: "1.55.0",
-      chromium_revision: "1187",
+      playwright_version: "1.55.1",
+      chromium_revision: "1193",
       lp_checkout: $lp,
       browser_cache: $cache,
       codex_bin: $codex,
@@ -145,92 +145,126 @@ mv "$LANE/node_modules/playwright" "$LANE/node_modules/playwright.missing"
 expect_failure "playwright_package" "$TEST_TMP/missing-dependency.out" run_checker
 mv "$LANE/node_modules/playwright.missing" "$LANE/node_modules/playwright"
 
-write_fixture_metadata 1.54.0 1187
+write_fixture_metadata 1.54.0 1193
 expect_failure "playwright_version" "$TEST_TMP/version-mismatch.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.0 1193
+expect_failure "playwright_version" \
+  "$TEST_TMP/vulnerable-version-mismatch.out" run_checker
+
+write_fixture_metadata 1.55.2 1193
+expect_failure "playwright_version" \
+  "$TEST_TMP/future-version-mismatch.out" run_checker
+
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
-  '{"name":"playwright","dependencies":{"version":"1.55.0"}}' \
+  '{"name":"playwright","dependencies":{"version":"1.55.1"}}' \
   > "$LANE/node_modules/playwright/package.json"
 expect_failure "playwright_version" \
   "$TEST_TMP/playwright-nested-only-version.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
-  '{"name":"playwright-core","dependencies":{"version":"1.55.0"}}' \
+  '{"name":"playwright-core","dependencies":{"version":"1.55.1"}}' \
   > "$LANE/node_modules/playwright-core/package.json"
 expect_failure "playwright_core_version" \
   "$TEST_TMP/playwright-core-nested-only-version.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
-  '{"name":"not-playwright","version":"1.55.0"}' \
+  '{"name":"not-playwright","version":"1.55.1"}' \
   > "$LANE/node_modules/playwright/package.json"
 expect_failure "playwright_version" \
   "$TEST_TMP/playwright-wrong-package-name.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
+printf '%s\n' \
+  '{"name":"not-playwright-core","version":"1.55.1"}' \
+  > "$LANE/node_modules/playwright-core/package.json"
+expect_failure "playwright_core_version" \
+  "$TEST_TMP/playwright-core-wrong-package-name.out" run_checker
+
+write_fixture_metadata 1.55.1 1193
+printf '%s\n' \
+  '{"name":"playwright-core","version":"1.55.0"}' \
+  > "$LANE/node_modules/playwright-core/package.json"
+expect_failure "playwright_core_version" \
+  "$TEST_TMP/playwright-core-vulnerable-version.out" run_checker
+
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
   '{"name":"playwright"}' \
   > "$LANE/node_modules/playwright/package.json"
 expect_failure "playwright_version" \
   "$TEST_TMP/playwright-missing-version.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
   '{"name":"playwright","version":1.55}' \
   > "$LANE/node_modules/playwright/package.json"
 expect_failure "playwright_version" \
   "$TEST_TMP/playwright-non-string-version.out" run_checker
 
-write_fixture_metadata 1.55.0 1188 1187
+write_fixture_metadata 1.55.1 1187 1193
 expect_failure "chromium_revision" "$TEST_TMP/chromium-revision-mismatch.out" run_checker
 
-write_fixture_metadata 1.55.0 1187 1188
+write_fixture_metadata 1.55.1 1193 1187
 expect_failure "chromium_headless_shell_revision" \
   "$TEST_TMP/headless-revision-mismatch.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
-  '{"browsers":[{"name":"chromium","revision":"1187"}]}' \
+  '{"browsers":[{"name":"chromium","revision":"1193"}]}' \
   > "$LANE/node_modules/playwright-core/browsers.json"
 expect_failure "chromium_headless_shell_revision" \
   "$TEST_TMP/headless-metadata-missing.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 printf '%s\n' \
-  '{"browsers":[{"name":"chromium","revision":"1187"},{"name":"chromium-headless-shell","revision":"1187"},{"name":"chromium-headless-shell","revision":"1187"}]}' \
+  '{"browsers":[{"name":"chromium","revision":"1193"},{"name":"chromium-headless-shell","revision":"1193"},{"name":"chromium-headless-shell","revision":"1193"}]}' \
   > "$LANE/node_modules/playwright-core/browsers.json"
 expect_failure "chromium_headless_shell_revision" \
   "$TEST_TMP/headless-metadata-duplicate.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
-rm -rf "$CACHE/chromium_headless_shell-1187"
+write_fixture_metadata 1.55.1 1193
+printf '%s\n' \
+  '{"metadata":{"browsers":[{"name":"chromium","revision":"1193"},{"name":"chromium-headless-shell","revision":"1193"}]}}' \
+  > "$LANE/node_modules/playwright-core/browsers.json"
+expect_failure "chromium_revision" \
+  "$TEST_TMP/browser-nested-only-metadata.out" run_checker
+
+write_fixture_metadata 1.55.1 1193
+printf '%s\n' '{' > "$LANE/node_modules/playwright-core/browsers.json"
+expect_failure "chromium_revision" \
+  "$TEST_TMP/browser-malformed-metadata.out" run_checker
+
+write_fixture_metadata 1.55.1 1193
+rm -rf "$CACHE/chromium_headless_shell-1193"
 expect_failure "chromium_headless_shell_executable" \
   "$TEST_TMP/headed-only-cache.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
-rm "$CACHE/chromium_headless_shell-1187/chrome-mac/headless_shell"
+write_fixture_metadata 1.55.1 1193
+rm "$CACHE/chromium_headless_shell-1193/chrome-mac/headless_shell"
 expect_failure "chromium_headless_shell_executable" \
   "$TEST_TMP/headless-missing.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
-chmod -x "$CACHE/chromium_headless_shell-1187/chrome-mac/headless_shell"
+write_fixture_metadata 1.55.1 1193
+chmod -x "$CACHE/chromium_headless_shell-1193/chrome-mac/headless_shell"
 expect_failure "chromium_headless_shell_executable" \
   "$TEST_TMP/headless-not-executable.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 mv \
-  "$CACHE/chromium_headless_shell-1187" \
-  "$CACHE/chromium_headless_shell-1188"
+  "$CACHE/chromium_headless_shell-1193" \
+  "$CACHE/chromium_headless_shell-1194"
 expect_failure "chromium_headless_shell_executable" \
   "$TEST_TMP/headless-cache-revision.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 rmdir "$LP/node_modules"
 expect_failure "lp_node_modules" "$TEST_TMP/lp-node-modules.out" run_checker
 
-write_fixture_metadata 1.55.0 1187
+write_fixture_metadata 1.55.1 1193
 expect_failure "lp_checkout" "$TEST_TMP/relative.out" \
   "$LANE/check-readiness.sh" \
   --lp-checkout relative/lp \
