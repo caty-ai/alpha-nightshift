@@ -4,7 +4,8 @@ Metsuke captures a local LP with Playwright and analyzes only the frozen
 capture evidence. Dependency installation and browser downloads are daytime
 operator steps. They never run during a nightly lane.
 
-Daytime preparation uses the committed lockfile:
+Daytime preparation uses the committed lockfile, which pins Playwright
+exactly to 1.55.1:
 
 ```sh
 cd lanes/metsuke
@@ -29,7 +30,7 @@ run package managers, download or launch a browser, execute Codex, start the LP,
 contact a host, or create the prospective state directory. It fails closed on
 missing, relative, noncanonical, or symlink-aliased paths and prints one stable
 JSON object only after every readiness cell passes. Browser readiness checks
-the revision-1187 Chromium headless shell used by the lane's headless capture.
+the revision-1193 Chromium headless shell used by the lane's headless capture.
 
 Configure `config/nightshift.conf` with:
 

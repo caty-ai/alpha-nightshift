@@ -8,8 +8,8 @@ if [ -L "$0" ]; then
 fi
 
 SCRIPT_DIR=$(cd -P "$(/usr/bin/dirname "$0")" && pwd -P)
-PLAYWRIGHT_VERSION=1.55.0
-CHROMIUM_REVISION=1187
+PLAYWRIGHT_VERSION=1.55.1
+CHROMIUM_REVISION=1193
 
 LP_CHECKOUT=
 BROWSER_CACHE=
@@ -189,26 +189,26 @@ canonical_file playwright_package "$playwright_metadata" "$SCRIPT_DIR"
 installed_playwright_version=$(read_package_version "$playwright_metadata" playwright) ||
   fail playwright_version "package version metadata is malformed"
 [ "$installed_playwright_version" = "$PLAYWRIGHT_VERSION" ] ||
-  fail playwright_version "expected 1.55.0"
+  fail playwright_version "expected 1.55.1"
 
 playwright_core_metadata="$SCRIPT_DIR/node_modules/playwright-core/package.json"
 canonical_file playwright_core_package "$playwright_core_metadata" "$SCRIPT_DIR"
 installed_core_version=$(read_package_version "$playwright_core_metadata" playwright-core) ||
   fail playwright_core_version "package version metadata is malformed"
 [ "$installed_core_version" = "$PLAYWRIGHT_VERSION" ] ||
-  fail playwright_core_version "expected 1.55.0"
+  fail playwright_core_version "expected 1.55.1"
 
 browser_metadata="$SCRIPT_DIR/node_modules/playwright-core/browsers.json"
 canonical_file playwright_browser_metadata "$browser_metadata" "$SCRIPT_DIR"
 installed_chromium_revision=$(read_browser_revision "$browser_metadata" chromium) ||
   fail chromium_revision "browser metadata is malformed"
 [ "$installed_chromium_revision" = "$CHROMIUM_REVISION" ] ||
-  fail chromium_revision "expected revision 1187"
+  fail chromium_revision "expected revision 1193"
 installed_headless_shell_revision=$(
   read_browser_revision "$browser_metadata" chromium-headless-shell
 ) || fail chromium_headless_shell_revision "browser metadata is malformed"
 [ "$installed_headless_shell_revision" = "$CHROMIUM_REVISION" ] ||
-  fail chromium_headless_shell_revision "expected revision 1187"
+  fail chromium_headless_shell_revision "expected revision 1193"
 
 [ "$(/usr/bin/uname -s)" = Darwin ] ||
   fail chromium_headless_shell_executable "unsupported operating system"
