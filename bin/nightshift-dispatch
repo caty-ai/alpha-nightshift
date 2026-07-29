@@ -142,7 +142,7 @@ write_aborted_run_end() {
 
 abort_after_ledger_failure() {
   failed_record_type=$1
-  trap - HUP INT TERM
+  trap - HUP INT TERM USR1
   nightshift_log ERROR "Ledger append failed for $failed_record_type; aborting run"
   if [ "$RUN_START_RECORDED" = true ]; then
     if ! write_aborted_run_end \
@@ -181,7 +181,7 @@ stop_active_runtime() {
 
 abort_infrastructure_run() {
   infrastructure_reason=$1
-  trap - HUP INT TERM
+  trap - HUP INT TERM USR1
   stop_active_runtime
   nightshift_log ERROR "Infrastructure failure: $infrastructure_reason"
   if [ "$RUN_START_RECORDED" = true ]; then
@@ -203,7 +203,7 @@ run_signal_handler() {
   # Ignore repeat delivery while cleanup is in progress. In a process-group
   # signal, the child receives the original signal and the supervisor may
   # forward the same signal before noticing that cleanup has started.
-  trap '' HUP INT TERM
+  trap '' HUP INT TERM USR1
   NIGHTSHIFT_PROCESS_INSPECTION_FAILED=false
   stop_active_runtime
   signal_abort_reason=
@@ -260,10 +260,11 @@ run_command() {
   trap 'run_signal_handler HUP 129' HUP
   trap 'run_signal_handler INT 130' INT
   trap 'run_signal_handler TERM 143' TERM
+  trap 'run_signal_handler INT 130' USR1
 
   if ! append_event run_start; then
     nightshift_log ERROR "Ledger append failed for run_start; no lanes started"
-    trap - HUP INT TERM
+    trap - HUP INT TERM USR1
     return 1
   fi
   RUN_START_RECORDED=true
@@ -276,20 +277,20 @@ run_command() {
       2)
         if ! record_skip budget_exhausted; then
           abort_after_ledger_failure skip || true
-          trap - HUP INT TERM
+          trap - HUP INT TERM USR1
           return 1
         fi
         nightshift_log INFO "No lanes started: budget exhausted"
         ;;
       3)
         abort_after_ledger_failure meter_error || true
-        trap - HUP INT TERM
+        trap - HUP INT TERM USR1
         return 1
         ;;
       *)
         if ! record_skip meter_error; then
           abort_after_ledger_failure skip || true
-          trap - HUP INT TERM
+          trap - HUP INT TERM USR1
           return 1
         fi
         nightshift_log WARN "No lanes started: budget meter error"
@@ -301,7 +302,7 @@ run_command() {
       abort_after_ledger_failure run_end || true
       return 1
     fi
-    trap - HUP INT TERM
+    trap - HUP INT TERM USR1
     return 0
   fi
 
@@ -324,20 +325,20 @@ run_command() {
         2)
           if ! record_skip budget_exhausted; then
             abort_after_ledger_failure skip || true
-            trap - HUP INT TERM
+            trap - HUP INT TERM USR1
             return 1
           fi
           nightshift_log INFO "Stopping before lane $lane_number: budget exhausted"
           ;;
         3)
           abort_after_ledger_failure meter_error || true
-          trap - HUP INT TERM
+          trap - HUP INT TERM USR1
           return 1
           ;;
         *)
           if ! record_skip meter_error; then
             abort_after_ledger_failure skip || true
-            trap - HUP INT TERM
+            trap - HUP INT TERM USR1
             return 1
           fi
           nightshift_log WARN "Stopping before lane $lane_number: budget meter error"
@@ -361,7 +362,7 @@ run_command() {
       '{ts: $ts, night_id: $night_id, type: "lane_start", lane: $lane}')
     if ! ledger_append "$lane_start_record"; then
       abort_after_ledger_failure lane_start || true
-      trap - HUP INT TERM
+      trap - HUP INT TERM USR1
       return 1
     fi
     RUN_LANES_RUN=$((RUN_LANES_RUN + 1))
@@ -375,7 +376,7 @@ run_command() {
     fi
     if ! ledger_ingest_proposals "$lane_dir/findings.jsonl"; then
       abort_after_ledger_failure finding || true
-      trap - HUP INT TERM
+      trap - HUP INT TERM USR1
       return 1
     fi
     RUN_FINDINGS_COUNT=$((RUN_FINDINGS_COUNT + LEDGER_INGESTED_COUNT))
@@ -410,7 +411,7 @@ run_command() {
       }')
     if ! ledger_append "$lane_end_record"; then
       abort_after_ledger_failure lane_end || true
-      trap - HUP INT TERM
+      trap - HUP INT TERM USR1
       return 1
     fi
     nightshift_log INFO "Finished $lane_name (exit=$LANE_EXIT_CODE timed_out=$LANE_TIMED_OUT findings=$LEDGER_INGESTED_COUNT duplicates=$LEDGER_DUPLICATE_COUNT)"
@@ -423,12 +424,8 @@ run_command() {
       abort_infrastructure_run "lane_process_inspection_unavailable" || true
       return 1
     fi
-    if [ "$LANE_EXIT_CODE" -ne 0 ]; then
-      if [ "$LANE_LIFECYCLE_VIOLATION" = true ]; then
-        abort_infrastructure_run "lane_lifecycle_violation" || true
-      else
-        abort_infrastructure_run "lane_failed" || true
-      fi
+    if [ "$LANE_LIFECYCLE_VIOLATION" = true ]; then
+      abort_infrastructure_run "lane_lifecycle_violation" || true
       return 1
     fi
     lane_number=$((lane_number + 1))
@@ -438,7 +435,7 @@ run_command() {
     abort_after_ledger_failure run_end || true
     return 1
   fi
-  trap - HUP INT TERM
+  trap - HUP INT TERM USR1
   nightshift_log INFO "Run ended (lanes=$RUN_LANES_RUN findings=$RUN_FINDINGS_COUNT)"
 }
 
@@ -583,7 +580,11 @@ supervisor_signal_handler() {
   supervisor_exit=$2
   trap '' HUP INT TERM
   if [ -n "$NIGHTSHIFT_DISPATCH_PID" ]; then
-    kill -"$supervisor_signal" "$NIGHTSHIFT_DISPATCH_PID" 2>/dev/null || true
+    case "$supervisor_signal" in
+      INT) supervisor_forward_signal=USR1 ;;
+      *) supervisor_forward_signal=$supervisor_signal ;;
+    esac
+    kill -"$supervisor_forward_signal" "$NIGHTSHIFT_DISPATCH_PID" 2>/dev/null || true
     wait "$NIGHTSHIFT_DISPATCH_PID" 2>/dev/null || true
     NIGHTSHIFT_DISPATCH_PID=
   fi
@@ -600,10 +601,17 @@ trap 'supervisor_signal_handler TERM 143' TERM
 
 (
   set -e
+  # POSIX asynchronous-list children may inherit SIGINT ignored. Install a
+  # trappable relay before dispatch can acquire the run lock; run_command
+  # replaces this with its full cleanup handler before recording run_start.
+  trap 'exit 130' USR1
   dispatch_subcommand "$1"
 ) &
 NIGHTSHIFT_DISPATCH_PID=$!
 set +e
+while kill -0 "$NIGHTSHIFT_DISPATCH_PID" 2>/dev/null; do
+  sleep 0.05
+done
 wait "$NIGHTSHIFT_DISPATCH_PID"
 dispatch_exit=$?
 set -e

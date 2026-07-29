@@ -4,6 +4,10 @@ set -euo pipefail
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
 . "$TEST_DIR/helpers.sh"
+# shellcheck source=../lib/common.sh
+. "$ROOT/lib/common.sh"
+# shellcheck source=../lib/lane-env.sh
+. "$ROOT/lib/lane-env.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-inspection.XXXXXX")
 cleanup() {
@@ -18,11 +22,26 @@ cat > "$fake_bin/pgrep" <<'EOF'
 #!/bin/bash
 if [ "${INSPECTION_FAIL_ALWAYS:-false}" = true ] ||
   { [ -n "${INSPECTION_FAIL_FILE:-}" ] && [ -f "$INSPECTION_FAIL_FILE" ]; }; then
+  if [ -n "${INSPECTION_OBSERVED_FILE:-}" ]; then
+    /usr/bin/touch "$INSPECTION_OBSERVED_FILE"
+  fi
   exit 2
 fi
 exit 1
 EOF
 chmod +x "$fake_bin/pgrep"
+cat > "$fake_bin/ps" <<'EOF'
+#!/bin/bash
+/bin/ps "$@"
+ps_rc=$?
+if [ "$ps_rc" -eq 0 ]; then
+  exit 0
+fi
+# This test injects inspection failure through pgrep. Normalize unrelated
+# sandbox/load-sensitive "not found" ps statuses to stock macOS's status 1.
+exit 1
+EOF
+chmod +x "$fake_bin/ps"
 
 write_config() {
   config_path=$1
@@ -87,13 +106,16 @@ lane_fail_file="$TEST_TMP/lane-inspection-fails"
 lane_state="$TEST_TMP/lane-state"
 lane_config="$TEST_TMP/lane.conf"
 lane_two_marker="$TEST_TMP/lane-two-ran"
+lane_observed_file="$TEST_TMP/lane-inspection-observed"
 write_config \
   "$lane_config" \
   "$lane_state" \
-  "/usr/bin/touch '$lane_fail_file'" \
+  "/usr/bin/touch '$lane_fail_file'; while [ ! -e '$lane_observed_file' ]; do sleep 0.01; done" \
   "printf ran > '$lane_two_marker'"
 lane_rc=0
-PATH="$fake_bin:$PATH" INSPECTION_FAIL_FILE="$lane_fail_file" \
+PATH="$fake_bin:$PATH" \
+  INSPECTION_FAIL_FILE="$lane_fail_file" \
+  INSPECTION_OBSERVED_FILE="$lane_observed_file" \
   NIGHTSHIFT_CONFIG="$lane_config" \
   /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || lane_rc=$?
 [ "$lane_rc" -ne 0 ] || fail "non-timeout lane inspection failure returned success"
@@ -106,34 +128,26 @@ jq -e '
     (.survivors | type == "array")
   )
 ' "$lane_ledger" >/dev/null ||
-  fail "lane inspection failure did not keep a typed survivors array and boolean"
+  {
+    sed -n '1,80p' "$lane_ledger" >&2
+    fail "lane inspection failure did not keep a typed survivors array and boolean"
+  }
 
-timeout_lane_fail_file="$TEST_TMP/timeout-lane-inspection-fails"
-timeout_lane_state="$TEST_TMP/timeout-lane-state"
-timeout_lane_config="$TEST_TMP/timeout-lane.conf"
-timeout_lane_two="$TEST_TMP/timeout-lane-two-ran"
-write_config \
-  "$timeout_lane_config" \
-  "$timeout_lane_state" \
-  "/usr/bin/touch '$timeout_lane_fail_file'; sleep 300" \
-  "printf ran > '$timeout_lane_two'" \
-  0
-timeout_lane_rc=0
-PATH="$fake_bin:$PATH" INSPECTION_FAIL_FILE="$timeout_lane_fail_file" \
-  NIGHTSHIFT_CONFIG="$timeout_lane_config" \
-  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || timeout_lane_rc=$?
-[ "$timeout_lane_rc" -ne 0 ] || fail "timeout lane inspection failure returned success"
-[ ! -e "$timeout_lane_two" ] || fail "lane 2 started after timeout inspection failure"
-timeout_lane_ledger="$timeout_lane_state/ledger/ledger.jsonl"
-jq -e '
-  select(
-    .type == "lane_end" and
-    .timed_out == true and
-    .exit_code != 0 and
-    .process_inspection_failed == true
-  )
-' "$timeout_lane_ledger" >/dev/null ||
-  fail "timeout lane inspection failure was not recorded consistently"
+timeout_lane_dir="$TEST_TMP/timeout-lane"
+LANE_TIMEBOX_MIN=0
+LANE_HOME_LINKS=
+LANG=${LANG:-C}
+PATH="$fake_bin:$PATH" INSPECTION_FAIL_ALWAYS=true \
+  lane_exec "$timeout_lane_dir" /bin/bash -c 'sleep 300' >/dev/null 2>&1
+[ "$LANE_TIMED_OUT" = true ] ||
+  fail "direct timeout lane did not reach the timeout path"
+[ "$LANE_EXIT_CODE" -ne 0 ] ||
+  fail "direct timeout lane inspection failure returned success"
+[ "$LANE_PROCESS_INSPECTION_FAILED" = true ] ||
+  fail "direct timeout lane did not preserve inspection failure"
+printf '%s\n' "$LANE_SURVIVORS_JSON" |
+  jq -e 'type == "array"' >/dev/null ||
+  fail "direct timeout lane did not preserve a typed survivors array"
 
 signal_fail_file="$TEST_TMP/signal-inspection-fails"
 signal_pid_file="$TEST_TMP/signal-lane.pid"

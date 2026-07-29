@@ -33,6 +33,73 @@ write_config() {
   } > "$config_path"
 }
 
+exit_state="$TEST_TMP/exit-state"
+exit_config="$TEST_TMP/exit.conf"
+exit_lane_two="$TEST_TMP/exit-lane-two-ran"
+write_config \
+  "$exit_config" \
+  "$exit_state" \
+  'exit 7' \
+  "printf ran > \"$exit_lane_two\""
+NIGHTSHIFT_CONFIG="$exit_config" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null
+[ -e "$exit_lane_two" ] || fail "lane 2 did not run after an ordinary lane exit"
+exit_ledger="$exit_state/ledger/ledger.jsonl"
+jq -e '
+  select(
+    .type == "lane_end" and
+    .lane == "lane_1" and
+    .exit_code == 7 and
+    .timed_out == false and
+    .process_inspection_failed == false and
+    .lifecycle_violation == false and
+    (.survivors | type == "array" and length == 0)
+  )
+' "$exit_ledger" >/dev/null ||
+  fail "ordinary non-zero lane result was not preserved"
+jq -e '
+  select(
+    .type == "run_end" and
+    .lanes_run == 2 and
+    (.aborted // false) == false
+  )
+' "$exit_ledger" >/dev/null ||
+  fail "ordinary non-zero lane result aborted the night"
+
+timeout_state="$TEST_TMP/timeout-state"
+timeout_config="$TEST_TMP/timeout.conf"
+timeout_lane_two="$TEST_TMP/timeout-lane-two-ran"
+write_config \
+  "$timeout_config" \
+  "$timeout_state" \
+  'sleep 300' \
+  "printf ran > \"$timeout_lane_two\"" \
+  0
+NIGHTSHIFT_CONFIG="$timeout_config" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null
+[ -e "$timeout_lane_two" ] || fail "lane 2 did not run after a clean timebox"
+timeout_ledger="$timeout_state/ledger/ledger.jsonl"
+jq -e '
+  select(
+    .type == "lane_end" and
+    .lane == "lane_1" and
+    .exit_code != 0 and
+    .timed_out == true and
+    .process_inspection_failed == false and
+    .lifecycle_violation == false and
+    (.survivors | type == "array" and length == 0)
+  )
+' "$timeout_ledger" >/dev/null ||
+  fail "clean timebox result was not preserved"
+jq -e '
+  select(
+    .type == "run_end" and
+    .lanes_run == 2 and
+    (.aborted // false) == false
+  )
+' "$timeout_ledger" >/dev/null ||
+  fail "clean timebox aborted the night"
+
 lanes_state="$TEST_TMP/lanes-state"
 mkdir -p \
   "$lanes_state/logs" \

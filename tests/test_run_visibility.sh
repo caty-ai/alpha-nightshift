@@ -3,6 +3,7 @@ set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+PYTHON_BIN=$(command -v python3)
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-run-visibility.XXXXXX")
@@ -57,6 +58,63 @@ if kill -0 "$child_pid" 2>/dev/null; then
   fail "TERM-aborted run orphaned its active lane child"
 fi
 
+int_state="$TEST_TMP/int-state"
+int_config="$TEST_TMP/int.conf"
+printf '%s\n' \
+  "NIGHTSHIFT_STATE_DIR='$int_state'" \
+  "LANE_CMD_1='sleep 300 & printf \"%s\\n\" \"\$!\" > \"\$LANE_DIR/child.pid\"; wait'" \
+  "LANE_TIMEBOX_MIN=1" \
+  "BUDGET_PROBE_CMD='$ROOT/bin/budget-probe-stub'" \
+  "LANE_HOME_LINKS=''" \
+  > "$int_config"
+NIGHTSHIFT_CONFIG="$int_config" \
+  "$PYTHON_BIN" "$TEST_DIR/foreground-signal-launcher.py" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null &
+int_dispatcher_pid=$!
+int_child_pid_file="$int_state/lanes/$NIGHT_ID/lane_1/child.pid"
+int_wait=0
+while [ ! -s "$int_child_pid_file" ] && [ "$int_wait" -lt 200 ]; do
+  kill -0 "$int_dispatcher_pid" 2>/dev/null ||
+    fail "INT dispatcher exited before its lane became observable"
+  sleep 0.05
+  int_wait=$((int_wait + 1))
+done
+assert_file_exists "$int_child_pid_file"
+int_started=$(date '+%s')
+kill -INT "$int_dispatcher_pid"
+int_rc=0
+wait "$int_dispatcher_pid" || int_rc=$?
+int_elapsed=$(( $(date '+%s') - int_started ))
+[ "$int_elapsed" -lt 5 ] ||
+  fail "INT-aborted active lane took $int_elapsed seconds"
+[ "$int_rc" -eq 130 ] ||
+  fail "INT-aborted run returned $int_rc instead of 130"
+int_child_pid=$(sed -n '1p' "$int_child_pid_file")
+if kill -0 "$int_child_pid" 2>/dev/null; then
+  fail "INT-aborted run orphaned its active lane child"
+fi
+if find "$int_state" -maxdepth 1 -name '.budget.*' -print |
+  grep . >/dev/null 2>&1; then
+  fail "INT-aborted active lane left budget temporary state behind"
+fi
+[ ! -d "$int_state/locks/nightshift.lock" ] ||
+  fail "INT-aborted run did not release its lock"
+int_ledger="$int_state/ledger/ledger.jsonl"
+int_run_end_count=$(jq -r 'select(.type == "run_end") | .type' "$int_ledger" |
+  wc -l |
+  tr -d ' ')
+[ "$int_run_end_count" -eq 1 ] ||
+  fail "INT-aborted active lane wrote $int_run_end_count run_end records instead of one"
+jq -e '
+  select(
+    .type == "run_end" and
+    .aborted == true and
+    .signal == "INT" and
+    .lanes_run == 1
+  )
+' "$int_ledger" >/dev/null ||
+  fail "INT-aborted active lane did not identify the originating signal"
+
 probe_state="$TEST_TMP/probe-state"
 probe_config="$TEST_TMP/probe.conf"
 probe_pid_file="$TEST_TMP/probe.pid"
@@ -97,6 +155,65 @@ probe_run_end_count=$(jq -r 'select(.type == "run_end") | .type' "$probe_ledger"
   tr -d ' ')
 [ "$probe_run_end_count" -eq 1 ] ||
   fail "probe signal abort wrote $probe_run_end_count run_end records instead of one"
+
+int_probe_state="$TEST_TMP/int-probe-state"
+int_probe_config="$TEST_TMP/int-probe.conf"
+int_probe_pid_file="$TEST_TMP/int-probe.pid"
+printf '%s\n' \
+  "NIGHTSHIFT_STATE_DIR='$int_probe_state'" \
+  "LANE_CMD_1=':'" \
+  "LANE_TIMEBOX_MIN=1" \
+  "BUDGET_PROBE_CMD='printf \"%s\\n\" \"\$\$\" > \"$int_probe_pid_file\"; sleep 300'" \
+  "LANE_HOME_LINKS=''" \
+  > "$int_probe_config"
+NIGHTSHIFT_CONFIG="$int_probe_config" \
+  "$PYTHON_BIN" "$TEST_DIR/foreground-signal-launcher.py" \
+  /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null &
+int_probe_dispatcher_pid=$!
+int_probe_wait=0
+while [ ! -s "$int_probe_pid_file" ] && [ "$int_probe_wait" -lt 200 ]; do
+  kill -0 "$int_probe_dispatcher_pid" 2>/dev/null ||
+    fail "INT dispatcher exited before its budget probe became observable"
+  sleep 0.05
+  int_probe_wait=$((int_probe_wait + 1))
+done
+assert_file_exists "$int_probe_pid_file"
+int_probe_started=$(date '+%s')
+kill -INT "$int_probe_dispatcher_pid"
+int_probe_rc=0
+wait "$int_probe_dispatcher_pid" || int_probe_rc=$?
+int_probe_elapsed=$(( $(date '+%s') - int_probe_started ))
+[ "$int_probe_elapsed" -lt 5 ] ||
+  fail "INT-aborted active budget probe took $int_probe_elapsed seconds"
+[ "$int_probe_rc" -eq 130 ] ||
+  fail "INT-aborted budget probe returned $int_probe_rc instead of 130"
+int_probe_pid=$(sed -n '1p' "$int_probe_pid_file")
+if kill -0 "$int_probe_pid" 2>/dev/null; then
+  fail "INT-aborted run orphaned its active budget probe"
+fi
+if find "$int_probe_state" -maxdepth 1 -name '.budget.*' -print |
+  grep . >/dev/null 2>&1; then
+  fail "INT-aborted budget probe left its temporary directory behind"
+fi
+[ ! -d "$int_probe_state/locks/nightshift.lock" ] ||
+  fail "INT-aborted budget probe did not release its lock"
+int_probe_ledger="$int_probe_state/ledger/ledger.jsonl"
+int_probe_run_end_count=$(
+  jq -r 'select(.type == "run_end") | .type' "$int_probe_ledger" |
+    wc -l |
+    tr -d ' '
+)
+[ "$int_probe_run_end_count" -eq 1 ] ||
+  fail "INT-aborted budget probe wrote $int_probe_run_end_count run_end records instead of one"
+jq -e '
+  select(
+    .type == "run_end" and
+    .aborted == true and
+    .signal == "INT" and
+    .lanes_run == 0
+  )
+' "$int_probe_ledger" >/dev/null ||
+  fail "INT-aborted budget probe did not identify the originating signal"
 
 final_state="$TEST_TMP/final-state"
 final_config="$TEST_TMP/final.conf"

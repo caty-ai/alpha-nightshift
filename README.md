@@ -44,6 +44,11 @@ sandbox.
 /bin/bash bin/nightshift-dispatch status
 ```
 
+`launchd` and foreground launches deliver SIGINT with its default disposition,
+so the dispatcher handles it as a prompt interrupted run. A script started as a
+plain POSIX background job may inherit SIGINT ignored; use SIGTERM to stop that
+kind of manual background launch.
+
 ## Install the launchd jobs
 
 The checked-in plists contain the literal `__NIGHTSHIFT_ROOT__` token. Substitute
