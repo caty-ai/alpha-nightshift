@@ -344,7 +344,7 @@ capture_preflight() {
   local playwright_module_dir=$1
   if [ ! -d "$playwright_module_dir" ]; then
     CAPTURE_FAILED=true
-    log "Playwright dependency is missing at $playwright_module_dir; run npm install in $SCRIPT_DIR before the night run"
+    log "Playwright dependency is missing at $playwright_module_dir; run daytime npm ci --ignore-scripts in $SCRIPT_DIR before the night run"
     return 1
   fi
   if [ -z "${PLAYWRIGHT_BROWSERS_PATH_REAL:-}" ]; then

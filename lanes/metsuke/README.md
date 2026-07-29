@@ -1,16 +1,35 @@
 # Metsuke lane setup
 
 Metsuke captures a local LP with Playwright and analyzes only the frozen
-capture evidence. The lane does not install dependencies during a night run.
+capture evidence. Dependency installation and browser downloads are daytime
+operator steps. They never run during a nightly lane.
 
-One-time setup:
+Daytime preparation uses the committed lockfile:
 
 ```sh
 cd lanes/metsuke
-npm install
+npm ci --ignore-scripts
 PLAYWRIGHT_BROWSERS_PATH=/absolute/path/to/ms-playwright \
-  npx playwright install chromium
+  ./node_modules/.bin/playwright install chromium
 ```
+
+Before the seven-night calibration begins, check the prepared runtime with
+explicit canonical paths:
+
+```sh
+./check-readiness.sh \
+  --lp-checkout /absolute/path/to/caty-talk-LP \
+  --browser-cache /absolute/path/to/ms-playwright \
+  --codex-bin /absolute/path/to/codex \
+  --state-dir /absolute/path/to/alpha-nightshift/state
+```
+
+The checker is credential-free and read-only. It does not source configuration,
+run package managers, download or launch a browser, execute Codex, start the LP,
+contact a host, or create the prospective state directory. It fails closed on
+missing, relative, noncanonical, or symlink-aliased paths and prints one stable
+JSON object only after every readiness cell passes. Browser readiness checks
+the revision-1187 Chromium headless shell used by the lane's headless capture.
 
 Configure `config/nightshift.conf` with:
 
@@ -27,4 +46,6 @@ Configure `config/nightshift.conf` with:
   need to change.
 
 The preflight fails before capture when the lane-local Playwright dependency
-or browser cache is missing. Metsuke never runs `npm install` itself.
+or browser cache is missing. Metsuke never installs dependencies or downloads
+browsers itself. Readiness prepares or activates neither Phase 1b nor any
+credential-bearing capability.
