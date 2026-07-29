@@ -12,9 +12,12 @@ trap 'rm -rf "$TEST_TMP"' EXIT
 lockdir="$TEST_TMP/lock"
 
 lock_acquire "$lockdir" || fail "first lock acquisition failed"
-if lock_acquire "$lockdir"; then
+held_rc=0
+lock_acquire "$lockdir" || held_rc=$?
+if [ "$held_rc" -eq 0 ]; then
   fail "second lock acquisition unexpectedly succeeded"
 fi
+[ "$held_rc" -eq 1 ] || fail "true lock contention returned $held_rc instead of 1"
 lock_release "$lockdir" || fail "owned lock did not release"
 [ ! -d "$lockdir" ] || fail "released lock directory still exists"
 
@@ -53,5 +56,14 @@ assert_ledger_record \
   "$NIGHT_ID" \
   skip \
   lock_held
+
+error_parent="$TEST_TMP/error-parent"
+mkdir "$error_parent"
+chmod a-w "$error_parent"
+error_rc=0
+lock_acquire "$error_parent/lock" || error_rc=$?
+[ "$error_rc" -eq 2 ] ||
+  fail "unwritable lock parent returned $error_rc instead of lock error 2"
+chmod u+w "$error_parent"
 
 printf 'test_lock: PASS\n'

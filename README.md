@@ -16,10 +16,20 @@ network-confined; network sandboxing is planned for Phase 1.
 Copy `config/nightshift.conf.example` to `config/nightshift.conf` and adjust the
 numbered `LANE_CMD_n` values. Runtime state is stored under `state/` by default.
 
-`LANE_HOME_LINKS` is empty by default. Any opted-in path is reachable READ-WRITE
-through its lane HOME symlink. A lane that needs Codex authentication may
-explicitly link the minimum required path, but never link `~/.ssh`,
-`~/.config/gh`, or any GitHub credential store.
+`LANE_HOME_LINKS` is empty by default. Any opted-in path is reachable
+**read-write** through its lane HOME symlink; linking it grants the lane the
+same access. The dispatcher refuses sensitive basenames (`.ssh`, `.config`,
+`.git-credentials`, `.netrc`, `.aws`, `.gnupg`, and `.config/gh`) even when an
+operator opts in. Link only the minimum path needed for Codex authentication.
+Other host secret stores readable by the same macOS user remain reachable until
+the Phase 1 sandbox is available.
+
+Phase 0 timeboxes kill the lane process group and recursively sweep descendants,
+including children that call `setsid()`. A survivor is recorded in
+`lane_end.survivors`, fails the lane, and aborts the rest of the night. This is
+detection and fail-closed cleanup, not containment: a process can still race or
+evade observation. Full filesystem, credential, and process containment
+requires the Phase 1 sandbox.
 
 ## Run manually
 

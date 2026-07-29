@@ -19,8 +19,12 @@ ledger_append() {
 '*) return 1 ;;
   esac
 
-  mkdir -p "$STATE_DIR/ledger"
-  printf '%s\n' "$compact_json" >> "$(ledger_file_path)"
+  if ! mkdir -p "$STATE_DIR/ledger"; then
+    return 1
+  fi
+  if ! printf '%s\n' "$compact_json" >> "$(ledger_file_path)"; then
+    return 1
+  fi
 }
 
 ledger_query_night() {

@@ -12,7 +12,7 @@ digest_render_template() {
   lane_stats=$8
 
   output_tmp="${output_file}.tmp.$$"
-  if ! (
+  if (
     while IFS= read -r template_line || [ -n "$template_line" ]; do
       case "$template_line" in
         '{{NIGHT_ID}}') printf '%s\n' "$digest_night_id" ;;
@@ -25,9 +25,14 @@ digest_render_template() {
       esac
     done < "$template_file"
   ) > "$output_tmp"; then
+    :
+  else
     rm -f "$output_tmp"
     return 1
   fi
 
-  mv "$output_tmp" "$output_file"
+  if ! mv "$output_tmp" "$output_file"; then
+    rm -f "$output_tmp"
+    return 1
+  fi
 }

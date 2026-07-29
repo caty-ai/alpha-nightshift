@@ -25,36 +25,23 @@ budget_fail_with_meter_error() {
   return 1
 }
 
-budget_process_group_alive() {
-  budget_group_pid=$1
-  kill -0 -- "-$budget_group_pid" 2>/dev/null
-}
-
-budget_stop_process_group() {
-  budget_group_pid=$1
-  kill -TERM -- "-$budget_group_pid" 2>/dev/null || true
-  budget_grace_started=$(date '+%s')
-  while budget_process_group_alive "$budget_group_pid"; do
-    budget_grace_now=$(date '+%s')
-    if [ $((budget_grace_now - budget_grace_started)) -ge 10 ]; then
-      kill -KILL -- "-$budget_group_pid" 2>/dev/null || true
-      break
-    fi
-    sleep 0.1
-  done
-
-}
-
 budget_check() {
-  budget_tmp_dir=$(mktemp -d "$STATE_DIR/.budget.XXXXXX")
+  if ! budget_tmp_dir=$(mktemp -d "$STATE_DIR/.budget.XXXXXX"); then
+    budget_fail_with_meter_error "probe_setup_failed"
+    return $?
+  fi
   budget_stdout="$budget_tmp_dir/stdout"
   budget_stderr="$budget_tmp_dir/stderr"
+  NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=$budget_tmp_dir
+  NIGHTSHIFT_ACTIVE_PROBE_PID=
+  NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=
 
   set -m
   (
     exec /bin/bash -c "$BUDGET_PROBE_CMD"
-  ) >"$budget_stdout" 2>"$budget_stderr" &
+  ) </dev/null >"$budget_stdout" 2>"$budget_stderr" &
   budget_pid=$!
+  NIGHTSHIFT_ACTIVE_PROBE_PID=$budget_pid
   set +m
   budget_started=$(date '+%s')
   budget_timed_out=false
@@ -62,11 +49,13 @@ budget_check() {
   # enforcing the timeout.
   sleep 0.1
 
-  while kill -0 "$budget_pid" 2>/dev/null; do
+  while nightshift_process_tree_alive "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"; do
+    NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=$NIGHTSHIFT_PROCESS_KNOWN
     budget_now=$(date '+%s')
     if [ $((budget_now - budget_started)) -ge "$BUDGET_PROBE_TIMEOUT_SEC" ]; then
       budget_timed_out=true
-      budget_stop_process_group "$budget_pid"
+      nightshift_stop_process_tree "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"
+      NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=$NIGHTSHIFT_PROCESS_KNOWN
       break
     fi
     sleep 0.1
@@ -77,61 +66,90 @@ budget_check() {
   else
     budget_rc=$?
   fi
+  nightshift_stop_process_tree "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"
+  budget_survivors=$NIGHTSHIFT_PROCESS_SURVIVORS
+  NIGHTSHIFT_ACTIVE_PROBE_PID=
+  NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=
 
   if [ "$budget_timed_out" = true ]; then
-    if budget_group_members=$(ps -g "$budget_pid" -o pid= 2>/dev/null) &&
-      [ -n "$(printf '%s' "$budget_group_members" | tr -d '[:space:]')" ]; then
-      nightshift_log WARN "Budget probe process group $budget_pid still has survivors after KILL"
+    if [ -n "$(printf '%s' "$budget_survivors" | tr -d '[:space:]')" ]; then
+      nightshift_log WARN "Budget probe $budget_pid still has survivors after descendant sweep: $budget_survivors"
     fi
     rm -rf "$budget_tmp_dir"
+    NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
     budget_fail_with_meter_error "probe_timeout"
+    return $?
+  fi
+
+  if [ -n "$(printf '%s' "$budget_survivors" | tr -d '[:space:]')" ]; then
+    nightshift_log WARN "Budget probe $budget_pid left survivors after descendant sweep: $budget_survivors"
+    rm -rf "$budget_tmp_dir"
+    NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
+    budget_fail_with_meter_error "probe_survivors"
     return $?
   fi
 
   if [ "$budget_rc" -ne 0 ]; then
     rm -rf "$budget_tmp_dir"
+    NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
     budget_fail_with_meter_error "probe_failed"
     return $?
   fi
 
-  if ! budget_json=$(jq -e -c '
+  if ! budget_result=$(jq -e -c --arg budget_cap "$NIGHT_BUDGET_TOKENS" '
     select(
       type == "object" and
       has("tokens_spent") and
       (.tokens_spent | type == "number" and . >= 0 and . == floor)
     )
-    | {tokens_spent: (.tokens_spent | floor)}
+    | (.tokens_spent | floor | tostring) as $spent_text
+    | select($spent_text | test("^[0-9]{1,15}$"))
+    | ($spent_text | tonumber) as $spent
+    | ($budget_cap | tonumber) as $cap
+    | {
+        status: (
+          if $cap > 0 and $spent >= $cap
+          then "exhausted"
+          else "ok"
+          end
+        ),
+        tokens_spent: $spent
+      }
   ' "$budget_stdout" 2>/dev/null); then
     rm -rf "$budget_tmp_dir"
+    NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
     budget_fail_with_meter_error "invalid_probe_output"
     return $?
   fi
-  case "$budget_json" in
+  case "$budget_result" in
     *'
 '*)
       rm -rf "$budget_tmp_dir"
+      NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
       budget_fail_with_meter_error "invalid_probe_output"
       return $?
       ;;
   esac
 
   rm -rf "$budget_tmp_dir"
-  BUDGET_LAST_SNAPSHOT=$budget_json
-  if ! tokens_spent=$(printf '%s\n' "$budget_json" | jq -r '.tokens_spent' 2>/dev/null); then
+  NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
+  if ! budget_status=$(printf '%s\n' "$budget_result" | jq -r '.status' 2>/dev/null); then
     budget_fail_with_meter_error "invalid_probe_output"
     return $?
   fi
-  case "$tokens_spent" in
-    ''|*[!0-9]*)
+  if ! BUDGET_LAST_SNAPSHOT=$(printf '%s\n' "$budget_result" |
+    jq -c '{tokens_spent: .tokens_spent}' 2>/dev/null); then
+    budget_fail_with_meter_error "invalid_probe_output"
+    return $?
+  fi
+  case "$budget_status" in
+    ok) return 0 ;;
+    exhausted) return 2 ;;
+    *)
       budget_fail_with_meter_error "invalid_probe_output"
       return $?
       ;;
   esac
-  if [ "$NIGHT_BUDGET_TOKENS" -gt 0 ] &&
-     [ "$tokens_spent" -ge "$NIGHT_BUDGET_TOKENS" ]; then
-    return 2
-  fi
-  return 0
 }
 
 budget_snapshot() {

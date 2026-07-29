@@ -3,6 +3,7 @@ set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+PYTHON_BIN=$(command -v python3)
 . "$TEST_DIR/helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/lane-env.sh"
@@ -22,6 +23,17 @@ LANE_TIMEBOX_MIN=1
 LANE_HOME_LINKS=
 LANG=${LANG:-C}
 lane_dir="$STATE_DIR/lane"
+
+process_inspection_available=true
+sleep 1 &
+inspection_child=$!
+if ! inspection_children=$(pgrep -P "$$" 2>/dev/null) ||
+  ! printf '%s\n' "$inspection_children" |
+    grep -F -x "$inspection_child" >/dev/null 2>&1; then
+  process_inspection_available=false
+fi
+kill "$inspection_child" 2>/dev/null || true
+wait "$inspection_child" 2>/dev/null || true
 
 export GH_TOKEN=fake-gh
 export GITHUB_TOKEN=fake-github
@@ -88,6 +100,31 @@ assert_not_contains 'GITHUB_TOKEN=' "$linked_lane/env.txt"
 [ -z "$(tr -d '[:space:]' < "$linked_lane/git-helper.txt")" ] ||
   fail "reserved empty credential helper was bypassed"
 
+sensitive_home="$TEST_TMP/sensitive-home"
+mkdir -p \
+  "$sensitive_home/.ssh" \
+  "$sensitive_home/.config/gh" \
+  "$sensitive_home/.aws" \
+  "$sensitive_home/.gnupg"
+printf '%s\n' secret > "$sensitive_home/.git-credentials"
+printf '%s\n' secret > "$sensitive_home/.netrc"
+LANE_HOME_LINKS="$sensitive_home/.ssh:$sensitive_home/.config:$sensitive_home/.config/gh:$sensitive_home/.git-credentials:$sensitive_home/.netrc:$sensitive_home/.aws:$sensitive_home/.gnupg"
+sensitive_lane="$STATE_DIR/sensitive-lane"
+lane_exec "$sensitive_lane" /usr/bin/true
+[ "$LANE_EXIT_CODE" -eq 0 ] || fail "denylisted HOME-link lane failed"
+for refused_name in .ssh .config gh .git-credentials .netrc .aws .gnupg; do
+  [ ! -L "$sensitive_lane/home/$refused_name" ] ||
+    fail "sensitive HOME link $refused_name was accepted"
+done
+
+setup_failure_lane="$STATE_DIR/setup-failure-lane"
+mkdir -p "$setup_failure_lane/home/.gitconfig"
+if lane_exec "$setup_failure_lane" /usr/bin/true; then
+  fail "lane_exec accepted an unwritable Git config target"
+fi
+[ "$LANE_SETUP_FAILED" = true ] ||
+  fail "lane_exec did not classify its setup failure"
+
 REPO_LANE_TMP=$(mktemp -d "$ROOT/state/lane-ceiling.XXXXXX")
 LANE_HOME_LINKS=
 lane_exec "$REPO_LANE_TMP/lane" /bin/bash -c '
@@ -115,6 +152,42 @@ while kill -0 "$child_pid" 2>/dev/null && [ "$child_wait" -lt 20 ]; do
 done
 if kill -0 "$child_pid" 2>/dev/null; then
   fail "lane child process survived process-group timebox"
+fi
+
+leader_exit_lane="$STATE_DIR/leader-exit-lane"
+lane_exec "$leader_exit_lane" /bin/bash -c '
+  sleep 300 &
+  printf "%s\n" "$!" > "$LANE_DIR/leader-exit-child.pid"
+  exit 0
+'
+leader_exit_pid=$(sed -n '1p' "$leader_exit_lane/leader-exit-child.pid")
+if kill -0 "$leader_exit_pid" 2>/dev/null; then
+  fail "child survived after its lane leader exited first"
+fi
+
+setsid_lane="$STATE_DIR/setsid-lane"
+lane_exec "$setsid_lane" /bin/bash -c "
+  \"$PYTHON_BIN\" -c 'import os,time; time.sleep(0.2); os.setsid(); open(os.environ[\"LANE_DIR\"] + \"/setsid-child.pid\", \"w\").write(str(os.getpid())); time.sleep(300)' &
+  wait
+"
+[ "$LANE_TIMED_OUT" = true ] || fail "setsid lane was not timed out"
+if [ ! -f "$setsid_lane/setsid-child.pid" ]; then
+  sed -n '1,80p' "$setsid_lane/lane.log" >&2
+  fail "setsid child did not publish its pid"
+fi
+setsid_pid=$(sed -n '1p' "$setsid_lane/setsid-child.pid")
+if kill -0 "$setsid_pid" 2>/dev/null; then
+  if printf '%s\n' "$LANE_SURVIVORS_JSON" |
+    jq -e --argjson pid "$setsid_pid" 'index($pid) != null' >/dev/null; then
+    :
+  elif [ "$process_inspection_available" = false ]; then
+    printf '%s\n' "$LANE_SURVIVORS_JSON" |
+      jq -e 'index("process_inspection_unavailable") != null' >/dev/null ||
+      fail "unavailable descendant inspection was not recorded"
+    kill -KILL "$setsid_pid" 2>/dev/null || true
+  else
+    fail "setsid survivor was neither killed nor reported"
+  fi
 fi
 
 printf 'test_lane_env_credentials: PASS\n'

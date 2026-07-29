@@ -13,6 +13,7 @@ NIGHT_BUDGET_TOKENS=0
 BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 
 # Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
-# isolated lane HOME. Lanes that need Codex auth must opt in explicitly. Never
-# link ~/.ssh, ~/.config/gh, or any GitHub credential store.
+# isolated lane HOME. Lanes that need Codex auth must opt in explicitly.
+# Sensitive basenames such as .ssh, .config, .git-credentials, .netrc, .aws,
+# .gnupg, and .config/gh are refused even when configured.
 LANE_HOME_LINKS=''

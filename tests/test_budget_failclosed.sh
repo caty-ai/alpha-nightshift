@@ -138,6 +138,49 @@ assert_ledger_record "$negative_ledger" "$NIGHT_ID" meter_error
 assert_ledger_record "$negative_ledger" "$NIGHT_ID" skip meter_error
 assert_closed_skip "$negative_ledger" "negative budget probe"
 
+oversized_index=0
+for oversized_value in \
+  9007199254740992 \
+  9007199254740993 \
+  9223372036854775807 \
+  18446744073709551616 \
+  1234567890123456789012345678901234567890 \
+  1e6; do
+  oversized_index=$((oversized_index + 1))
+  oversized_probe="$TEST_TMP/oversized-probe-$oversized_index"
+  printf '%s\n' \
+    '#!/bin/bash' \
+    "printf '%s\\n' '{\"tokens_spent\":$oversized_value}'" \
+    > "$oversized_probe"
+  chmod +x "$oversized_probe"
+
+  (
+    . "$ROOT/lib/common.sh"
+    . "$ROOT/lib/ledger.sh"
+    . "$ROOT/lib/budget.sh"
+    STATE_DIR="$TEST_TMP/direct-oversized-state-$oversized_index"
+    NIGHT_ID="$NIGHT_ID"
+    NIGHT_BUDGET_TOKENS=100
+    BUDGET_PROBE_CMD="$oversized_probe"
+    BUDGET_PROBE_TIMEOUT_SEC=2
+    mkdir -p "$STATE_DIR/ledger"
+    oversized_rc=0
+    budget_check || oversized_rc=$?
+    case "$oversized_rc" in
+      1|2) ;;
+      *) fail "oversized/scientific value $oversized_value returned unsafe rc $oversized_rc" ;;
+    esac
+  )
+
+  oversized_state="$TEST_TMP/oversized-state-$oversized_index"
+  oversized_config="$TEST_TMP/oversized-$oversized_index.conf"
+  write_config "$oversized_config" "$oversized_state" "$oversized_probe" 100
+  run_dispatch "$oversized_config"
+  assert_closed_skip \
+    "$oversized_state/ledger/ledger.jsonl" \
+    "oversized/scientific budget value $oversized_value"
+done
+
 healthy_probe="$TEST_TMP/healthy-probe"
 printf '%s\n' '#!/bin/bash' 'printf "%s\n" "{\"tokens_spent\":3}"' > "$healthy_probe"
 chmod +x "$healthy_probe"

@@ -4,15 +4,20 @@ set -euo pipefail
 lock_acquire() {
   lockdir=$1
   if ! mkdir "$lockdir" 2>/dev/null; then
-    return 1
+    if [ -d "$lockdir" ]; then
+      return 1
+    fi
+    return 2
   fi
 
-  if ! {
+  if {
     printf 'pid=%s\n' "$$"
     printf 'started_at=%s\n' "$(nightshift_iso_now)"
   } > "$lockdir/meta"; then
+    :
+  else
     rmdir "$lockdir" 2>/dev/null || true
-    return 1
+    return 2
   fi
 }
 

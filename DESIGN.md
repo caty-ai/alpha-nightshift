@@ -167,6 +167,14 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 - macOS 実装は sandbox-exec profile（Phase 1 で実装・実測）。実装しきれない項目は**残存リスクとして本書に明記**し、L1 の credential 非注入で被害上限を規定する
 - 外部副作用を持つテスト（実 API・staging DB 書き込み等）の repo は適格条件で除外 or 隔離実行必須（§12）
 
+**Phase 0 の残存リスク**: Phase 0 の timebox は process group を TERM/KILL
+した後、`pgrep -P` で収集した子孫を再帰 sweep し、`setsid()` で group を
+離れたプロセスも停止を試みる。停止後も生存する PID は
+`lane_end.survivors` に記録し、lane 失敗かつ当夜の後続 lane 停止とする。
+これは検知と fail-closed 化であり封じ込めではない。観測前に親子関係を
+解消する race、同一 UID で読める host secret、lane 外 filesystem への
+アクセスを防止する完全な containment は Phase 1 sandbox の責務である。
+
 ### 10.4 L4: 公開ゲート層
 - 対象: **GitHub へ出る全て**——push の全 commit range（中間 commit 含む）・commit message・PR/Issue の title/body/comment
 - スキャナ: gitleaks（**全 push・private repo にも適用**）＋ PII 辞書スキャン（public のみ・利用者ローカル辞書）
