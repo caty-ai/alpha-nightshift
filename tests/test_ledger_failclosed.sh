@@ -99,4 +99,53 @@ NIGHTSHIFT_CONFIG="$digest_config" \
 [ "$digest_rc" -ne 0 ] || fail "digest succeeded when digest_written append failed"
 assert_file_exists "$digest_state/digests/$NIGHT_ID.md"
 
+projection_state="$TEST_TMP/projection-state"
+mkdir -p "$projection_state/ledger"
+printf '%s\n' \
+  '{"ts":"2026-07-29T00:00:00Z","night_id":"2026-07-28","type":"finding","id":"known","repo":"r","target":"t","symptom":"s","kind":"Bug","status":"open","confirm_cost":"1分","date":"2026-07-28"}' \
+  '{"type":"verdict","verdict_id":"bad-history","ts":"2026-07-29T01:00:00Z","finding_id":"missing","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:bad","observed_at":"2026-07-29T01:00:00Z"}' \
+  > "$projection_state/ledger/ledger.jsonl"
+STATE_DIR="$projection_state"
+. "$ROOT/lib/common.sh"
+. "$ROOT/lib/ledger.sh"
+if ledger_project_findings >/dev/null 2>&1; then
+  fail "projection accepted a verdict for an unknown finding"
+fi
+
+assert_projection_history_rejected() {
+  history_name=$1
+  shift
+  history_state="$TEST_TMP/history-$history_name"
+  mkdir -p "$history_state/ledger"
+  printf '%s\n' \
+    '{"ts":"2026-07-29T00:00:00Z","night_id":"2026-07-28","type":"finding","id":"known","repo":"r","target":"t","symptom":"s","kind":"Bug","status":"open","confirm_cost":"1分","date":"2026-07-28"}' \
+    > "$history_state/ledger/ledger.jsonl"
+  for history_record in "$@"; do
+    printf '%s\n' "$history_record" \
+      >> "$history_state/ledger/ledger.jsonl"
+  done
+  STATE_DIR="$history_state"
+  if ledger_project_findings >/dev/null 2>&1; then
+    fail "projection accepted unsupported $history_name history"
+  fi
+}
+
+assert_projection_history_rejected open-to-deferred \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"deferred","actor":"human","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z"}'
+assert_projection_history_rejected open-to-regression \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"regression","actor":"observer","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z"}'
+assert_projection_history_rejected adopted-to-deferred \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"adopted","actor":"human","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z"}' \
+  '{"type":"verdict","verdict_id":"v2","ts":"2026-07-29T02:00:00Z","finding_id":"known","status":"deferred","actor":"human","source":"manual-comment","source_ref":"c:2","observed_at":"2026-07-29T02:00:00Z"}'
+assert_projection_history_rejected fixed-to-deferred \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z"}' \
+  '{"type":"verdict","verdict_id":"v2","ts":"2026-07-29T02:00:00Z","finding_id":"known","status":"deferred","actor":"human","source":"manual-comment","source_ref":"c:2","observed_at":"2026-07-29T02:00:00Z"}'
+assert_projection_history_rejected rejected-to-regression \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"rejected","actor":"human","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z","rejection_reason":"not accepted"}' \
+  '{"type":"verdict","verdict_id":"v2","ts":"2026-07-29T02:00:00Z","finding_id":"known","status":"regression","actor":"observer","source":"manual-comment","source_ref":"c:2","observed_at":"2026-07-29T02:00:00Z"}'
+assert_projection_history_rejected regression-to-fixed \
+  '{"type":"verdict","verdict_id":"v1","ts":"2026-07-29T01:00:00Z","finding_id":"known","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:1","observed_at":"2026-07-29T01:00:00Z"}' \
+  '{"type":"verdict","verdict_id":"v2","ts":"2026-07-29T02:00:00Z","finding_id":"known","status":"regression","actor":"observer","source":"manual-comment","source_ref":"c:2","observed_at":"2026-07-29T02:00:00Z"}' \
+  '{"type":"verdict","verdict_id":"v3","ts":"2026-07-29T03:00:00Z","finding_id":"known","status":"fixed","actor":"human","source":"manual-comment","source_ref":"c:3","observed_at":"2026-07-29T03:00:00Z"}'
+
 printf 'test_ledger_failclosed: PASS\n'

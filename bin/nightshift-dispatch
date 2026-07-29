@@ -440,6 +440,16 @@ run_command() {
 }
 
 digest_command() {
+  if ! all_current_findings=$(ledger_project_findings); then
+    nightshift_log ERROR "Cannot render digest from malformed ledger history"
+    return 1
+  fi
+  if ! kpi_block=$(printf '%s\n' "$all_current_findings" |
+    digest_kpi_block); then
+    nightshift_log ERROR "Cannot calculate cumulative verdict KPI"
+    return 1
+  fi
+
   run_start_count=$(ledger_query_night "$NIGHT_ID" run_start | wc -l | tr -d ' ')
   run_end_count=$(ledger_query_night "$NIGHT_ID" run_end | wc -l | tr -d ' ')
   finding_count=$(ledger_query_night "$NIGHT_ID" finding | wc -l | tr -d ' ')
@@ -493,8 +503,23 @@ digest_command() {
     digest_dead_man=false
   else
     digest_mode=NORMAL
-    findings_block=$(ledger_query_night "$NIGHT_ID" finding | jq -r \
-      '"- " + (.symptom | gsub("[\\r\\n\\t]+"; " ")) + "（確認: " + .confirm_cost + "）"')
+    findings_block=$(printf '%s\n' "$all_current_findings" |
+      jq -r --arg night_id "$NIGHT_ID" '
+        select(
+          .night_id == $night_id and
+          (
+            .current_status == "open" or
+            .current_status == "adopted" or
+            .current_status == "regression"
+          )
+        )
+        | "- [" + .current_status + "] " +
+          (.symptom | gsub("[\\r\\n\\t]+"; " ")) +
+          "（確認: " + .confirm_cost + "）"
+      ')
+    if [ -z "$findings_block" ]; then
+      findings_block='現在対応可能な観測項目はありません。'
+    fi
     digest_dead_man=false
   fi
 
@@ -508,7 +533,8 @@ digest_command() {
     "$digest_mode" \
     "$findings_block" \
     "$budget_block" \
-    "$lane_stats"; then
+    "$lane_stats" \
+    "$kpi_block"; then
     nightshift_log ERROR "Failed to write digest: $digest_file"
     return 1
   fi
