@@ -227,6 +227,183 @@ for unicode_boundary in nbsp zwsp zwnj; do
   assert_not_contains "$DETECTABLE_VALUE" "$TEST_TMP/wrapper-unicode-$unicode_boundary.out"
 done
 
+# Private-use and unassigned characters participate only in the normalized
+# whole-wrapper ambiguity check. Pin the runtime properties used by these
+# fixtures, then exercise one private-use representative from every range.
+wrapper_unicode_runtime=$(/usr/bin/perl -MUnicode::UCD -e '
+  my @co=map { chr(hex $_) =~ /\p{Co}/ ? 1 : 0 }
+    qw(E000 F0000 100000);
+  my $cn=chr(0x2FE0) =~ /\p{Cn}/ ? 1 : 0;
+  print "perl=$] unicode=",Unicode::UCD::UnicodeVersion(),
+    " co=",join("",@co)," cn=$cn\n";
+')
+[ "$wrapper_unicode_runtime" = \
+  'perl=5.034001 unicode=13.0.0 co=111 cn=1' ] ||
+  fail "wrapper Unicode property runtime or representative set changed"
+
+for wrapper_case in plain cf-00ad co-e000 co-f0000 co-100000 cn-2fe0; do
+  reset_base
+  case "$wrapper_case" in
+    plain)
+      /usr/bin/printf '%s' "$encoded" > "$REPO/wrapped-structural.txt"
+      ;;
+    cf-00ad) wrapper_code=00AD ;;
+    co-e000) wrapper_code=E000 ;;
+    co-f0000) wrapper_code=F0000 ;;
+    co-100000) wrapper_code=100000 ;;
+    cn-2fe0) wrapper_code=2FE0 ;;
+  esac
+  if [ "$wrapper_case" != plain ]; then
+    /usr/bin/perl -CSDA -e '
+      my ($value,$hex)=@ARGV;
+      print substr($value,0,20),chr(hex $hex),substr($value,20);
+    ' "$encoded" "$wrapper_code" > "$REPO/wrapped-structural.txt"
+  fi
+  "$GIT" -C "$REPO" add wrapped-structural.txt
+  "$GIT" -C "$REPO" -c core.hooksPath=/dev/null commit -qm \
+    'Structural wrapper differential fixture'
+  if scan_tip "$TEST_TMP/wrapper-structural-$wrapper_case.out" 2>&1; then
+    fail "$wrapper_case interposition hid a Base64 secret"
+  fi
+  assert_contains 'LOCAL_ONLY_REMOTE_UNPROVEN' \
+    "$TEST_TMP/wrapper-structural-$wrapper_case.out"
+  assert_not_contains "$DETECTABLE_VALUE" \
+    "$TEST_TMP/wrapper-structural-$wrapper_case.out"
+  if [ "$wrapper_case" = plain ]; then
+    assert_contains 'secret detector denied an outgoing object' \
+      "$TEST_TMP/wrapper-structural-$wrapper_case.out"
+  else
+    assert_contains 'encoded wrapper is ambiguous or exceeds bounds' \
+      "$TEST_TMP/wrapper-structural-$wrapper_case.out"
+  fi
+done
+
+for nonwrapper_case in co-e000 cn-2fe0; do
+  reset_base
+  case "$nonwrapper_case" in
+    co-e000) nonwrapper_code=E000 ;;
+    cn-2fe0) nonwrapper_code=2FE0 ;;
+  esac
+  /usr/bin/perl -CSDA -e '
+    my ($hex)=@ARGV;
+    print "ordinary non-wrapper ",chr(hex $hex)," prose.\n";
+  ' "$nonwrapper_code" > "$REPO/ordinary-unicode.txt"
+  "$GIT" -C "$REPO" add ordinary-unicode.txt
+  "$GIT" -C "$REPO" -c core.hooksPath=/dev/null commit -qm \
+    'Ordinary Unicode blob fixture'
+  scan_tip "$TEST_TMP/nonwrapper-$nonwrapper_case.json"
+  /usr/bin/jq -e '
+    .mode == "LOCAL_ONLY_REMOTE_UNPROVEN" and
+    .write_mode == false and
+    .verdict == "PASS_LOCAL_ONLY"
+  ' "$TEST_TMP/nonwrapper-$nonwrapper_case.json" >/dev/null ||
+    fail "$nonwrapper_case ordinary non-wrapper blob was denied"
+done
+
+MARK_MANIFEST=$TEST_TMP/wrapper-mark-categories.txt
+MARK_RUNTIME=$TEST_TMP/wrapper-mark-runtime.txt
+/usr/bin/perl -MUnicode::UCD -e '
+  use strict;
+  use warnings;
+  my ($manifest_path,$runtime_path)=@ARGV;
+  open my $manifest,">",$manifest_path or exit 90;
+  my @runtime;
+  for my $category (qw(Mn Mc Me)) {
+    my @boundaries=Unicode::UCD::prop_invlist($category);
+    exit 91 unless @boundaries && @boundaries%2==0;
+    my $count=0;
+    for (my $index=0;$index<@boundaries;$index+=2) {
+      $count += $boundaries[$index+1]-$boundaries[$index];
+    }
+    exit 92 unless $count>0;
+    my $first=sprintf "%04X",$boundaries[0];
+    print {$manifest} lc($category)," $first\n" or exit 93;
+    push @runtime,"$category=$count first=$first";
+  }
+  close $manifest or exit 94;
+  open my $runtime,">",$runtime_path or exit 95;
+  print {$runtime}
+    "perl=$] unicode=",Unicode::UCD::UnicodeVersion(),
+    " ",join(" ",@runtime),"\n" or exit 96;
+  close $runtime or exit 97;
+' "$MARK_MANIFEST" "$MARK_RUNTIME"
+[ "$(/bin/cat "$MARK_RUNTIME")" = \
+  'perl=5.034001 unicode=13.0.0 Mn=1839 first=0300 Mc=443 first=0903 Me=13 first=0488' ] ||
+  fail "Unicode mark category runtime, counts, or representatives changed"
+/usr/bin/printf '%s\n' \
+  'mn 0300' \
+  'mc 0903' \
+  'me 0488' > "$TEST_TMP/wrapper-mark-categories.expected.txt"
+/usr/bin/cmp -s \
+  "$TEST_TMP/wrapper-mark-categories.expected.txt" \
+  "$MARK_MANIFEST" ||
+  fail "derived Unicode mark category representatives changed"
+
+{
+  /bin/cat "$MARK_MANIFEST"
+  /usr/bin/printf '%s\n' \
+    'braille 2800' \
+    'object-replacement FFFC' \
+    'replacement FFFD'
+} > "$TEST_TMP/render-transparent-cases.txt"
+
+while IFS=' ' read -r render_case render_code; do
+  reset_base
+  /usr/bin/perl -MUnicode::Normalize -CSDA -e '
+    my ($value,$hex)=@ARGV;
+    my $fixture=
+      substr($value,0,20) . chr(hex $hex) . substr($value,20);
+    exit 90 unless NFC($fixture) eq $fixture;
+    print $fixture;
+  ' "$encoded" "$render_code" > "$REPO/wrapped-render-transparent.txt"
+  "$GIT" -C "$REPO" add wrapped-render-transparent.txt
+  "$GIT" -C "$REPO" -c core.hooksPath=/dev/null commit -qm \
+    'Render-transparent wrapper fixture'
+  if scan_tip "$TEST_TMP/wrapper-render-$render_case.out" 2>&1; then
+    fail "$render_case interposition hid a Base64 secret"
+  fi
+  assert_contains 'LOCAL_ONLY_REMOTE_UNPROVEN' \
+    "$TEST_TMP/wrapper-render-$render_case.out"
+  assert_contains 'encoded wrapper is ambiguous or exceeds bounds' \
+    "$TEST_TMP/wrapper-render-$render_case.out"
+  assert_not_contains "$DETECTABLE_VALUE" \
+    "$TEST_TMP/wrapper-render-$render_case.out"
+done < "$TEST_TMP/render-transparent-cases.txt"
+
+while IFS=' ' read -r render_case render_code; do
+  reset_base
+  /usr/bin/perl -MUnicode::Normalize -CSDA -e '
+    my ($hex)=@ARGV;
+    my $fixture="ordinary.non-wrapper." . chr(hex $hex) . ".prose.\n";
+    exit 90 unless NFC($fixture) eq $fixture;
+    print $fixture;
+  ' "$render_code" > "$REPO/ordinary-render-transparent.txt"
+  "$GIT" -C "$REPO" add ordinary-render-transparent.txt
+  "$GIT" -C "$REPO" -c core.hooksPath=/dev/null commit -qm \
+    'Ordinary render-transparent blob fixture'
+  scan_tip "$TEST_TMP/nonwrapper-render-$render_case.json"
+  /usr/bin/jq -e '
+    .mode == "LOCAL_ONLY_REMOTE_UNPROVEN" and
+    .write_mode == false and
+    .verdict == "PASS_LOCAL_ONLY"
+  ' "$TEST_TMP/nonwrapper-render-$render_case.json" >/dev/null ||
+    fail "$render_case ordinary non-wrapper blob was denied"
+done < "$TEST_TMP/render-transparent-cases.txt"
+
+reset_base
+/usr/bin/printf '%s!%s' "${encoded:0:20}" "${encoded:20}" \
+  > "$REPO/visible-punctuation-control.txt"
+"$GIT" -C "$REPO" add visible-punctuation-control.txt
+"$GIT" -C "$REPO" -c core.hooksPath=/dev/null commit -qm \
+  'Visible punctuation comparison control'
+scan_tip "$TEST_TMP/visible-punctuation-control.json"
+/usr/bin/jq -e '
+  .mode == "LOCAL_ONLY_REMOTE_UNPROVEN" and
+  .write_mode == false and
+  .verdict == "PASS_LOCAL_ONLY"
+' "$TEST_TMP/visible-punctuation-control.json" >/dev/null ||
+  fail "visible punctuation was treated as removable wrapper garbage"
+
 reset_base
 base64url=$(
   /usr/bin/printf '%s??' "$DETECTABLE_ASSIGNMENT" |

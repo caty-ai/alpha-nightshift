@@ -155,7 +155,7 @@ set +e
   exit 2 if $text =~
     /[\x{FEFF}\x{0000}-\x{0009}\x{000B}-\x{001F}\x{007F}-\x{009F}\x{2028}\x{2029}]/;
   exit 2 if $text =~
-    /[\x{FDD0}-\x{FDEF}\p{Noncharacter_Code_Point}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cn}]/;
+    /[\x{FDD0}-\x{FDEF}\p{Noncharacter_Code_Point}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}\p{Cn}]/;
   if ($kind eq "title") {
     exit 3 if length($raw) == 0 || $raw =~ /\n/ || $text !~ /\P{White_Space}/;
   } else {
