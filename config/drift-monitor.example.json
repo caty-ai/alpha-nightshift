@@ -1,0 +1,15 @@
+{
+  "schema": "alpha-nightshift/drift-monitor-policy/v1",
+  "mode": "INACTIVE",
+  "write_mode": false,
+  "publisher_policy_path": null,
+  "publisher_policy_sha256": null,
+  "expected_app_slug": null,
+  "expected_installation_account": null,
+  "representative_ref": null,
+  "runtime": {
+    "programs": {
+      "drift_monitor": {"sha256": null, "uid": null, "mode": null}
+    }
+  }
+}

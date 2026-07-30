@@ -293,19 +293,22 @@ FAKE_CURL=$TEST_TMP/fake-curl
   'if [ -n "$headers" ]; then : > "$headers"; printf "%s\n" "HTTP/1.1 200 OK" > "$headers"; fi' \
   'case "$url" in' \
   '  "https://api.github.test/app")' \
-  '    response_body="{\"id\":1001,\"slug\":\"night-publisher\"}"' \
+  '    response_body="{\"id\":1001,\"slug\":\"night-publisher\",\"permissions\":{\"metadata\":\"read\",\"contents\":\"write\"},\"events\":[]}"' \
+  '    ;;' \
+  '  "https://api.github.test/app/hook/config")' \
+  '    if [ "$behavior" = webhook_url_drift ]; then response_body="{\"content_type\":\"json\",\"insecure_ssl\":\"0\",\"secret\":\"********\",\"url\":\"https://example.invalid/webhook\"}"; else response_body="{\"content_type\":\"json\",\"insecure_ssl\":\"0\",\"secret\":\"********\",\"url\":\"\"}"; fi' \
   '    ;;' \
   '  "https://api.github.test/app/installations/2002")' \
-  '    response_body="{\"id\":2002,\"account\":{\"login\":\"night-publisher\"},\"repository_selection\":\"selected\",\"permissions\":{\"metadata\":\"read\",\"contents\":\"write\"},\"repositories_url\":\"https://api.github.test/installations/2002/repositories\"}"' \
+  '    response_body="{\"id\":2002,\"app_id\":1001,\"app_slug\":\"night-publisher\",\"account\":{\"login\":\"night-publisher\"},\"repository_selection\":\"selected\",\"permissions\":{\"metadata\":\"read\",\"contents\":\"write\"},\"events\":[],\"suspended_at\":null,\"suspended_by\":null,\"repositories_url\":\"https://api.github.test/installations/2002/repositories\"}"' \
   '    ;;' \
   '  "https://api.github.test/app/installations/2002/access_tokens")' \
   '    [ -z "$output" ] || exit 91' \
   '    body=$(/bin/cat "$data_path")' \
   '    if printf "%s" "$body" | /usr/bin/grep -F "\"contents\":\"read\"" >/dev/null 2>&1; then' \
-  '      token="PUBLISHER_TEST_READ_TOKEN_0000000000000000"' \
+  '      token="PUB_READ_IAT_""0000000000000000"' \
   '      perm=read' \
   '    else' \
-  '      token="PUBLISHER_TEST_WRITE_TOKEN_0000000000000000"' \
+  '      token="PUB_WRITE_IAT_""0000000000000000"' \
   '      perm=write' \
   '    fi' \
   '    printf "mint-%s\n" "$perm" >> "$REVOKE_LOG"' \
@@ -320,12 +323,12 @@ FAKE_CURL=$TEST_TMP/fake-curl
   '    response_body=' \
   '    revoke_count=0; [ ! -f "$REVOKE_COUNT" ] || revoke_count=$(/bin/cat "$REVOKE_COUNT")' \
   '    revoke_count=$((revoke_count + 1)); printf "%s\n" "$revoke_count" > "$REVOKE_COUNT"' \
-  '    if printf "%s" "$config" | /usr/bin/grep -F "PUBLISHER_TEST_READ_TOKEN_" >/dev/null 2>&1; then printf "%s\n" revoke-read >> "$REVOKE_LOG"; fi' \
-  '    if printf "%s" "$config" | /usr/bin/grep -F "PUBLISHER_TEST_WRITE_TOKEN_" >/dev/null 2>&1; then printf "%s\n" revoke-write >> "$REVOKE_LOG"; fi' \
+  '    if printf "%s" "$config" | /usr/bin/grep -F "PUB_READ_IAT_" >/dev/null 2>&1; then printf "%s\n" revoke-read >> "$REVOKE_LOG"; fi' \
+  '    if printf "%s" "$config" | /usr/bin/grep -F "PUB_WRITE_IAT_" >/dev/null 2>&1; then printf "%s\n" revoke-write >> "$REVOKE_LOG"; fi' \
   '    if [ "$behavior" = revoke_fail ] || { [ "$behavior" = write_revoke_fail ] && [ "$revoke_count" -ge 2 ]; }; then response_body="{\"message\":\"revoke failed\"}"; status=500; else status=204; fi' \
   '    ;;' \
   '  "https://api.github.test/repos/sample/repo")' \
-  '    response_body="{\"id\":42,\"full_name\":\"sample/repo\",\"private\":true}"' \
+  '    response_body="{\"id\":42,\"full_name\":\"sample/repo\",\"private\":true,\"default_branch\":\"main\"}"' \
   '    ;;' \
   '  "https://api.github.test/installation/repositories?per_page=2")' \
   '    response_body="{\"total_count\":1,\"repositories\":[{\"id\":42,\"full_name\":\"sample/repo\"}]}"' \
@@ -646,10 +649,12 @@ assert_not_contains PUBLISHER_REPO_CONFIG_CANARY "$REAL_PUSH_OUTPUT"
   --repo "$REPO" \
   > "$TEST_TMP/active-success.json" \
   2> "$TEST_TMP/active-success.err"
+[ "$(/usr/bin/wc -l < "$TEST_TMP/active-success.json" | /usr/bin/tr -d ' ')" -eq 1 ] ||
+  fail "mock active publish did not emit exactly one stdout JSON line"
 [ ! -e "$TEST_TMP/bash-env-was-sourced" ] ||
   fail "documented gateway path sourced BASH_ENV or ENV"
-assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$TEST_TMP/active-success.err"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$TEST_TMP/active-success.err"
+assert_not_contains 'PUB_READ_IAT_' "$TEST_TMP/active-success.err"
+assert_not_contains 'PUB_WRITE_IAT_' "$TEST_TMP/active-success.err"
 assert_not_contains 'PUBLISHER_ENV_CANARY_SHOULD_NOT_ESCAPE' "$TEST_TMP/active-success.err"
 /usr/bin/jq -e '
   .verdict == "SUCCESS" and
@@ -666,8 +671,8 @@ AUDIT_FILE=$FAKE_AUDIT/REQ-20260730-0002-fedcba9876543210.jsonl
 assert_file_exists "$AUDIT_FILE"
 [ "$(/usr/bin/wc -l < "$AUDIT_FILE" | /usr/bin/tr -d ' ')" -eq 2 ] ||
   fail "mock publish did not write a two-phase audit record"
-assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$AUDIT_FILE"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$AUDIT_FILE"
+assert_not_contains 'PUB_READ_IAT_' "$AUDIT_FILE"
+assert_not_contains 'PUB_WRITE_IAT_' "$AUDIT_FILE"
 assert_not_contains 'signed-by-fake-openssl' "$AUDIT_FILE"
 PAIR_READ=$TEST_TMP/pair-read.json
 PAIR_PREPUSH=$TEST_TMP/pair-prepush.json
@@ -724,10 +729,10 @@ if (
 ) >/dev/null 2>&1; then
   fail "postpush pair accepted a null rule-suite result"
 fi
-assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$FAKE_ARGV_CAPTURE"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$FAKE_ARGV_CAPTURE"
-assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$FAKE_ENV_CAPTURE"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$FAKE_ENV_CAPTURE"
+assert_not_contains 'PUB_READ_IAT_' "$FAKE_ARGV_CAPTURE"
+assert_not_contains 'PUB_WRITE_IAT_' "$FAKE_ARGV_CAPTURE"
+assert_not_contains 'PUB_READ_IAT_' "$FAKE_ENV_CAPTURE"
+assert_not_contains 'PUB_WRITE_IAT_' "$FAKE_ENV_CAPTURE"
 assert_not_contains 'signed-by-fake-openssl' "$FAKE_ARGV_CAPTURE"
 assert_not_contains 'signed-by-fake-openssl' "$FAKE_ENV_CAPTURE"
 assert_not_contains 'PUBLISHER_ENV_CANARY_SHOULD_NOT_ESCAPE' "$FAKE_ENV_CAPTURE"
@@ -750,12 +755,13 @@ LC_ALL=C /usr/bin/grep -E \
   fail "credential-bearing Git push did not use its scratch bare Git directory"
 assert_contains '<protocol.file.allow=never>' "$FAKE_PUSH_ARGV_CAPTURE"
 assert_contains "GIT_OBJECT_DIRECTORY=$REAL_SOURCE_OBJECTS" "$FAKE_PUSH_ENV_CAPTURE"
-assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$FAKE_PUSH_OUTPUT_CAPTURE"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$FAKE_PUSH_OUTPUT_CAPTURE"
+assert_not_contains 'PUB_READ_IAT_' "$FAKE_PUSH_OUTPUT_CAPTURE"
+assert_not_contains 'PUB_WRITE_IAT_' "$FAKE_PUSH_OUTPUT_CAPTURE"
 assert_not_contains 'PUBLISHER_REPO_CONFIG_CANARY' "$FAKE_PUSH_OUTPUT_CAPTURE"
+assert_contains 'GET https://api.github.test/app/hook/config' "$FAKE_CALL_LOG"
 
 /bin/rm -f "$FAKE_CALL_LOG"
-if builtin printf '%s\n' 'PUBLISHER_TEST_READ_TOKEN_0000000000000000' |
+if builtin printf '%s\n' 'PUB_READ_IAT_'"0000000000000000" |
   /usr/bin/env -i \
     HOME=/var/empty \
     LANG=C \
@@ -837,10 +843,10 @@ run_active_failure() {
     2> "$TEST_TMP/failure-$failure_mode.err"; then
     fail "active mock unexpectedly succeeded in failure mode: $failure_mode"
   fi
-  assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$TEST_TMP/failure-$failure_mode.out"
-  assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$TEST_TMP/failure-$failure_mode.out"
-  assert_not_contains 'PUBLISHER_TEST_READ_TOKEN_' "$TEST_TMP/failure-$failure_mode.err"
-  assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$TEST_TMP/failure-$failure_mode.err"
+  assert_not_contains 'PUB_READ_IAT_' "$TEST_TMP/failure-$failure_mode.out"
+  assert_not_contains 'PUB_WRITE_IAT_' "$TEST_TMP/failure-$failure_mode.out"
+  assert_not_contains 'PUB_READ_IAT_' "$TEST_TMP/failure-$failure_mode.err"
+  assert_not_contains 'PUB_WRITE_IAT_' "$TEST_TMP/failure-$failure_mode.err"
   case "$expected_audit" in
     incident)
       assert_file_exists "$AUDIT_FILE"
@@ -878,6 +884,12 @@ run_active_failure() {
     [ -f "$FAKE_REVOKE_COUNT" ] ||
       fail "$failure_mode did not attempt token revocation"
   fi
+  case "$failure_mode" in
+    webhook_url_drift)
+      assert_not_contains 'POST https://api.github.test/app/installations/2002/access_tokens' \
+        "$FAKE_CALL_LOG"
+      ;;
+  esac
 }
 
 PUBLISHER_TMP_COUNT_BEFORE=$(
@@ -896,6 +908,7 @@ PUBLISHER_TMP_COUNT_AFTER=$(
 
 run_active_failure long_expiry no_audit
 run_active_failure extra_token_key no_audit
+run_active_failure webhook_url_drift no_token_no_audit
 run_active_failure pagination no_audit
 run_active_failure effective_rules_pagination no_audit
 run_active_failure ruleset_detail_pagination no_audit
@@ -916,7 +929,7 @@ run_active_failure write_revoke_fail incident
 PROBE_GIT=/opt/homebrew/Cellar/git/2.48.1/bin/git
 [ -x "$PROBE_GIT" ] || fail "fixed Git path is unavailable for the askpass FD probe"
 PROBE_GIT_VERSION=$("$PROBE_GIT" --version)
-FD_PROBE_CREDENTIAL=PUBLISHER_TEST_FD_TOKEN_0000000000000000
+FD_PROBE_CREDENTIAL='PUB_FD_IAT_'"0000000000000000"
 FD_PROBE_AUTH_DIGEST=$(
   builtin printf '%s' "$FD_PROBE_CREDENTIAL" |
     /usr/bin/shasum -a 256 |
@@ -1064,7 +1077,7 @@ unset FD_PROBE_CREDENTIAL
 if {
   builtin printf '%s\n%s\n' \
     "Password for 'https://x-access-token@github.test/sample/repo.git':" \
-    'PUBLISHER_TEST_WRITE_TOKEN_0000000000000000'
+    'PUB_WRITE_IAT_'"0000000000000000"
 } | (
   exec 3<&0
   exec </dev/null
@@ -1074,8 +1087,8 @@ if {
   2> "$TEST_TMP/askpass-unexpected.err"; then
   fail "askpass accepted a username or unexpected prompt"
 fi
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$TEST_TMP/askpass-unexpected.out"
-assert_not_contains 'PUBLISHER_TEST_WRITE_TOKEN_' "$TEST_TMP/askpass-unexpected.err"
+assert_not_contains 'PUB_WRITE_IAT_' "$TEST_TMP/askpass-unexpected.out"
+assert_not_contains 'PUB_WRITE_IAT_' "$TEST_TMP/askpass-unexpected.err"
 
 /bin/rm -f \
   "$FAKE_CALL_LOG" "$FAKE_REVOKE_COUNT" "$FAKE_REVOKE_LOG" \

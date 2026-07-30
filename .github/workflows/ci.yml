@@ -50,11 +50,14 @@ jobs:
             guard/common.sh \
             guard/broker.sh \
             guard/gateway.sh \
+            guard/drift-monitor.sh \
             guard/publisher.sh \
             guard/publisher-lib.sh \
             guard/publisher-askpass.sh \
             guard/remote-preflight.sh \
-            tests/test_guard_publisher.sh
+            tests/test_guard_publisher.sh \
+            tests/test_guard_drift_monitor.sh \
+            tests/test_guard_revocation_runbook.sh
 
       - name: Tests
         run: /bin/bash tests/run_tests.sh

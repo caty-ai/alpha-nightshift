@@ -34,6 +34,19 @@ branch, rule-suite correlation remains
 rather than a silent cleanup. Phase 1 must not be marked complete until those
 remote proofs and protection readback succeed.
 
+The same remote boundary now has a separate read-only drift monitor under
+`guard/drift-monitor.sh`. It reuses the publisher policy/JWT/read-IAT/readback
+machinery, never mints a `contents:write` token, emits only `MATCH`,
+`DRIFT_DENY`, or `MONITOR_UNVERIFIED`, and leaves the checked-in
+`config/drift-monitor.example.json` inactive with `write_mode:false`. Its JWT
+preflight machine-verifies exact App permissions/events, disabled webhook
+configuration, and exact installation identity before any token mint; "OAuth
+user auth disabled" still has no public read API and remains
+`UNPROVEN_MANUAL_OWNER_BASELINE`. The readback surface proves only current
+`main`/tags/releases/representative-ref equality and does not prove hidden
+`refs/notes/*` or `refs/replace/*` provenance. The owner revocation sequence is
+documented in [docs/night-bot-revocation.md](docs/night-bot-revocation.md).
+
 Phase 0 is a macOS nightly observation harness. At 23:30 the dispatcher runs
 credential-free observation lanes and serially ingests their JSONL proposals.
 At 06:30 a separate machine-template digest reports findings, a clean zero, or
@@ -104,6 +117,10 @@ launchctl load "$HOME/Library/LaunchAgents/ai.caty.nightshift.digest.plist"
 ```
 
 Create `state/logs` before loading so launchd can open its output paths.
+
+`launchd/ai.caty.nightshift-drift-monitor.plist.example` is a disabled example
+for a morning read-only drift check. Keep it disabled until an owner-sealed
+active monitor config exists outside the repo.
 
 The run lock is `state/locks/nightshift.lock`. A stale lock is deliberately
 never removed automatically. Inspect its `meta` file and remove the lock

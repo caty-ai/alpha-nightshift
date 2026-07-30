@@ -303,6 +303,36 @@ Administration:read を要求するため widening は行わず、
 したがって Phase 1 と Issue #6 は未完了である。owner-authorized Phase 1b
 remote proof と protection readback が完了するまで close してはならない。
 
+### 14.2 Phase 1d drift monitor and owner revocation
+
+Issue #21 では、Phase 1b/1c の live publisher proof と切り離した
+read-only drift monitor を `guard/drift-monitor.sh` に追加する。monitor は
+Issue #20 の owner-sealed publisher policy、App/JWT、single-repo read IAT、
+ruleset/effective readback normalization、tags/releases assertion、redacted
+audit append、`DELETE /installation/token` revoke を再利用する。JWT preflight
+で `/app` exact permission/event、`/app/hook/config` webhook-disabled、
+installation exact identity を token mint 前に検証する。write IAT や GitHub
+mutation path は持たず、terminal result は `MATCH`、
+`DRIFT_DENY`、`MONITOR_UNVERIFIED` の 3 値のみである。
+
+exact invariant は App ID/slug、installation ID/account、selected repo set、
+Metadata:read + Contents:write のみの installation permission、private repo +
+default branch=`main`、owner-sealed ruleset ID/definition/main effective/
+representative `night-bot/run-*` effective digest、tags=0、releases=0、policy
+digest、publisher runtime digest、monitor program digest である。App はなお
+`Administration:read` を持たないため、rule-suite/bypass completeness は
+`UNPROVEN_NO_ADMIN_READ` のまま残す。OAuth user authorization disabled は
+public read API がないため `UNPROVEN_MANUAL_OWNER_BASELINE` として owner
+manual check に残し、main/tags/releases/representative-ref readback も hidden
+`refs/notes/*` / `refs/replace/*` provenance までは証明しない。
+
+checked-in `config/drift-monitor.example.json` と launchd example は inactive /
+disabled を維持する。live activation には repo 外の owner-sealed config、
+independent review、full readback、mock suite、別承認の live proof matrix が
+必要であり、monitor 自身は auto-remediation を行わない。rollback は owner
+runbook `docs/night-bot-revocation.md` に従う stop/quarantine/read-token revoke/
+App suspend or uninstall/key revoke/readback/re-enable gate の直列手順とする。
+
 ## 15. OSS 化ロードマップ
 
 - repo: `shojikumaru/alpha-nightshift` を PRIVATE で新設 → 公開同等整備（LICENSE=MIT・EN README 正本＋README.ja・COC/SECURITY・gitleaks クリーン）→ 翔さん flip（handbook 実証済みコース）

@@ -40,7 +40,8 @@ publisher_record_result() {
         detail:$detail
       }'
   )
-  publisher_append_audit_json "$PUBLISH_AUDIT_DIR" "$PUBLISH_REQUEST_ID" "$publisher_record" >/dev/null
+  publisher_append_audit_json \
+    "$PUBLISH_TRUSTED_AUDIT_DIR" "$PUBLISH_REQUEST_ID" "$publisher_record" >/dev/null
 }
 
 publisher_publish_branch_main() {
@@ -155,6 +156,7 @@ publisher_publish_branch_main() {
   scan_output=$publisher_tmp/scan.json
   prepush_scan_output=$publisher_tmp/prepush-scan.json
   app_json=$publisher_tmp/app.json
+  hook_json=$publisher_tmp/app-hook.json
   installation_json=$publisher_tmp/installation.json
   headers_path=$publisher_tmp/headers.txt
   push_output=$publisher_tmp/push.txt
@@ -167,30 +169,14 @@ publisher_publish_branch_main() {
   publisher_jwt=$(publisher_generate_jwt "$PUBLISH_PRIVATE_KEY_PATH" "$PUBLISH_APP_ID")
   publisher_api_request GET "$PUBLISH_API_BASE/app" \
     "$publisher_jwt" '' 200 "$app_json" "$headers_path"
+  publisher_api_request GET "$PUBLISH_API_BASE/app/hook/config" \
+    "$publisher_jwt" '' 200 "$hook_json" "$headers_path"
   publisher_api_request GET "$PUBLISH_API_BASE/app/installations/$PUBLISH_INSTALLATION_ID" \
     "$publisher_jwt" '' 200 "$installation_json" "$headers_path"
-  /usr/bin/jq -e \
-    --argjson app_id "$PUBLISH_APP_ID" '
-    .id == $app_id and (.slug | type == "string" and length > 0)
-  ' "$app_json" >/dev/null ||
-    { guard_fail "GitHub App identity did not match the pinned app id"; exit 1; }
-  /usr/bin/jq -e \
-    --argjson installation_id "$PUBLISH_INSTALLATION_ID" \
-    --arg selection "$PUBLISH_EXPECTED_REPOSITORY_SELECTION" \
-    --arg metadata_perm "$PUBLISH_EXPECTED_METADATA_PERMISSION" '
-    .id == $installation_id and
-    (.account.login | type == "string" and length > 0) and
-    .repository_selection == $selection and
-    ((.permissions | keys | sort) == ["contents","metadata"]) and
-    .permissions.metadata == $metadata_perm and
-    .permissions.contents == "write" and
-    (
-      (.repositories_url? | type == "string" and length > 0) or
-      (.target_type? | type == "string")
-    )
-  ' "$installation_json" >/dev/null ||
-    { guard_fail "installation identity did not match the pinned installation"; exit 1; }
+  publisher_verify_app_identity_json "$app_json" || exit 1
+  publisher_verify_webhook_config_json "$hook_json" || exit 1
   app_slug=$(/usr/bin/jq -r '.slug' "$app_json")
+  publisher_verify_installation_identity_json "$installation_json" '' "$app_slug" || exit 1
 
   read_token_body=$(
     /usr/bin/jq -cn \
@@ -202,10 +188,7 @@ publisher_publish_branch_main() {
       "$PUBLISH_API_BASE/app/installations/$PUBLISH_INSTALLATION_ID/access_tokens" \
       "$publisher_jwt" "$read_token_body" 201
   )
-  read_token=$(
-    builtin printf '%s' "$read_token_json" |
-      /usr/bin/jq -er '.token | select(type == "string" and test("^[A-Za-z0-9_]{20,}$"))'
-  ) || { guard_fail "read installation token response omitted a revocable token"; exit 1; }
+  read_token=$(publisher_extract_header_safe_installation_token "$read_token_json" read) || exit 1
   publisher_verify_installation_token_response "$read_token_json" read
   unset read_token_json
   {
@@ -249,10 +232,7 @@ publisher_publish_branch_main() {
       "$PUBLISH_API_BASE/app/installations/$PUBLISH_INSTALLATION_ID/access_tokens" \
       "$publisher_jwt" "$write_token_body" 201
   )
-  write_token=$(
-    builtin printf '%s' "$write_token_json" |
-      /usr/bin/jq -er '.token | select(type == "string" and test("^[A-Za-z0-9_]{20,}$"))'
-  ) || { guard_fail "write installation token response omitted a revocable token"; exit 1; }
+  write_token=$(publisher_extract_header_safe_installation_token "$write_token_json" write) || exit 1
   publisher_verify_installation_token_response "$write_token_json" write
   unset write_token_json publisher_jwt
   {
@@ -359,7 +339,7 @@ publisher_publish_branch_main() {
       }'
   )
   audit_path=$(publisher_append_audit_json \
-    "$PUBLISH_AUDIT_DIR" "$PUBLISH_REQUEST_ID" "$publisher_attempt_record")
+    "$PUBLISH_TRUSTED_AUDIT_DIR" "$PUBLISH_REQUEST_ID" "$publisher_attempt_record")
   publisher_attempt_recorded=true
 
   if ! publisher_git_push "$write_token" "$push_output"; then
@@ -457,7 +437,7 @@ publisher_publish_branch_main() {
       }'
   )
   publisher_append_audit_json \
-    "$PUBLISH_AUDIT_DIR" \
+    "$PUBLISH_TRUSTED_AUDIT_DIR" \
     "$PUBLISH_REQUEST_ID" \
     "$publisher_success_record" >/dev/null
   publisher_result_recorded=true

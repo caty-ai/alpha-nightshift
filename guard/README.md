@@ -220,8 +220,11 @@ output, Git config, or audit records.
 
 Publication uses a read IAT first, revokes it, then mints a separate write IAT.
 Repository selection, permissions, token expiry, complete ruleset ID/definition
-sets, pagination, main tip, effective rules, destination absence, and zero
-tags/releases all fail closed. Immediately before the one full
+sets, pagination, same-invocation readable `main` tip stability against the
+accepted base SHA, effective rules, destination absence, and zero tags/releases
+all fail closed. This is not an owner-sealed `main` baseline or protected-tip
+provenance claim, and hidden `refs/notes/*` or `refs/replace/*` mutations
+remain outside the automated proof boundary. Immediately before the one full
 `candidate:refs/heads/night-bot/run-*` refspec, the immutable-object/text/
 gitleaks scan is rerun and a durable `publish_attempt` is appended. Success
 requires exact post-push SHA/ruleset readback and HTTP 204 token revocation.
@@ -242,6 +245,41 @@ grammar check uses Bash builtin `printf`; no IAT is passed through an external
 validator's argv. Cross-phase evidence requires exactly two documents, fixed
 digest keys with 64-hex values, positive phase/ref state, and the literal
 `UNPROVEN_NO_ADMIN_READ` residual.
+
+## Read-only drift monitor
+
+`drift-monitor.sh` is the separate read-only control-plane check for the same
+GitHub App boundary. It loads an owner-sealed external publisher policy, verifies
+its own sealed program digest, mints only a narrowed `contents:read` IAT, and
+reuses the publisher's App/installation verification, installation-scope check,
+ruleset/effective-rule digest normalization, tags/releases assertions, redacted
+audit append, and `DELETE /installation/token` revocation path. The JWT preflight
+proves `/app` exact permissions `metadata:read` + `contents:write` with
+`events:[]`, `/app/hook/config` URL-empty webhook representation (`url == ""`),
+and the exact installation App/account/permission/events/suspension identity
+before any token mint. It never mints or transports a `contents:write` token,
+never edits GitHub state, and never auto-remediates.
+
+The checked-in `config/drift-monitor.example.json` remains `mode:"INACTIVE"` and
+`write_mode:false`. A separately reviewed live config must point to a publisher
+policy by absolute path and exact SHA-256 digest, bind the expected App slug and
+installation account, pin a representative `refs/heads/night-bot/run-*` ref, and
+seal the monitor program SHA-256/UID/mode. Terminal results are limited to
+`MATCH`, `DRIFT_DENY`, and `MONITOR_UNVERIFIED`. Incomplete, malformed,
+paginated, timeout, auth, revoke, or audit failures stay fail-closed as
+`MONITOR_UNVERIFIED`; exact mismatches in policy/runtime/App/installation/
+ruleset/effective/default-branch/private/tag/release invariants return
+`DRIFT_DENY`. The residual `rule_suite_result:"UNPROVEN_NO_ADMIN_READ"` remains
+explicit because the App still lacks `Administration:read`. GitHub's public JWT
+API exposes webhook configuration, so the URL-empty representation is
+machine-verified; the first live readback still needs to confirm GitHub's
+actual disabled-webhook representation, and this contract does not claim
+webhook secret or active-delivery fields are verified. GitHub does not expose
+an equivalent public readback for "OAuth user authorization disabled", so that
+control remains `UNPROVEN_MANUAL_OWNER_BASELINE` and must be checked manually
+by the owner. Denials that occur before a trusted audit path is established
+emit their terminal evidence on stdout/log only and intentionally do not append
+a JSONL audit record.
 
 CI uses the supported macOS 15 arm64 runner because this contract invokes
 system `/usr/bin/jq`; the workflow verifies that executable and prints its

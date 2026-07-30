@@ -22,10 +22,12 @@ assert_contains() {
 
 assert_not_contains() {
   unexpected=$1
-  file=$2
-  if grep -F "$unexpected" "$file" >/dev/null 2>&1; then
-    fail "did not expect '$unexpected' in $file"
-  fi
+  shift
+  for file in "$@"; do
+    if grep -F "$unexpected" "$file" >/dev/null 2>&1; then
+      fail "did not expect '$unexpected' in $file"
+    fi
+  done
 }
 
 assert_ledger_record() {

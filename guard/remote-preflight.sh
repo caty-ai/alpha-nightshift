@@ -69,7 +69,7 @@ IFS= read -r preflight_token || {
 [ -n "$preflight_token" ] ||
   { guard_fail "remote preflight received an empty token"; exit 1; }
 builtin printf '%s\n' "$preflight_token" |
-  LC_ALL=C /usr/bin/grep -E '^[A-Za-z0-9_]{20,}$' >/dev/null ||
+  LC_ALL=C /usr/bin/grep -E '^[A-Za-z0-9._-]{20,}$' >/dev/null ||
   { preflight_token=; guard_fail "remote preflight token grammar is invalid"; exit 1; }
 
 preflight_tmp=$(/usr/bin/mktemp -d /tmp/nightshift-remote-preflight.XXXXXX)

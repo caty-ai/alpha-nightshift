@@ -28,6 +28,7 @@ PUBLISH_PRIVATE_KEY_PATH=
 PUBLISH_PRIVATE_KEY_SHA256=
 PUBLISH_AUDIT_DIR=
 PUBLISH_AUDIT_DIR_IDENTITY_SHA256=
+PUBLISH_TRUSTED_AUDIT_DIR=
 PUBLISH_SCAN_MANIFEST_PATH=
 PUBLISH_RULESET_IDS_JSON=
 PUBLISH_EXPECTED_RULESET_DEFINITIONS_SHA256=
@@ -49,6 +50,7 @@ publisher_urlencode() {
 
 publisher_request_exact_keys='["schema","operation","request_id","repo_id","repository_id","base_sha","candidate_sha","policy_sha256"]'
 publisher_policy_exact_keys='["schema","mode","write_mode","repo_id","repository_id","app_id","installation_id","api_base","git_remote_base","private_key_path","private_key_sha256","audit_dir","audit_dir_identity_sha256","scan_manifest_path","publisher_euid","runtime","rulesets","expected"]'
+publisher_header_safe_token_regex='^[A-Za-z0-9._-]{20,}$'
 
 publisher_load_request() {
   PUBLISH_REQUEST_PATH=$1
@@ -169,6 +171,7 @@ publisher_load_policy() {
   PUBLISH_PRIVATE_KEY_PATH=$(/usr/bin/jq -r '.private_key_path // ""' "$PUBLISH_POLICY_PATH")
   PUBLISH_PRIVATE_KEY_SHA256=$(/usr/bin/jq -r '.private_key_sha256 // ""' "$PUBLISH_POLICY_PATH")
   PUBLISH_AUDIT_DIR=$(/usr/bin/jq -r '.audit_dir // ""' "$PUBLISH_POLICY_PATH")
+  PUBLISH_TRUSTED_AUDIT_DIR=
   PUBLISH_AUDIT_DIR_IDENTITY_SHA256=$(
     /usr/bin/jq -r '.audit_dir_identity_sha256 // ""' "$PUBLISH_POLICY_PATH"
   )
@@ -330,6 +333,7 @@ publisher_audit_directory_identity_sha256() {
 }
 
 publisher_prepare_active_policy() {
+  PUBLISH_TRUSTED_AUDIT_DIR=
   publisher_policy_is_active ||
     { guard_fail "publisher policy is inactive"; return 1; }
   guard_validate_positive_integer "$PUBLISH_APP_ID" || return 1
@@ -363,13 +367,19 @@ publisher_prepare_active_policy() {
   [ "$PUBLISH_GIT_REMOTE_BASE" = "https://github.com" ] ||
     { guard_fail "active publisher policy must use the pinned GitHub remote"; return 1; }
   publisher_require_owned_private_path "$PUBLISH_POLICY_PATH" "publisher policy" file 600 || return 1
-  [ "$(guard_json_sha256 "$PUBLISH_POLICY_PATH")" = "$PUBLISH_POLICY_DIGEST" ] ||
+  publisher_policy_digest_now=$(guard_json_sha256 "$PUBLISH_POLICY_PATH") ||
+    { guard_fail "publisher policy digest is unavailable"; return 1; }
+  [ "$publisher_policy_digest_now" = "$PUBLISH_POLICY_DIGEST" ] ||
     { guard_fail "publisher policy digest drifted after acceptance"; return 1; }
   publisher_require_owned_private_path "$PUBLISH_PRIVATE_KEY_PATH" "publisher private key" file 600 || return 1
-  [ "$(guard_sha256 "$PUBLISH_PRIVATE_KEY_PATH")" = "$PUBLISH_PRIVATE_KEY_SHA256" ] ||
+  publisher_private_key_digest_now=$(guard_sha256 "$PUBLISH_PRIVATE_KEY_PATH") ||
+    { guard_fail "publisher private key content digest is unavailable"; return 1; }
+  [ "$publisher_private_key_digest_now" = "$PUBLISH_PRIVATE_KEY_SHA256" ] ||
     { guard_fail "publisher private key content digest drifted"; return 1; }
   publisher_require_owned_private_path "$PUBLISH_AUDIT_DIR" "publisher audit directory" dir 700 || return 1
-  [ "$(publisher_audit_directory_identity_sha256 "$PUBLISH_AUDIT_DIR")" = \
+  publisher_audit_identity_now=$(publisher_audit_directory_identity_sha256 "$PUBLISH_AUDIT_DIR") ||
+    { guard_fail "publisher audit directory identity is unavailable"; return 1; }
+  [ "$publisher_audit_identity_now" = \
     "$PUBLISH_AUDIT_DIR_IDENTITY_SHA256" ] ||
     { guard_fail "publisher audit directory identity drifted"; return 1; }
   publisher_require_owned_private_path \
@@ -405,6 +415,18 @@ publisher_prepare_active_policy() {
       "$(builtin printf '%s' "$PUBLISH_RUNTIME_JSON" |
         /usr/bin/jq -c --arg name "$publisher_runtime_name" '.programs[$name]')" || return 1
   done
+  # shellcheck disable=SC2034 # consumed by publisher.sh and drift-monitor.sh
+  PUBLISH_TRUSTED_AUDIT_DIR=$PUBLISH_AUDIT_DIR
+}
+
+publisher_extract_header_safe_installation_token() {
+  local publisher_response=$1
+  local publisher_label=$2
+  builtin printf '%s' "$publisher_response" |
+    /usr/bin/jq -er --arg regex "$publisher_header_safe_token_regex" '
+      .token | select(type == "string" and test($regex))
+    ' ||
+    { guard_fail "$publisher_label installation token response omitted a header-safe revocable token"; return 1; }
 }
 
 publisher_verify_sealed_runtime_path() {
@@ -468,6 +490,27 @@ publisher_api_request() {
   local publisher_expected_status=$5
   local publisher_body_path=$6
   local publisher_headers_path=$7
+  local publisher_status=
+  publisher_status=$(
+    publisher_api_request_status \
+      "$publisher_method" \
+      "$publisher_url" \
+      "$publisher_token" \
+      "$publisher_body_json" \
+      "$publisher_body_path" \
+      "$publisher_headers_path"
+  ) || return 1
+  [ "$publisher_status" = "$publisher_expected_status" ] ||
+    { guard_fail "GitHub API returned an unexpected status"; return 1; }
+}
+
+publisher_api_request_status() {
+  local publisher_method=$1
+  local publisher_url=$2
+  local publisher_token=$3
+  local publisher_body_json=$4
+  local publisher_body_path=$5
+  local publisher_headers_path=$6
   local publisher_request_body_path=
   local publisher_status=
   [ -n "$publisher_body_json" ] && {
@@ -503,13 +546,10 @@ publisher_api_request() {
     return 1
   }
   [ -z "$publisher_request_body_path" ] || /bin/rm -f "$publisher_request_body_path"
-  [ "$publisher_status" = "$publisher_expected_status" ] ||
-    { guard_fail "GitHub API returned an unexpected status"; return 1; }
-  case "$publisher_expected_status" in
-    204) : ;;
-    *) /usr/bin/jq -e . "$publisher_body_path" >/dev/null 2>&1 ||
-         { guard_fail "GitHub API body is malformed"; return 1; } ;;
-  esac
+  [ "$publisher_status" = 204 ] ||
+    /usr/bin/jq -e . "$publisher_body_path" >/dev/null 2>&1 ||
+    { guard_fail "GitHub API body is malformed"; return 1; }
+  builtin printf '%s' "$publisher_status"
 }
 
 publisher_api_request_memory() {
@@ -633,7 +673,7 @@ publisher_verify_installation_token_response() {
     --arg metadata_perm "$PUBLISH_EXPECTED_METADATA_PERMISSION" \
     --arg contents_perm "$publisher_expected_contents" '
     ((keys | sort) == ["expires_at","permissions","repositories","repository_selection","token"]) and
-    (.token | type == "string" and test("^[A-Za-z0-9_]{20,}$")) and
+    (.token | type == "string" and test("^[A-Za-z0-9._-]{20,}$")) and
     (.expires_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
     ((.permissions | keys | sort) == ["contents","metadata"]) and
     (.permissions.metadata == $metadata_perm) and
@@ -663,6 +703,63 @@ publisher_revoke_token() {
   local publisher_token=$1
   publisher_api_request_memory DELETE "$PUBLISH_API_BASE/installation/token" \
     "$publisher_token" '' 204 >/dev/null
+}
+
+publisher_verify_app_identity_json() {
+  local publisher_app_json=$1
+  local publisher_expected_slug=${2:-}
+  /usr/bin/jq -e \
+    --argjson app_id "$PUBLISH_APP_ID" \
+    --arg expected_slug "$publisher_expected_slug" '
+    .id == $app_id and
+    (.slug | type == "string" and length > 0) and
+    ($expected_slug == "" or .slug == $expected_slug) and
+    ((.permissions | keys | sort) == ["contents","metadata"]) and
+    .permissions.metadata == "read" and
+    .permissions.contents == "write" and
+    (.events | type == "array" and length == 0)
+  ' "$publisher_app_json" >/dev/null ||
+    { guard_fail "GitHub App identity did not match the pinned app id"; return 1; }
+}
+
+publisher_verify_installation_identity_json() {
+  local publisher_installation_json=$1
+  local publisher_expected_account=${2:-}
+  local publisher_expected_slug=${3:-}
+  /usr/bin/jq -e \
+    --argjson installation_id "$PUBLISH_INSTALLATION_ID" \
+    --argjson app_id "$PUBLISH_APP_ID" \
+    --arg expected_slug "$publisher_expected_slug" \
+    --arg selection "$PUBLISH_EXPECTED_REPOSITORY_SELECTION" \
+    --arg metadata_perm "$PUBLISH_EXPECTED_METADATA_PERMISSION" \
+    --arg expected_account "$publisher_expected_account" '
+    .id == $installation_id and
+    .app_id == $app_id and
+    (.app_slug | type == "string" and length > 0) and
+    ($expected_slug == "" or .app_slug == $expected_slug) and
+    (.account.login | type == "string" and length > 0) and
+    ($expected_account == "" or .account.login == $expected_account) and
+    .suspended_at == null and
+    (.suspended_by? == null) and
+    (.events | type == "array" and length == 0) and
+    .repository_selection == $selection and
+    ((.permissions | keys | sort) == ["contents","metadata"]) and
+    .permissions.metadata == $metadata_perm and
+    .permissions.contents == "write" and
+    (
+      (.repositories_url? | type == "string" and length > 0) or
+      (.target_type? | type == "string")
+    )
+  ' "$publisher_installation_json" >/dev/null ||
+    { guard_fail "installation identity did not match the pinned installation"; return 1; }
+}
+
+publisher_verify_webhook_config_json() {
+  local publisher_hook_json=$1
+  /usr/bin/jq -e '
+    (.url | type == "string" and . == "")
+  ' "$publisher_hook_json" >/dev/null ||
+    { guard_fail "GitHub App webhook configuration was not disabled"; return 1; }
 }
 
 publisher_scan_candidate() {
@@ -888,17 +985,21 @@ publisher_verify_remote_state() {
   publisher_git_ref_path_destination=${PUBLISH_DESTINATION_REF#refs/}
 
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID" \
-    "$publisher_token" '' 200 "$publisher_repo_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_repo_json" "$publisher_headers" || return 1
   /usr/bin/jq -e \
     --arg repo_id "$PUBLISH_REPO_ID" \
     --argjson repository_id "$PUBLISH_REPOSITORY_ID" \
-    --argjson repo_private "$PUBLISH_EXPECTED_REPOSITORY_PRIVATE" '
-    .full_name == $repo_id and .id == $repository_id and .private == $repo_private
+    --argjson repo_private "$PUBLISH_EXPECTED_REPOSITORY_PRIVATE" \
+    --arg main_branch "$PUBLISH_MAIN_BRANCH" '
+    .full_name == $repo_id and
+    .id == $repository_id and
+    .private == $repo_private and
+    .default_branch == $main_branch
   ' "$publisher_repo_json" >/dev/null ||
     { guard_fail "repository metadata did not match the pinned repository"; return 1; }
 
   publisher_api_request GET "$PUBLISH_API_BASE/installation/repositories?per_page=2" \
-    "$publisher_token" '' 200 "$publisher_installation_repos_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_installation_repos_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
   /usr/bin/jq -e \
     --arg repo_id "$PUBLISH_REPO_ID" \
@@ -911,7 +1012,7 @@ publisher_verify_remote_state() {
     { guard_fail "installation repository scope changed"; return 1; }
 
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/rulesets?includes_parents=true&per_page=100" \
-    "$publisher_token" '' 200 "$publisher_rulesets_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_rulesets_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
   /usr/bin/jq -e --argjson expected "$PUBLISH_RULESET_IDS_JSON" '
     ($expected | length) > 0 and
@@ -919,30 +1020,35 @@ publisher_verify_remote_state() {
   ' "$publisher_rulesets_json" >/dev/null ||
     { guard_fail "readable ruleset ids did not exactly match policy"; return 1; }
   : > "$publisher_ruleset_details_jsonl"
-  builtin printf '%s' "$PUBLISH_RULESET_IDS_JSON" |
-    /usr/bin/jq -r 'sort[]' |
-    while IFS= read -r publisher_ruleset_id; do
-      publisher_ruleset_detail=$publisher_tmp/ruleset-"$publisher_ruleset_id".json
-      publisher_api_request GET \
-        "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/rulesets/$publisher_ruleset_id" \
-        "$publisher_token" '' 200 "$publisher_ruleset_detail" "$publisher_headers"
-      publisher_require_unpaginated "$publisher_headers" || exit 1
-      /usr/bin/jq -e --argjson expected_id "$publisher_ruleset_id" \
-        '.id == $expected_id and (.rules | type == "array")' \
-        "$publisher_ruleset_detail" >/dev/null ||
-        { guard_fail "readable ruleset definition did not match policy"; exit 1; }
-      /usr/bin/jq -cS . "$publisher_ruleset_detail" >> "$publisher_ruleset_details_jsonl"
-    done || return 1
+  publisher_ruleset_ids=$(
+    builtin printf '%s' "$PUBLISH_RULESET_IDS_JSON" |
+      /usr/bin/jq -r 'sort[]'
+  ) || return 1
+  while IFS= read -r publisher_ruleset_id; do
+    publisher_ruleset_detail=$publisher_tmp/ruleset-"$publisher_ruleset_id".json
+    publisher_api_request GET \
+      "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/rulesets/$publisher_ruleset_id" \
+      "$publisher_token" '' 200 "$publisher_ruleset_detail" "$publisher_headers" || return 1
+    publisher_require_unpaginated "$publisher_headers" || return 1
+    /usr/bin/jq -e --argjson expected_id "$publisher_ruleset_id" \
+      '.id == $expected_id and (.rules | type == "array")' \
+      "$publisher_ruleset_detail" >/dev/null ||
+      { guard_fail "readable ruleset definition did not match policy"; return 1; }
+    /usr/bin/jq -cS . "$publisher_ruleset_detail" >> "$publisher_ruleset_details_jsonl" ||
+      { guard_fail "ruleset definition capture failed"; return 1; }
+  done <<EOF
+$publisher_ruleset_ids
+EOF
 
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/rules/branches/$publisher_encoded_main?per_page=100" \
-    "$publisher_token" '' 200 "$publisher_main_rules_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_main_rules_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/rules/branches/$publisher_encoded_destination?per_page=100" \
-    "$publisher_token" '' 200 "$publisher_destination_rules_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_destination_rules_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
 
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/git/ref/heads/$publisher_git_ref_path_main" \
-    "$publisher_token" '' 200 "$publisher_main_ref_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_main_ref_json" "$publisher_headers" || return 1
   /usr/bin/jq -e --arg base_sha "$PUBLISH_BASE_SHA" '.object.sha == $base_sha' \
     "$publisher_main_ref_json" >/dev/null ||
     { guard_fail "readable main tip no longer matches the accepted base"; return 1; }
@@ -951,15 +1057,35 @@ publisher_verify_remote_state() {
 
   case "$publisher_phase" in
     read|prepush)
-      publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/git/ref/$publisher_git_ref_path_destination" \
-        "$publisher_token" '' 404 "$publisher_destination_ref_json" "$publisher_headers"
-      publisher_destination_state=ABSENT
-      publisher_destination_sha=
+      publisher_destination_status=$(
+        publisher_api_request_status \
+          GET \
+          "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/git/ref/$publisher_git_ref_path_destination" \
+          "$publisher_token" \
+          '' \
+          "$publisher_destination_ref_json" \
+          "$publisher_headers"
+      ) || return 1
+      case "$publisher_destination_status" in
+        404)
+          publisher_destination_state=ABSENT
+          publisher_destination_sha=
+          ;;
+        200)
+          guard_fail "representative destination ref already exists"
+          return 1
+          ;;
+        *)
+          guard_fail "GitHub API returned an unexpected status"
+          return 1
+          ;;
+      esac
       ;;
     postpush)
       publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/git/ref/$publisher_git_ref_path_destination" \
-        "$publisher_token" '' 200 "$publisher_destination_ref_json" "$publisher_headers"
-      publisher_destination_sha=$(/usr/bin/jq -r '.object.sha' "$publisher_destination_ref_json")
+        "$publisher_token" '' 200 "$publisher_destination_ref_json" "$publisher_headers" || return 1
+      publisher_destination_sha=$(/usr/bin/jq -r '.object.sha' "$publisher_destination_ref_json") ||
+        { guard_fail "remote ref readback omitted an object SHA"; return 1; }
       [ "$publisher_destination_sha" = "$PUBLISH_CANDIDATE_SHA" ] ||
         { guard_fail "remote ref readback did not equal the candidate SHA"; return 1; }
       publisher_destination_state=MATCH
@@ -971,13 +1097,15 @@ publisher_verify_remote_state() {
   esac
 
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/tags?per_page=1" \
-    "$publisher_token" '' 200 "$publisher_tags_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_tags_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
   publisher_api_request GET "$PUBLISH_API_BASE/repos/$PUBLISH_REPO_ID/releases?per_page=1" \
-    "$publisher_token" '' 200 "$publisher_releases_json" "$publisher_headers"
+    "$publisher_token" '' 200 "$publisher_releases_json" "$publisher_headers" || return 1
   publisher_require_unpaginated "$publisher_headers" || return 1
-  publisher_tags_count=$(/usr/bin/jq 'length' "$publisher_tags_json")
-  publisher_releases_count=$(/usr/bin/jq 'length' "$publisher_releases_json")
+  publisher_tags_count=$(/usr/bin/jq 'length' "$publisher_tags_json") ||
+    { guard_fail "tag count response is malformed"; return 1; }
+  publisher_releases_count=$(/usr/bin/jq 'length' "$publisher_releases_json") ||
+    { guard_fail "release count response is malformed"; return 1; }
   [ "$publisher_tags_count" = "$PUBLISH_EXPECTED_TAGS_COUNT" ] ||
     { guard_fail "readable tag count drifted"; return 1; }
   [ "$publisher_releases_count" = "$PUBLISH_EXPECTED_RELEASES_COUNT" ] ||

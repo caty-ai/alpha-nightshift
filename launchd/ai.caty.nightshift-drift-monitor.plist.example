@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.caty.nightshift-drift-monitor</string>
+  <key>Disabled</key>
+  <true/>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-p</string>
+    <string>__NIGHTSHIFT_ROOT__/guard/drift-monitor.sh</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>__NIGHTSHIFT_ROOT__/config/drift-monitor.example.json</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>5</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>__NIGHTSHIFT_ROOT__/state/logs/launchd-drift-monitor.log</string>
+  <key>StandardErrorPath</key>
+  <string>__NIGHTSHIFT_ROOT__/state/logs/launchd-drift-monitor.log</string>
+</dict>
+</plist>
