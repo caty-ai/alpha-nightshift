@@ -26,8 +26,126 @@ scanner_policy_digest() {
   scanner_config | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}'
 }
 
+scanner_prepare() {
+  scanner_work_dir=$1
+  config_path=$scanner_work_dir/gitleaks.toml
+  ignore_path=$scanner_work_dir/empty.ignore
+  scanner_config > "$config_path"
+  : > "$ignore_path"
+  if [ "$(/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks version 2>/dev/null)" != "8.30.1" ]; then
+    guard_fail "gitleaks version mismatch"
+    return 1
+  fi
+}
+
+scan_payload() {
+  scan_input=$1
+  scan_expect=$2
+  scan_label=$3
+  report=$scan_tmp/report-"$scan_label".json
+  diagnostics=$scan_tmp/diagnostics-"$scan_label".log
+  scanner_stdout=$scan_tmp/stdout-"$scan_label".log
+  scan_bytes=$(/usr/bin/wc -c < "$scan_input" | /usr/bin/tr -d ' ')
+  set +e
+  /bin/cat "$scan_input" |
+    /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks stdin \
+      --config "$config_path" \
+      --gitleaks-ignore-path "$ignore_path" \
+      --ignore-gitleaks-allow \
+      --max-archive-depth=0 \
+      --max-decode-depth=0 \
+      --max-target-megabytes=0 \
+      --timeout=0 \
+      --report-format=json \
+      --report-path="$report" \
+      --redact=100 \
+      --log-level=debug \
+      --no-banner \
+      --no-color \
+      > "$scanner_stdout" 2> "$diagnostics"
+  pipe_status=("${PIPESTATUS[@]}")
+  set -e
+  [ "${pipe_status[0]}" -eq 0 ] ||
+    { guard_fail "scanner feeder short write or broken pipe"; return 1; }
+  scanner_rc=${pipe_status[1]}
+  [ ! -s "$scanner_stdout" ] ||
+    { guard_fail "scanner stdout is outside the pinned grammar"; return 1; }
+  [ -f "$report" ] ||
+    { guard_fail "scanner report is missing"; return 1; }
+  /usr/bin/jq -e 'type == "array"' "$report" >/dev/null 2>&1 ||
+    { guard_fail "scanner report is malformed"; return 1; }
+  if LC_ALL=C /usr/bin/grep -E -i \
+    'skipping binary|skipped|truncat|timed? out|zero bytes|0 bytes scanned|mime' \
+    "$diagnostics" >/dev/null 2>&1; then
+    guard_fail "scanner diagnostics are ambiguous or indicate a skip"
+    return 1
+  fi
+  scanner_attributed_count=$(
+    LC_ALL=C /usr/bin/awk -v expected="$scan_bytes" '
+      {
+        for (field = 1; field <= NF - 2; field++) {
+          if ($field == "scanned" &&
+              $(field + 1) == "~" expected &&
+              $(field + 2) == "bytes") {
+            matches++
+          }
+        }
+      }
+      END { print matches + 0 }
+    ' "$diagnostics"
+  ) || {
+    guard_fail "scanner-attributed consumed byte count is unavailable"
+    return 1
+  }
+  [ "$scanner_attributed_count" -eq 1 ] || {
+    guard_fail "scanner-attributed consumed byte count is absent or mismatched"
+    return 1
+  }
+  if [ "$scan_bytes" -gt 0 ] && [ ! -s "$scan_input" ]; then
+    guard_fail "non-empty scanner input became empty"
+    return 1
+  fi
+  case "$scan_expect" in
+    clean)
+      [ "$scanner_rc" -eq 0 ] && /usr/bin/jq -e 'length == 0' "$report" >/dev/null ||
+        { guard_fail "secret detector denied an outgoing object"; return 1; }
+      ;;
+    canary)
+      [ "$scanner_rc" -eq 1 ] &&
+        /usr/bin/jq -e 'any(.RuleID == "nightshift-generic-api-key")' "$report" >/dev/null ||
+        { guard_fail "representation-matched scanner canary was not detected"; return 1; }
+      ;;
+    *) guard_fail "internal scanner expectation error"; return 1 ;;
+  esac
+}
+
 if [ "$#" -eq 1 ] && [ "$1" = "--policy-digest" ]; then
   scanner_policy_digest
+  exit 0
+fi
+
+if [ "$#" -eq 2 ] && [ "$1" = "--exact-stdin" ]; then
+  exact_input=$2
+  guard_validate_absolute_path "$exact_input" file
+  exact_size=$(/usr/bin/stat -f '%z' "$exact_input" 2>/dev/null) ||
+    { guard_fail "exact-stdin size is unavailable"; exit 1; }
+  case "$exact_size" in
+    ''|*[!0-9]*) guard_fail "exact-stdin size is malformed"; exit 1 ;;
+  esac
+  [ "$exact_size" -le 65536 ] ||
+    { guard_fail "exact-stdin input exceeds the local bound"; exit 1; }
+  scan_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-exact-stdin.XXXXXX")
+  scan_tmp=$(CDPATH= cd -- "$scan_tmp" && pwd -P)
+  cleanup_exact_stdin() {
+    rm -rf "$scan_tmp"
+  }
+  trap cleanup_exact_stdin EXIT
+  scanner_prepare "$scan_tmp"
+  scan_payload "$exact_input" clean exact-input
+  exact_canary=$scan_tmp/exact-input-canary
+  /bin/cp "$exact_input" "$exact_canary"
+  /usr/bin/printf '\napi_key=NSCANEXACTSTDINPHASEONE\n' >> "$exact_canary"
+  scan_payload "$exact_canary" canary exact-input-canary
   exit 0
 fi
 
@@ -154,19 +272,12 @@ if [ -f "$common_dir/config" ]; then
 fi
 
 scan_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-object-scan.XXXXXX")
+scan_tmp=$(CDPATH= cd -- "$scan_tmp" && pwd -P)
 cleanup() {
   rm -rf "$scan_tmp"
 }
 trap cleanup EXIT
-config_path=$scan_tmp/gitleaks.toml
-ignore_path=$scan_tmp/empty.ignore
-scanner_config > "$config_path"
-: > "$ignore_path"
-
-if [ "$(/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks version 2>/dev/null)" != "8.30.1" ]; then
-  guard_fail "gitleaks version mismatch"
-  exit 1
-fi
+scanner_prepare "$scan_tmp"
 
 for objectish in "$base" "$candidate"; do
   resolved=$(guard_hardened_git "$git_dir" rev-parse --verify "$objectish^{commit}" 2>/dev/null) ||
@@ -324,10 +435,6 @@ validate_payload() {
         exit 3;
       }
       exit 3 unless $author && $committer;
-      exit 5 if $message =~ m{https?://|www\.|<[^>]+>|(?:^|[^\w])\@\w|(?:^|[^\w])\#\d|GH-\d|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\#\d}i;
-      exit 5 if $message =~ /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+\S+/i;
-      exit 5 if $message =~ /(?:^|[^a-f0-9])[a-f0-9]{7,40}(?:[^a-f0-9]|$)/i;
-      exit 5 if $message =~ /^\s*[-*]\s+\[[ xX]\]/m;
       exit 0;
     }
     if ($type eq "tree") {
@@ -355,71 +462,6 @@ validate_payload() {
     }
     exit 99;
   ' "$payload_type" "$payload_path" "$oid_width" "$bot_name" "$bot_email"
-}
-
-scan_payload() {
-  scan_input=$1
-  scan_expect=$2
-  scan_label=$3
-  report=$scan_tmp/report-"$scan_label".json
-  diagnostics=$scan_tmp/diagnostics-"$scan_label".log
-  scan_bytes=$(/usr/bin/wc -c < "$scan_input" | /usr/bin/tr -d ' ')
-  set +e
-  /bin/cat "$scan_input" |
-    /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks stdin \
-      --config "$config_path" \
-      --gitleaks-ignore-path "$ignore_path" \
-      --ignore-gitleaks-allow \
-      --max-archive-depth=0 \
-      --max-decode-depth=0 \
-      --max-target-megabytes=0 \
-      --timeout=0 \
-      --report-format=json \
-      --report-path="$report" \
-      --redact=100 \
-      --log-level=debug \
-      --no-banner \
-      --no-color \
-      > /dev/null 2> "$diagnostics"
-  pipe_status=("${PIPESTATUS[@]}")
-  set -e
-  [ "${pipe_status[0]}" -eq 0 ] ||
-    { guard_fail "scanner feeder short write or broken pipe"; return 1; }
-  scanner_rc=${pipe_status[1]}
-  [ -f "$report" ] ||
-    { guard_fail "scanner report is missing"; return 1; }
-  /usr/bin/jq -e 'type == "array"' "$report" >/dev/null 2>&1 ||
-    { guard_fail "scanner report is malformed"; return 1; }
-  if LC_ALL=C /usr/bin/grep -E -i \
-    'skipping binary|skipped|truncat|timed? out|zero bytes|0 bytes scanned|mime' \
-    "$diagnostics" >/dev/null 2>&1; then
-    guard_fail "scanner diagnostics are ambiguous or indicate a skip"
-    return 1
-  fi
-  if [ "$scan_bytes" -eq 0 ]; then
-    LC_ALL=C /usr/bin/grep -E 'scanned ~0 bytes \(0\)' \
-      "$diagnostics" >/dev/null 2>&1 ||
-      { guard_fail "scanner-attributed zero-byte count is absent or mismatched"; return 1; }
-  else
-    /usr/bin/grep -F "($scan_bytes bytes)" "$diagnostics" >/dev/null 2>&1 ||
-      { guard_fail "scanner-attributed consumed byte count is absent or mismatched"; return 1; }
-  fi
-  if [ "$scan_bytes" -gt 0 ] && [ ! -s "$scan_input" ]; then
-    guard_fail "non-empty scanner input became empty"
-    return 1
-  fi
-  case "$scan_expect" in
-    clean)
-      [ "$scanner_rc" -eq 0 ] && /usr/bin/jq -e 'length == 0' "$report" >/dev/null ||
-        { guard_fail "secret detector denied an outgoing object"; return 1; }
-      ;;
-    canary)
-      [ "$scanner_rc" -eq 1 ] &&
-        /usr/bin/jq -e 'any(.RuleID == "nightshift-generic-api-key")' "$report" >/dev/null ||
-        { guard_fail "representation-matched scanner canary was not detected"; return 1; }
-      ;;
-    *) guard_fail "internal scanner expectation error"; return 1 ;;
-  esac
 }
 
 make_canary_variant() {
@@ -615,6 +657,32 @@ while IFS= read -r oid; do
   if ! validate_payload "$object_type" "$raw_path"; then
     guard_fail "outgoing object representation or commit policy denied"
     exit 1
+  fi
+  if [ "$object_type" = commit ]; then
+    message_path=$scan_tmp/message-"$oid".txt
+    /usr/bin/perl -e '
+      use strict;
+      use warnings;
+      my ($source,$output)=@ARGV;
+      open my $fh,"<:raw",$source or exit 90;
+      local $/;
+      my $raw=<$fh>;
+      close $fh or exit 91;
+      my (undef,$message)=split(/\n\n/,$raw,2);
+      exit 92 unless defined $message;
+      open my $out,">:raw",$output or exit 93;
+      print {$out} $message or exit 94;
+      close $out or exit 95;
+    ' "$raw_path" "$message_path" ||
+      { guard_fail "commit message snapshot failed"; exit 1; }
+    if ! "$GUARD_DIR/text-policy.sh" \
+      --kind commit_message \
+      --input "$message_path" \
+      > "$scan_tmp/message-policy-$oid.stdout" \
+      2> "$scan_tmp/message-policy-$oid.stderr"; then
+      guard_fail "outgoing commit message text policy denied"
+      exit 1
+    fi
   fi
   mime_type=$(/usr/bin/file -b --mime-type "$raw_path" 2>/dev/null || :)
   if [ "$object_type" != tree ]; then

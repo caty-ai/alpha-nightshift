@@ -52,6 +52,9 @@ gateway_main() {
     scan)
       exec "$GUARD_DIR/broker.sh" scan "$@"
       ;;
+    validate_text)
+      exec "$GUARD_DIR/broker.sh" validate_text "$@"
+      ;;
     proposal)
       gateway_proposal "$@"
       ;;

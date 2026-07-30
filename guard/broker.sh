@@ -20,7 +20,10 @@ broker_main() {
     scan)
       exec "$GUARD_DIR/scan.sh" "$@"
       ;;
-    publish|publish_branch|create_draft_pr|create_issue|merge|comment|label|api|graphql)
+    validate_text)
+      exec "$GUARD_DIR/text-policy.sh" "$@"
+      ;;
+    publish|publish_branch|create_draft_pr|create_issue|push|merge|comment|label|api|request|graphql)
       guard_fail "broker publication is deliberately hard-disabled"
       ;;
     *)
