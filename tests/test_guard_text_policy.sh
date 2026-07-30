@@ -86,6 +86,10 @@ make_clean_fixture() {
 /usr/bin/printf '%s' 'OrdinaryCfFreeTitle' > "$TEST_TMP/cf-free-title.txt"
 /usr/bin/printf '%s\n' 'Ordinary prose without format characters.' \
   > "$TEST_TMP/cf-free-body.txt"
+/usr/bin/printf '%s' 'OrdinaryPrivateUseFreeTitle' \
+  > "$TEST_TMP/co-free-title.txt"
+/usr/bin/printf '%s\n' 'Ordinary prose without private-use characters.' \
+  > "$TEST_TMP/co-free-body.txt"
 make_clean_fixture "$TEST_TMP/title-512.txt" 512 0
 make_clean_fixture "$TEST_TMP/body-1-kib.txt" 1024 1
 make_clean_fixture "$TEST_TMP/body-10-kib.txt" 10240 1
@@ -203,6 +207,8 @@ pass_text body body "$TEST_TMP/body.txt"
 pass_text comment comment "$TEST_TMP/comment.txt"
 pass_text cf-free-title title "$TEST_TMP/cf-free-title.txt"
 pass_text cf-free-body body "$TEST_TMP/cf-free-body.txt"
+pass_text co-free-title title "$TEST_TMP/co-free-title.txt"
+pass_text co-free-body body "$TEST_TMP/co-free-body.txt"
 pass_text title-512 title "$TEST_TMP/title-512.txt"
 pass_text body-966 body "$TEST_TMP/body-966.txt"
 pass_text body-967 body "$TEST_TMP/body-967.txt"
@@ -1357,6 +1363,88 @@ deny_text cf-structural-title title \
   "$TEST_TMP/cf-structural-title.txt"
 deny_text cf-exact-comment comment "$CF_SOURCE_DIR/070F.txt"
 
+CO_SOURCE_DIR=$TEST_TMP/co-structural-sources
+mkdir -p "$CO_SOURCE_DIR"
+[ "$(/usr/bin/grep -F -c \
+  '\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}\p{Cn}' "$POLICY")" -eq 1 ] ||
+  fail "production structural predicate does not reject Unicode Co"
+/usr/bin/perl -MUnicode::UCD -CSDA -e '
+  use strict;
+  use warnings;
+  my ($ranges_path,$runtime_path)=@ARGV;
+  my ($count,$postfix_survivors,$range_start,$previous)=(0,0);
+  my @ranges;
+  for my $codepoint (0..0x10FFFF) {
+    next if $codepoint >= 0xD800 && $codepoint <= 0xDFFF;
+    my $character=chr $codepoint;
+    next unless $character =~ /\p{Co}/;
+    $count++;
+    $postfix_survivors++ unless $character =~
+      /[\x{FEFF}\x{0000}-\x{0009}\x{000B}-\x{001F}\x{007F}-\x{009F}\x{2028}\x{2029}\x{FDD0}-\x{FDEF}\p{Noncharacter_Code_Point}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}\p{Cn}]/;
+    if (!defined $range_start) {
+      ($range_start,$previous)=($codepoint,$codepoint);
+    } elsif ($codepoint == $previous+1) {
+      $previous=$codepoint;
+    } else {
+      push @ranges,[$range_start,$previous];
+      ($range_start,$previous)=($codepoint,$codepoint);
+    }
+  }
+  push @ranges,[$range_start,$previous] if defined $range_start;
+  open my $ranges_out,">",$ranges_path or exit 90;
+  for my $range (@ranges) {
+    printf {$ranges_out} "%X-%X\n",$range->[0],$range->[1] or exit 91;
+  }
+  close $ranges_out or exit 92;
+  open my $runtime_out,">",$runtime_path or exit 93;
+  print {$runtime_out}
+    "perl=$] unicode=",Unicode::UCD::UnicodeVersion(),
+    " all_co=$count ranges=",scalar(@ranges),
+    " post_fix_survivors=$postfix_survivors\n" or exit 94;
+  close $runtime_out or exit 95;
+' "$TEST_TMP/co-ranges.txt" "$TEST_TMP/co-runtime.txt"
+
+[ "$(/bin/cat "$TEST_TMP/co-runtime.txt")" = \
+  'perl=5.034001 unicode=13.0.0 all_co=137468 ranges=3 post_fix_survivors=0' ] ||
+  fail "Co structural derivation runtime, cardinality, or survivor count changed"
+/usr/bin/printf '%s\n' \
+  E000-F8FF F0000-FFFFD 100000-10FFFD \
+  > "$TEST_TMP/co-ranges.expected.txt"
+/usr/bin/cmp -s \
+  "$TEST_TMP/co-ranges.expected.txt" \
+  "$TEST_TMP/co-ranges.txt" ||
+  fail "Unicode Co contiguous ranges changed"
+
+/usr/bin/printf '%s\n' \
+  E000 EC80 F8FF \
+  F0000 F7FFF FFFFD \
+  100000 107FFF 10FFFD \
+  > "$TEST_TMP/co-representatives.txt"
+while IFS= read -r co_code; do
+  /usr/bin/perl -CSDA -e '
+    use strict;
+    use warnings;
+    my ($code,$path)=@ARGV;
+    open my $fixture,">:encoding(UTF-8)",$path or exit 90;
+    print {$fixture}
+      "api",chr(hex($code)),"key=ZqWrTsPvXyZqWrTsPvXy\n" or exit 91;
+    close $fixture or exit 92;
+  ' "$co_code" "$CO_SOURCE_DIR/$co_code.txt"
+  deny_text "co-$co_code-body" body "$CO_SOURCE_DIR/$co_code.txt"
+  deny_text "co-$co_code-commit" commit_message \
+    "$CO_SOURCE_DIR/$co_code.txt"
+done < "$TEST_TMP/co-representatives.txt"
+
+/usr/bin/perl -CSD -e \
+  'print "api\x{E000}key=ZqWrTsPvXyZqWrTsPvXy"' \
+  > "$TEST_TMP/co-exact-title.txt"
+deny_text co-exact-title title "$TEST_TMP/co-exact-title.txt"
+/usr/bin/perl -CSD -e \
+  'print "Ordinary\x{E000}Title"' \
+  > "$TEST_TMP/co-structural-title.txt"
+deny_text co-structural-title title "$TEST_TMP/co-structural-title.txt"
+deny_text co-exact-comment comment "$CO_SOURCE_DIR/E000.txt"
+
 if "$POLICY" --kind title --input relative.txt >/dev/null 2>&1; then
   fail "relative text input was accepted"
 fi
@@ -1787,6 +1875,7 @@ done < "$TEST_TMP/two-stage-source-manifest.txt"
 deny_outgoing_message two-stage-pending-duplicate \
   "$TEST_TMP/two-stage-pending-duplicate.txt"
 deny_outgoing_message cf-u070f "$CF_SOURCE_DIR/070F.txt"
+deny_outgoing_message co-ue000 "$CO_SOURCE_DIR/E000.txt"
 
 pass_outgoing_message() {
   label=$1

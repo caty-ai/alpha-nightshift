@@ -40,8 +40,10 @@ Internal LF is allowed for every non-title kind. A second terminal LF and
 whitespace-only content deny. Tabs are not allowed in Phase 1a. Accepted bytes
 must be valid NFC UTF-8 with no BOM, NUL, CR/CRLF, C0/C1 controls, Unicode line
 separators, noncharacters, unassigned ambiguity, bidi controls, default-
-ignorable code points, or any Unicode format character (`Cf`). No normalization
-or newline rewrite occurs; the digest binds the exact snapshotted bytes.
+ignorable code points, any Unicode format character (`Cf`), or any private-use
+character (`Co`). Format and private-use characters are rejected structurally
+because their presentation is not portable or trustworthy. No normalization or
+newline rewrite occurs; the digest binds the exact snapshotted bytes.
 
 One no-side-effect predicate applies identically to all four kinds after those
 structural checks. It rejects URLs and domains, `www.`, autolinks, raw HTML,
@@ -191,7 +193,15 @@ ambiguous wrapper content is intentionally fail-closed. Innocent encoded text,
 checksums, or wrapper-shaped source data can therefore false-deny in Phase 1a;
 supporting those classes requires a separately reviewed representation policy.
 Base64url-shaped denial can include otherwise ordinary sufficiently long
-single-token kebab-case or underscore content.
+single-token kebab-case or underscore content. For this ambiguity check only,
+ASCII space/tab/LF, Unicode separators, format/default-ignorable characters,
+private-use and unassigned characters, all Unicode marks, U+2800 BRAILLE
+PATTERN BLANK, and U+FFFC/U+FFFD representation placeholders are removed from
+a comparison copy. Original object bytes are never normalized or rewritten,
+and ordinary non-wrapper blobs containing those characters are not denied by
+this comparison alone. Visible punctuation and symbols are not generically
+removed; the comparison is a conservative render-transparent/representation-
+placeholder rule, not a lenient decoder for arbitrary garbage.
 
 `sandbox.sb` is a measurement template. Render it only with
 `render-sandbox.sh`; the default has no network access, while `--fixture`

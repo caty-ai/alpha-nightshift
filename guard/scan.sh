@@ -602,7 +602,7 @@ decode_wrapper() {
       if (!$@ && defined($unicode)) {
         my $normalized=$unicode;
         $normalized =~
-          s/(?:[ \t\n]|\p{Z}|\p{Cf}|\p{Default_Ignorable_Code_Point})//g;
+          s/(?:[ \t\n]|\p{Z}|\p{Cf}|\p{Co}|\p{Cn}|\p{M}|\x{2800}|\x{FFFC}|\x{FFFD}|\p{Default_Ignorable_Code_Point})//g;
         if ($normalized ne $unicode) {
           my $normalized_bytes=Encode::encode("UTF-8",$normalized);
           exit 12 if normalized_wrapper_or_ambiguity($normalized_bytes);
