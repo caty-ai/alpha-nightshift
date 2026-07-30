@@ -1,10 +1,11 @@
 # alpha-nightshift
 
-Phase 1a now includes an opt-in local guard under `guard/`, but it is inactive
-and incapable of publication. Its mode is
-`LOCAL_ONLY_REMOTE_UNPROVEN`; preflight always reports `write_mode:false`.
-Nothing in this round created or changed a user, GitHub account, PAT,
-protection, or ruleset, and no real GitHub write or negative proof was
+Phase 1a/1c now include an opt-in local guard and an inactive GitHub App
+publisher under `guard/`. The checked-in package still denies before key or
+network access: its mode is `LOCAL_ONLY_REMOTE_UNPROVEN`, preflight always
+reports `write_mode:false`, and the example publisher policy remains inactive.
+Nothing in this round created or changed a user, GitHub App installation,
+token, protection, or ruleset, and no real GitHub write or negative proof was
 attempted. The existing Phase 0 dispatcher and lane behavior is unchanged.
 
 The local package provides a strict typed gateway, deterministic hard-disable
@@ -21,14 +22,17 @@ Whole-payload wrapper or checksum shapes are also fail-closed, so otherwise
 innocent Base64, hex, percent, or Base64url-shaped content may false-deny.
 See `guard/README.md` for the local interface.
 
-Phase 1b remains unproven. An orchestrator preflight found that protection for
-a private repository on GitHub Free returned 403. Activation therefore still
-requires a supporting private-repository plan/host, a dedicated night-bot
-account, a fine-grained PAT, and explicit owner authorization for potentially
-mutating remote proofs. The default-branch proof uses a content-identical
-descendant; unexpected acceptance remains an incident and is never silently
-cleaned up. Phase 1 and Issue #6 must not be marked complete until those remote
-proofs and protection readback succeed.
+Phase 1b/1c remain unproven on live credentials. An orchestrator preflight
+found that protection for a private repository on GitHub Free returned 403.
+Activation therefore still requires a supporting private-repository plan/host,
+a dedicated GitHub App installed on exactly `shojikumaru/alpha-nightshift`, the
+night-bot broker identity that owns the App private key, and explicit owner
+authorization for potentially mutating remote proofs. The only allowed publish
+target is a freshly generated `refs/heads/night-bot/run-YYYYMMDD-NNNN-HEX8`
+branch, rule-suite correlation remains
+`UNPROVEN_NO_ADMIN_READ`, and any revoke or readback failure is an incident
+rather than a silent cleanup. Phase 1 must not be marked complete until those
+remote proofs and protection readback succeed.
 
 Phase 0 is a macOS nightly observation harness. At 23:30 the dispatcher runs
 credential-free observation lanes and serially ingests their JSONL proposals.

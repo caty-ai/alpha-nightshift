@@ -1,15 +1,17 @@
 # Phase 1a local guard
 
-This directory is an opt-in, credential-free enforcement package. It is not
-called by the Phase 0 dispatcher and cannot publish. Every command reports or
-inherits `LOCAL_ONLY_REMOTE_UNPROVEN`.
+This directory is an opt-in enforcement package. The checked-in policy remains
+inactive, denies before key or network access, and keeps every checked-in
+status path at `write_mode:false`. Every command reports or inherits
+`LOCAL_ONLY_REMOTE_UNPROVEN`.
 
 The lane-facing gateway accepts only `status`, `inspect`, local `preflight`,
-local `scan`, local `validate_text`, and validation of a strict proposal
-containing no destination ref. The future destination grammar
-`refs/heads/night/YYYYMMDD-NNNN` is broker-generated only; it is deliberately
-absent from the lane proposal schema. Publication, merge, mutation, and
-free-form command operations are hard-disabled in both gateway and broker.
+local `scan`, local `validate_text`, `publish_status`, `publish_branch`, and
+validation of a strict proposal containing no destination ref. The only publish
+destination grammar is the broker-generated
+`refs/heads/night-bot/run-YYYYMMDD-NNNN-HEX8`; it is deliberately absent from
+the lane proposal schema. Free-form publish, merge, mutation, and arbitrary
+command operations remain hard-disabled in both gateway and broker.
 
 ## Local publication-text validation
 
@@ -171,6 +173,84 @@ or contacting a host. It reports each local, filesystem, sandbox, identity,
 and remote prerequisite as `PROVEN`, `UNPROVEN`, or `UNSUPPORTED`, but write
 mode is unconditionally false in Phase 1a.
 
+## Inactive publisher boundary
+
+`config/publisher-policy.example.json` is deliberately owner-incomplete:
+`mode:"INACTIVE"`, `write_mode:false`, zero App/installation/EUID values, null
+key/audit/manifest paths, empty rulesets, and null runtime seals. `status` may
+read that file, but `publish_branch` denies before opening a key or invoking a
+network-capable program.
+
+A separately reviewed live policy must be publisher-owned mode 0600 and bind
+the exact publisher EUID, repository numeric ID, App/installation IDs, ruleset
+IDs, key path (publisher-owned 0600), audit directory (publisher-owned 0700),
+scanner manifest (publisher-owned 0600), and SHA-256/UID/mode of the fixed
+Bash, Git, jq, gitleaks, curl, openssl, and publisher program files. Runtime
+seals detect on-disk drift at each publisher entry; they cannot retroactively
+verify shell code that the current Bash process already loaded before the
+check. The publisher program directory itself must be publisher-owned mode
+0700 so a same-group actor cannot swap askpass after its file seal. The policy
+also seals the private-key content SHA-256, a stable audit directory identity
+derived from its canonical path/device/inode, and canonical SHA-256 baselines
+for ruleset definitions plus main/generated-branch effective rules. Key
+rotation, audit-directory replacement, or ruleset-content change therefore
+requires a newly reviewed policy and request digest. The active implementation
+accepts only `https://api.github.com` and `https://github.com`; tests replace those
+literals only in copied scripts, so there is no production endpoint or
+runtime-tool override.
+
+The broker starts secret handling only after those seals and the local
+base/candidate commit relationship pass. Bash privileged mode prevents
+`BASH_ENV`/`ENV` startup injection, exported caller variables lose their export
+attribute, core dumps and xtrace are disabled, and each credential-bearing
+external call receives an explicit empty environment. JWT signing is a pipe
+from shell variables through pinned openssl; no header, payload, signing input,
+signature, JWT, or installation-token response is written to a file.
+Authorization reaches `curl -q` only through stdin curl-config, and the API
+helpers enforce a 10-second connect timeout and 20-second total timeout. The
+single Git password prompt receives the write IAT through inherited file
+descriptor 3 after an exact non-secret prompt expectation. The credential push
+uses a fresh publisher-owned bare Git directory plus the validated source
+common object directory; it never opens the lane repository config. The
+publisher closes Git's stdin before execution, and a loopback HTTP challenge
+test through the compatibility path verifies that the actual Git remote helper
+preserves FD 3 for askpass. Production still pins that path and its live-policy
+digest. JWTs and IATs never appear in argv, environment, stdout/stderr, push
+output, Git config, or audit records.
+
+Publication uses a read IAT first, revokes it, then mints a separate write IAT.
+Repository selection, permissions, token expiry, complete ruleset ID/definition
+sets, pagination, main tip, effective rules, destination absence, and zero
+tags/releases all fail closed. Immediately before the one full
+`candidate:refs/heads/night-bot/run-*` refspec, the immutable-object/text/
+gitleaks scan is rerun and a durable `publish_attempt` is appended. Success
+requires exact post-push SHA/ruleset readback and HTTP 204 token revocation.
+EXIT/HUP/INT/TERM cleanup performs best-effort revoke; a dangling attempt or
+any readback/revoke failure is `PUBLISH_UNVERIFIED_INCIDENT`. SIGKILL and host
+loss cannot run local traps, so the short server expiry, dangling attempt, App
+suspension/uninstall/key revocation, and owner-side branch quarantine remain
+the recovery boundary. Automated branch deletion is intentionally absent.
+Audit records fsync the opened JSONL file, but the containing directory is not
+separately fsynced; abrupt filesystem loss remains a documented durability
+residual.
+
+`remote-preflight.sh` is an internal publisher subprocess, not a standalone
+operator entrypoint. The publisher supplies its token on stdin and the request
+digest captured before credential work; the subprocess rereads the request and
+fails before network access if that digest changed. Its independent token
+grammar check uses Bash builtin `printf`; no IAT is passed through an external
+validator's argv. Cross-phase evidence requires exactly two documents, fixed
+digest keys with 64-hex values, positive phase/ref state, and the literal
+`UNPROVEN_NO_ADMIN_READ` residual.
+
+CI uses the supported macOS 15 arm64 runner because this contract invokes
+system `/usr/bin/jq`; the workflow verifies that executable and prints its
+version before tests. The Git compatibility path logs and validates its actual
+runner version rather than claiming the shim is Git 2.48.1. Local bare and
+loopback HTTP probes validate refspec parsing and FD3 askpass behavior, but a
+real HTTPS GitHub push remains an explicit first-live proof under owner
+supervision.
+
 The scanner accepts an absolute local Git repository, exact base and candidate
 commit, and activation manifest. It clears Git configuration and network/
 credential mechanisms, reads canonical objects by ID, and applies
@@ -210,10 +290,13 @@ cells are residuals, never positive containment claims. Preflight reports
 fixed-profile execution separately as `sandbox_runtime_capability`; when that
 probe is unavailable, each named fixture proof remains `UNSUPPORTED`.
 
-Phase 1b still requires six distinct UIDs, a protected private-repository
-plan/host, the night-bot account and fine-grained PAT, and explicit owner
-authorization for potentially mutating remote proof. It also requires the
-broker-owned final transform snapshot, publication of only that immutable
-snapshot, and remote readback whose bytes/digest equal the scanned snapshot.
-None of those activation conditions is implemented or implied by a local text
-PASS. Issue #6 cannot close from this package alone.
+Phase 1c still requires six distinct UIDs, a protected private-repository
+plan/host, a dedicated GitHub App installation on exactly one repository, the
+night-bot broker service identity that owns the App key, and explicit owner
+authorization for potentially mutating remote proof. The broker may mint only
+short-lived installation tokens, may create only one fresh
+`night-bot/run-*` branch per accepted request, records
+`rule_suite_result:"UNPROVEN_NO_ADMIN_READ"`, and treats any revoke or
+readback failure as `PUBLISH_UNVERIFIED_INCIDENT`. None of those activation
+conditions is implied by a local text PASS or by the checked-in inactive
+publisher policy.

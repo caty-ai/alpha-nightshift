@@ -26,7 +26,7 @@
 
 1. **ゴール先出し**: 答え（GOALS）が承認されるまで実装しない。未承認 repo は観測のみ（fail-closed）
 2. **完走原則**: 承認待ちで途中停止しない。マージ以外は走り切る。走り切れないものは理由付き HOLD（guard/予算/締切による停止は完走原則に優先する）
-3. **チェリーピック前提**: 1発見 = 1 Issue = 1 branch = 1 draft PR。複数の変更を1つの branch に混ぜない
+3. **チェリーピック前提**: 1発見 = 1 Issue = 1 bot branch。PR 作成・merge は朝の owner 操作として分離し、複数の変更を1つの branch に混ぜない
 4. **precision 優先**: 迷ったら実装しない。確度の低い発見は観察台帳に留める
 5. **証拠駆動**: すべての主張に実測を付ける。完了記録は handbook L1-7 様式
 6. **検品2争点**: ①機能が一切削がれていないか→プラスになっているか ②最小モジュール構成に近づいたか→つけ外しが効くか・一発で理解できるか
@@ -76,7 +76,7 @@
 ## 5. ゴール先出し（GOALS）
 
 - **初夜の成果物**（実装はしない）: ①GOALS 案（UX ゴール＋技術ゴール）②機能マップ ③可動域マップ（シミュ確認可能/実機必須の実測仕分け）
-- Phase 0 では GOALS 案は**夜番 state dir に生成**し、昼に Alpha が通常レーンで `docs/NIGHTSHIFT-GOALS.md` の PR にして翔さん承認（Phase 0 の GitHub 書き込みゼロを崩さない）。Phase 1 以降の GOALS 改訂は夜番の draft PR 可
+- Phase 0 では GOALS 案は**夜番 state dir に生成**し、昼に Alpha が通常レーンで `docs/NIGHTSHIFT-GOALS.md` の PR にして翔さん承認（Phase 0 の GitHub 書き込みゼロを崩さない）。Phase 1 以降も夜番は bot branch 作成までとし、PR は昼の owner 操作とする
 - **GOALS のライフサイクル**: 版番号を持ち、変更は必ず PR（=人間承認）。夜番は現行版との差分だけを見る。未承認 repo は観測のみ
 - リファクタのゴール定義（固定）: **機能を一切削がず、最小モジュール形式へ**（§6）
 
@@ -100,16 +100,16 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 ```
 23:30 dispatcher 起床（MBP 電源接続・スリープ抑止が運用前提）
  → 予算・適格・バックログ確認 → repo/focus 決定（承認済み repo 集合の内側で focus をローテーション）
- → 最新 main から worktree 作成（night/<id> branch）
+ → 最新 main からローカル worktree 作成（公開 ref とは別の一時作業 branch）
  → 観測: 目付擬似デモ（codex）＋機械スキャン＋技術調査（Fable）  〔タイムボックス制・Phase 0 で実測して配分〕
  → findings 台帳照会（dedup・再発判定・rejected 再提案禁止）
  → 合議（再現 or 複数ペルソナ合致）→ 通過分だけ Issue 起票（Why/Done when/触るファイル予測。上限 = レーン数×2/夜）
  → 観測終了時点の残時間からレーン数を逆算 → レーン実行（L2-4 非交差チェック。対象 = 昼の WIP 宣言 ＋ 夜番自身の open PR の実績ファイル集合）:
      実装 → テスト → クロスレビュー → 修正 → 再検証
- → commit ＋ draft PR（§10.4 公開ゲート通過が前提）。予測外ファイルに触れたレーンは「衝突注意」フラグ
+ → commit ＋ fresh `night-bot/run-*` branch 1本の create（§10.4 公開ゲート通過が前提）。PR/merge は朝の owner 操作。予測外ファイルに触れたレーンは「衝突注意」フラグ
 04:30 実装締切（dispatcher が kill → HOLD 化。未完は翌夜継続 or 廃棄）
  → retro（失敗分析 → config/playbook への変更提案 PR。guard パスは §10.6 特別扱い）
- → 繰越 open PR の自動 rebase（衝突したら HOLD 化）
+ → 繰越 bot branch の再利用・自動更新は行わず、衝突または stale は HOLD 化
 06:30 朝ダイジェスト確定（テンプレは必ず生成・Fable 肉付けは予算内のみ）
 朝   翔さん確認（§9 予算内）→ PR 単位チェリーピック → main 適用（翔さんのみ）→ verdict-sync が裁定を台帳へ書き戻し
 ```
@@ -148,13 +148,13 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 原則: **ガードは夜番エージェントの善意に依存しない**。各層が独立に「main 到達・公開漏洩・外部作用・範囲外書き込み」を遮断し、どの1層のバグも他層が受け止める。ガード自身のエラーは全て停止側（fail-closed）。「悪い形の列挙（deny-list）」は採らず、**受理する文法を小さく列挙して外は全部 deny**（alpha-loom #4 実測知見）。
 
 ### 10.1 L1: アイデンティティ層（最優先）
-- 夜番は**専用 GitHub identity（night-bot）**で動く。fine-grained PAT: 対象 repo のみ／contents:write は `night/*` branch のみ（ruleset で制限）／PR・Issue 作成可／**merge 不可・admin 不可・workflow 書き込み不可・delete 不可**
+- 夜番は**専用 GitHub identity（night-bot broker）**で動く。GitHub App は対象 repo のみへ install し、permissions は Metadata:read + Contents:write のみ、ruleset で `night-bot/run-*` の通常 create/update だけを許可する。**merge 不可・admin 不可・workflow 書き込み不可・delete 不可**
 - 対象 repo の main に **server-side branch protection**（PR 必須・force-push 禁止）。夜番のトークンでは main を動かす API 呼び出しが権限エラーになる状態を作る＝ローカル層の全バイパス（`--no-verify`・hooksPath 差し替え・`gh pr merge`・API merge・refspec `HEAD:main`）を remote で無効化する最終防壁
 - オーナー個人のトークン・ssh 鍵・cloud credential は夜番レーンのプロセス環境に**注入しない**（gateway が最小環境で起動）
-- 副次効果: commit/PR の author が night-bot になり、夜番の作為が監査上識別可能
+- 副次効果: branch publication の認証主体が GitHub App installation として監査され、夜番の作為が識別可能
 
 ### 10.2 L2: 実行ゲートウェイ層
-- 夜番レーンから git/gh への唯一の経路は core 同梱の **gateway wrapper**。受理文法（例）: `git push origin night/<id>`（refspec 完全一致）・`gh pr create --draft`・`gh issue create`・読み取り系。列挙外は全 deny＋監査ログ
+- 夜番レーンから git/gh への唯一の経路は core 同梱の **gateway wrapper**。publish は strict request を broker へ渡し、broker が `refs/heads/night-bot/run-YYYYMMDD-NNNN-HEX8` を生成して 1 回だけ create する。列挙外は全 deny＋監査ログ
 - push/PR/Issue 系は gateway 内で L4 公開ゲートを強制通過
 - pre-push hook は dispatcher が `core.hooksPath` で worktree 外から注入（レーンは hooks に書けないまま・設置主体は dispatcher/インストーラ）
 - gateway・guard config・budget 定義への書き込みは L3 で遮断（§10.6）
@@ -221,7 +221,7 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 
 **適格条件**（欠ける repo は観測のみ）:
 1. 1コマンドで回る検証スイートが存在し green（**テスト 0 件・全 skip は不適格**）
-2. main 直結デプロイでない（**branch push・PR 作成が preview deploy 等の外部作用を起こさないことを含めて実査**。LP は wrangler 構成が見えているため Phase 0 で deploy 経路を実査してから書き込み解禁を判断）
+2. main 直結デプロイでない（**bot branch create が preview deploy 等の外部作用を起こさないことを実査**。PR 作成は夜番権限外。LP は wrangler 構成が見えているため Phase 0 で deploy 経路を実査してから書き込み解禁を判断）
 3. 現在時刻に有効な WIP 宣言と非衝突
 4. 公開 repo は secrets ゲート整備済み＋PII 辞書 or 明示 opt-out
 5. テストが外部副作用を持たない（or 隔離実行できる）
@@ -248,7 +248,7 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 | Phase | 対象 | 内容 | ゲート（開始条件） |
 |---|---|---|---|
 | 0 | LP | **GitHub 書き込み完全ゼロ＝credential 不在で仕組み保証**（レーンのプロセス環境に GitHub credential を注入しない。照会が必要な情報はハーネスが取得してファイルで渡す。観測・台帳・null digest・ダイジェスト。GOALS 案は state dir 生成→昼に Alpha が PR 化）・7夜 | 設計承認・レーン環境に書き込み credential が存在しないことのテスト実証・予算メータ稼働 |
-| 1 | LP | L1 解禁・1-2 レーン | **enforcement build 完了**: night-bot identity＋branch protection＋gateway＋公開ゲート稼働、**5席の攻撃経路を test case 化したバイパス E2E が全 deny を実証** |
+| 1 | LP | L1 解禁・1-2 レーン | **enforcement build 完了**: dedicated GitHub App＋branch protection＋gateway/broker＋公開ゲート稼働、**5席の攻撃経路を test case 化したバイパス E2E が全 deny を実証** |
 | 2 | CatyPhone | UX 100% モードで L2-L3・focus ローテーション | Phase 1 KPI 閾値内・CatyPhone 朝予算 cap の翔さん決定 |
 | v0.1 | persona-engine | 生成レーン追加 | 様式ゲート（SFW lint）稼働 |
 | v1 | — | 外部 Issue triage 実行・代替ホスト・container 隔離・repo 追加拡大 | 別途設計 |
@@ -262,8 +262,8 @@ enforcement package を実装した。Phase 0 dispatcher/lane からは呼ばれ
 opt-in かつ inactive であり、全 report の mode は
 `LOCAL_ONLY_REMOTE_UNPROVEN`、write mode は常に false である。gateway と
 broker に Git/GitHub の自由形式 write command、lane 指定 destination ref、
-credential/API path は存在しない。将来の
-`refs/heads/night/YYYYMMDD-NNNN` は broker 生成のみとする。
+credential/API path は存在しない。inactive publisher に実装した
+`refs/heads/night-bot/run-YYYYMMDD-NNNN-HEX8` は broker 生成のみとする。
 
 Phase 1a は、strict grammar/preflight、固定環境での local Git object
 enumeration、pinned gitleaks 8.30.1 stdin scanner、candidate-introduced
@@ -289,14 +289,16 @@ containment 済みとは扱わない。fixed profile の実行可否は
 `sandbox_runtime_capability` として独立に記録し、実行不能時は named
 fixture proof もそれぞれ `UNSUPPORTED` のままにする。
 
-この round では user、account、PAT、protection、ruleset を作成・変更して
-おらず、real GitHub write/negative proof も試行していない。orchestrator
-preflight では private GitHub Free の protection が 403 を返したため、
-Phase 1b activation には protection を支える private-repository plan/host、
-night-bot account、fine-grained PAT、potentially mutating proof への owner
-明示承認が必要である。default-branch negative proof は直前 main tip の
-content-identical descendant を使い、予期せず受理された場合は cleanup
-成功ではなく incident とする。
+この round では user、account、App installation、token、protection、ruleset
+を作成・変更しておらず、real GitHub write/negative proof も試行していない。
+orchestrator preflight では private GitHub Free の protection が 403 を返した
+ため、Phase 1b/1c activation には protection を支える private-repository
+plan/host、night-bot broker identity、GitHub App private key、potentially
+mutating proof への owner 明示承認が必要である。default-branch negative
+proof は直前 main tip の content-identical descendant を使い、予期せず受理
+された場合は cleanup 成功ではなく incident とする。rule-suite endpoint は
+Administration:read を要求するため widening は行わず、
+`rule_suite_result:"UNPROVEN_NO_ADMIN_READ"` を残存リスクとして監査する。
 
 したがって Phase 1 と Issue #6 は未完了である。owner-authorized Phase 1b
 remote proof と protection readback が完了するまで close してはならない。
@@ -316,7 +318,7 @@ remote proof と protection readback が完了するまで close してはなら
 4. dispatcher 常駐の具体（launchd plist・電源設定）・sandbox-exec profile の実装可能範囲 → Phase 1 実装 Issue
 5. KPI 閾値・バックプレッシャー K・繰越 close N の本数値 → Phase 0-1 実測から
 6. 外部 Issue triage の実行設計 → v1
-7. night-bot アカウントの作成と PAT 発行 → **翔さん玉**（Phase 1 前）
+7. night-bot broker identity の作成と GitHub App private key 封印 → **翔さん玉**（Phase 1 前）
 
 ## 17. 決定ログ
 

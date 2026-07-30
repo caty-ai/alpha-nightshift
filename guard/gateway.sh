@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/bin/bash -p
 set -euo pipefail
 
-GUARD_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+GUARD_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 # shellcheck source=guard/common.sh
 . "$GUARD_DIR/common.sh"
 
@@ -52,13 +52,19 @@ gateway_main() {
     scan)
       exec "$GUARD_DIR/broker.sh" scan "$@"
       ;;
+    publish_status)
+      exec "$GUARD_DIR/broker.sh" publish_status "$@"
+      ;;
     validate_text)
       exec "$GUARD_DIR/broker.sh" validate_text "$@"
+      ;;
+    publish_branch)
+      exec "$GUARD_DIR/broker.sh" publish_branch "$@"
       ;;
     proposal)
       gateway_proposal "$@"
       ;;
-    publish|publish_branch|create_draft_pr|create_issue|push|merge|comment|label|api|request|graphql)
+    publish|create_draft_pr|create_issue|push|merge|comment|label|api|request|graphql)
       gateway_remote_denied
       ;;
     *)

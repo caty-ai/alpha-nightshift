@@ -3,9 +3,14 @@ set -euo pipefail
 
 GUARD_MODE=LOCAL_ONLY_REMOTE_UNPROVEN
 export GUARD_MODE
+GUARD_GIT_BIN=/opt/homebrew/Cellar/git/2.48.1/bin/git
+GUARD_GITLEAKS_BIN=/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+GUARD_CURL_BIN=/usr/bin/curl
+GUARD_OPENSSL_BIN=/usr/bin/openssl
+export GUARD_GIT_BIN GUARD_GITLEAKS_BIN GUARD_CURL_BIN GUARD_OPENSSL_BIN
 
 guard_root() {
-  CDPATH= cd -- "$(dirname "$0")/.." && pwd -P
+  CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P
 }
 
 guard_fail() {
@@ -58,7 +63,7 @@ guard_validate_absolute_path() {
   guard_parent=${guard_path%/*}
   [ -n "$guard_parent" ] || guard_parent=/
   guard_name=${guard_path##*/}
-  guard_resolved_parent=$(CDPATH= cd -- "$guard_parent" 2>/dev/null && pwd -P) ||
+  guard_resolved_parent=$(CDPATH='' cd -- "$guard_parent" 2>/dev/null && pwd -P) ||
     { guard_fail "path parent cannot be resolved"; return 1; }
   guard_resolved=$guard_resolved_parent
   [ -z "$guard_name" ] || guard_resolved="$guard_resolved_parent/$guard_name"
@@ -71,7 +76,7 @@ guard_validate_absolute_path() {
     guard_resolved=$guard_full_resolved
   fi
   [ "$guard_resolved" = "$guard_path" ] ||
-    { guard_fail "path contains an alias or symlink"; return 1; }
+    { guard_fail "path contains an alias or symlink: $guard_path"; return 1; }
 }
 
 guard_validate_repo_id() {
@@ -98,6 +103,53 @@ guard_validate_sha() {
   LC_ALL=C /usr/bin/printf '%s\n' "$guard_sha" |
     /usr/bin/grep -E '^[a-f0-9]{40}([a-f0-9]{24})?$' >/dev/null ||
     { guard_fail "invalid object id"; return 1; }
+}
+
+guard_validate_nonzero_sha() {
+  guard_sha=$1
+  guard_validate_sha "$guard_sha" || return 1
+  case "$guard_sha" in
+    0000000000000000000000000000000000000000|\
+    0000000000000000000000000000000000000000000000000000000000000000)
+      guard_fail "all-zero object id is forbidden"
+      return 1
+      ;;
+  esac
+}
+
+guard_validate_positive_integer() {
+  guard_integer=$1
+  LC_ALL=C /usr/bin/printf '%s\n' "$guard_integer" |
+    /usr/bin/grep -E '^[1-9][0-9]*$' >/dev/null ||
+    { guard_fail "positive integer is required"; return 1; }
+}
+
+guard_json_sha256() {
+  guard_json_path=$1
+  guard_validate_absolute_path "$guard_json_path" file || return 1
+  /usr/bin/jq -cS . "$guard_json_path" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{print $1}'
+}
+
+guard_git_dir_for_repo() {
+  guard_repo=$1
+  guard_validate_absolute_path "$guard_repo" dir || return 1
+  if [ -d "$guard_repo/.git" ]; then
+    /usr/bin/printf '%s\n' "$guard_repo/.git"
+    return 0
+  fi
+  if [ -f "$guard_repo/.git" ]; then
+    guard_gitdir_line=$(/usr/bin/sed -n '1p' "$guard_repo/.git")
+    case "$guard_gitdir_line" in
+      "gitdir: "/*)
+        /usr/bin/printf '%s\n' "${guard_gitdir_line#gitdir: }"
+        return 0
+        ;;
+    esac
+  fi
+  guard_fail "repository has no explicit Git directory"
+  return 1
 }
 
 guard_json_no_duplicate_paths() {
@@ -142,7 +194,7 @@ guard_hardened_git() {
     GIT_ASKPASS=/usr/bin/false \
     SSH_ASKPASS=/usr/bin/false \
     GIT_NO_REPLACE_OBJECTS=1 \
-    /opt/homebrew/Cellar/git/2.48.1/bin/git \
+    "$GUARD_GIT_BIN" \
       --no-pager \
       --git-dir="$guard_git_dir" \
       -c core.hooksPath=/dev/null \

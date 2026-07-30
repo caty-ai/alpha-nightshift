@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  guard:
+    # macOS 15 is the supported arm64 runner that provides the contract's
+    # fixed system jq location at /usr/bin/jq.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ShellCheck
+        run: brew install shellcheck
+
+      - name: Install pinned gitleaks path
+        run: |
+          curl -L \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz \
+            -o /tmp/gitleaks.tar.gz
+          mkdir -p /tmp/gitleaks
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks
+          sudo install -d /opt/homebrew/Cellar/gitleaks/8.30.1/bin
+          sudo install -m 0755 /tmp/gitleaks/gitleaks /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+
+      - name: Install Git compatibility path shim
+        run: |
+          sudo install -d /opt/homebrew/Cellar/git/2.48.1/bin
+          sudo ln -sf "$(command -v git)" /opt/homebrew/Cellar/git/2.48.1/bin/git
+          actual_version=$(/opt/homebrew/Cellar/git/2.48.1/bin/git --version)
+          echo "Compatibility shim actual ${actual_version}"
+          printf '%s\n' "$actual_version" |
+            grep -E '^git version [0-9]+(\.[0-9]+){1,3}([.-].*| .*)?$'
+
+      - name: Verify system jq contract
+        run: |
+          test -x /usr/bin/jq
+          /usr/bin/jq --version
+
+      - name: Bash syntax
+        run: bash -n guard/*.sh tests/*.sh
+
+      - name: ShellCheck changed publisher surface
+        run: |
+          shellcheck \
+            guard/common.sh \
+            guard/broker.sh \
+            guard/gateway.sh \
+            guard/publisher.sh \
+            guard/publisher-lib.sh \
+            guard/publisher-askpass.sh \
+            guard/remote-preflight.sh \
+            tests/test_guard_publisher.sh
+
+      - name: Tests
+        run: /bin/bash tests/run_tests.sh
+
+      - name: Diff-scoped gitleaks
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base=$PR_BASE_SHA
+          else
+            base=$PUSH_BEFORE_SHA
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              git fetch origin main
+              base=$(git merge-base origin/main HEAD)
+              ;;
+          esac
+          /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks git \
+            --no-banner \
+            --redact \
+            --log-opts="$base..HEAD" \
+            .
+
+      - name: Diff whitespace
+        run: |
+          git fetch origin main
+          base=$(git merge-base origin/main HEAD)
+          git diff --check "$base"..HEAD

@@ -1,0 +1,55 @@
+{
+  "schema": "alpha-nightshift/publisher-policy/v1",
+  "mode": "INACTIVE",
+  "write_mode": false,
+  "repo_id": "shojikumaru/alpha-nightshift",
+  "repository_id": 123,
+  "app_id": 0,
+  "installation_id": 0,
+  "api_base": "https://api.github.com",
+  "git_remote_base": "https://github.com",
+  "private_key_path": null,
+  "private_key_sha256": null,
+  "audit_dir": null,
+  "audit_dir_identity_sha256": null,
+  "scan_manifest_path": null,
+  "publisher_euid": 0,
+  "runtime": {
+    "tools": {
+      "bash": {"sha256": null, "uid": null, "mode": null},
+      "curl": {"sha256": null, "uid": null, "mode": null},
+      "git": {"sha256": null, "uid": null, "mode": null},
+      "gitleaks": {"sha256": null, "uid": null, "mode": null},
+      "jq": {"sha256": null, "uid": null, "mode": null},
+      "openssl": {"sha256": null, "uid": null, "mode": null}
+    },
+    "programs": {
+      "askpass": {"sha256": null, "uid": null, "mode": null},
+      "common": {"sha256": null, "uid": null, "mode": null},
+      "publisher": {"sha256": null, "uid": null, "mode": null},
+      "publisher_lib": {"sha256": null, "uid": null, "mode": null},
+      "remote_preflight": {"sha256": null, "uid": null, "mode": null},
+      "scan": {"sha256": null, "uid": null, "mode": null}
+    }
+  },
+  "rulesets": {
+    "ids": [],
+    "main_branch": "main",
+    "generated_branch_prefix": "night-bot/run-",
+    "expected": {
+      "definitions_sha256": null,
+      "main_effective_sha256": null,
+      "generated_effective_sha256": null
+    }
+  },
+  "expected": {
+    "repository_private": true,
+    "repository_selection": "selected",
+    "permissions": {
+      "metadata": "read",
+      "contents": "write"
+    },
+    "tags_count": 0,
+    "releases_count": 0
+  }
+}
