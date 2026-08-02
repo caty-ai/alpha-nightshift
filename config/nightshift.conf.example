@@ -17,12 +17,23 @@ NIGHT_BOT_LOGIN='night-bot'
 VERDICT_GH_BIN='gh'
 
 # Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
-# isolated lane HOME. Metsuke requires the Codex auth/config directory below.
+# isolated lane HOME. Metsuke and review seats require their matching CLI
+# auth/config directory below.
 # Sensitive basenames such as .ssh, .config, .git-credentials, .netrc, .aws,
 # .gnupg, and .config/gh are refused even when configured.
 # This retains model CLI authentication while lane-env writes a
 # credential-neutral Git configuration. Do not add GitHub credential paths.
+# Add $HOME/.claude here when opting into the experimental Opus seat.
 LANE_HOME_LINKS="$HOME/.codex:$HOME/.kimi-code:$HOME/.grok"
+
+# Shared model adapter binaries/config. Lane commands must embed the selected
+# values because lane_exec does not inherit shell variables from this file.
+REVIEW_CODEX_BIN='codex'
+REVIEW_KIMI_BIN="$HOME/.kimi-code/bin/kimi"
+REVIEW_GROK_BIN="$HOME/.grok/bin/grok"
+REVIEW_OPUS_ENABLED=0
+REVIEW_CLAUDE_BIN="$HOME/.claude/local/claude"
+REVIEW_CLAUDE_CONFIG_DIR="$HOME/.claude"
 
 # Metsuke UX observation lane. These values are embedded in LANE_CMD_1 because
 # lane_exec intentionally starts with env -i and does not inherit config vars.
@@ -32,8 +43,14 @@ METSUKE_LP_CHECKOUT='/absolute/path/to/caty-talk-LP'
 METSUKE_PORT=4173
 METSUKE_PERSONAS='beginner expert impatient'
 PLAYWRIGHT_BROWSERS_PATH_REAL='/absolute/path/to/ms-playwright'
-METSUKE_CODEX_BIN='codex'
-# LANE_CMD_1="METSUKE_TARGET_URL='$METSUKE_TARGET_URL' METSUKE_LP_CHECKOUT='$METSUKE_LP_CHECKOUT' METSUKE_PORT='$METSUKE_PORT' METSUKE_PERSONAS='$METSUKE_PERSONAS' PLAYWRIGHT_BROWSERS_PATH_REAL='$PLAYWRIGHT_BROWSERS_PATH_REAL' METSUKE_CODEX_BIN='$METSUKE_CODEX_BIN' /bin/bash '$REPO_ROOT/lanes/metsuke/run.sh'"
+METSUKE_SEAT='codex'
+METSUKE_CODEX_BIN="$REVIEW_CODEX_BIN"
+# Supported seats are codex, kimi, grok, and experimental opus. GLM is excluded
+# because its single-shot digest adapter cannot drive Metsuke persona flows.
+# To rotate models across nights, let the operator choose METSUKE_SEAT using the
+# review lane's #28 select-mode result; Metsuke intentionally has no second
+# rotation engine. Opus also requires REVIEW_OPUS_ENABLED=1.
+# LANE_CMD_1="METSUKE_TARGET_URL='$METSUKE_TARGET_URL' METSUKE_LP_CHECKOUT='$METSUKE_LP_CHECKOUT' METSUKE_PORT='$METSUKE_PORT' METSUKE_PERSONAS='$METSUKE_PERSONAS' PLAYWRIGHT_BROWSERS_PATH_REAL='$PLAYWRIGHT_BROWSERS_PATH_REAL' METSUKE_SEAT='$METSUKE_SEAT' METSUKE_CODEX_BIN='$METSUKE_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' /bin/bash '$REPO_ROOT/lanes/metsuke/run.sh'"
 
 # Multimodel blind review observation lane. Opus is experimental and disabled
 # unless REVIEW_OPUS_ENABLED=1. GLM reads its API key from a protected file;
@@ -42,13 +59,7 @@ REVIEW_TARGET_SOURCE='/absolute/path/to/git-checkout'
 REVIEW_SEAT_ROSTER='codex,kimi,glm,grok'
 REVIEW_SEATS_PER_NIGHT=3
 REVIEW_SEAT_TIMEOUT_SEC=900
-REVIEW_OPUS_ENABLED=0
-REVIEW_CODEX_BIN='codex'
-REVIEW_KIMI_BIN="$HOME/.kimi-code/bin/kimi"
-REVIEW_GROK_BIN="$HOME/.grok/bin/grok"
 REVIEW_CURL_BIN='/usr/bin/curl'
-REVIEW_CLAUDE_BIN="$HOME/.claude/local/claude"
-REVIEW_CLAUDE_CONFIG_DIR="$HOME/.claude"
 GLM_KEY_FILE='/absolute/path/to/glm-api-key'
 REVIEW_GLM_MAX_TOKENS=4096
 # LANE_CMD_2="REVIEW_TARGET_SOURCE='$REVIEW_TARGET_SOURCE' REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/run.sh'"
