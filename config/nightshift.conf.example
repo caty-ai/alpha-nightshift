@@ -20,9 +20,9 @@ VERDICT_GH_BIN='gh'
 # isolated lane HOME. Metsuke requires the Codex auth/config directory below.
 # Sensitive basenames such as .ssh, .config, .git-credentials, .netrc, .aws,
 # .gnupg, and .config/gh are refused even when configured.
-# This retains Codex authentication while lane-env writes a credential-neutral
-# Git configuration and exposes no GitHub CLI credentials.
-LANE_HOME_LINKS="$HOME/.codex"
+# This retains model CLI authentication while lane-env writes a
+# credential-neutral Git configuration. Do not add GitHub credential paths.
+LANE_HOME_LINKS="$HOME/.codex:$HOME/.kimi-code:$HOME/.grok"
 
 # Metsuke UX observation lane. These values are embedded in LANE_CMD_1 because
 # lane_exec intentionally starts with env -i and does not inherit config vars.
@@ -34,3 +34,21 @@ METSUKE_PERSONAS='beginner expert impatient'
 PLAYWRIGHT_BROWSERS_PATH_REAL='/absolute/path/to/ms-playwright'
 METSUKE_CODEX_BIN='codex'
 # LANE_CMD_1="METSUKE_TARGET_URL='$METSUKE_TARGET_URL' METSUKE_LP_CHECKOUT='$METSUKE_LP_CHECKOUT' METSUKE_PORT='$METSUKE_PORT' METSUKE_PERSONAS='$METSUKE_PERSONAS' PLAYWRIGHT_BROWSERS_PATH_REAL='$PLAYWRIGHT_BROWSERS_PATH_REAL' METSUKE_CODEX_BIN='$METSUKE_CODEX_BIN' /bin/bash '$REPO_ROOT/lanes/metsuke/run.sh'"
+
+# Multimodel blind review observation lane. Opus is experimental and disabled
+# unless REVIEW_OPUS_ENABLED=1. GLM reads its API key from a protected file;
+# the key is never passed as an environment variable or command argument.
+REVIEW_TARGET_SOURCE='/absolute/path/to/git-checkout'
+REVIEW_SEAT_ROSTER='codex,kimi,glm,grok'
+REVIEW_SEATS_PER_NIGHT=3
+REVIEW_SEAT_TIMEOUT_SEC=900
+REVIEW_OPUS_ENABLED=0
+REVIEW_CODEX_BIN='codex'
+REVIEW_KIMI_BIN="$HOME/.kimi-code/bin/kimi"
+REVIEW_GROK_BIN="$HOME/.grok/bin/grok"
+REVIEW_CURL_BIN='/usr/bin/curl'
+REVIEW_CLAUDE_BIN="$HOME/.claude/local/claude"
+REVIEW_CLAUDE_CONFIG_DIR="$HOME/.claude"
+GLM_KEY_FILE='/absolute/path/to/glm-api-key'
+REVIEW_GLM_MAX_TOKENS=4096
+# LANE_CMD_2="REVIEW_TARGET_SOURCE='$REVIEW_TARGET_SOURCE' REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/run.sh'"

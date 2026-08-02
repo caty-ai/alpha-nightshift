@@ -65,6 +65,24 @@ sandboxing is planned for Phase 1.
 Copy `config/nightshift.conf.example` to `config/nightshift.conf` and adjust the
 numbered `LANE_CMD_n` values. Runtime state is stored under `state/` by default.
 
+### Multimodel review observation lane
+
+`lanes/review/run.sh` clones an absolute local Git checkout into its lane state,
+deterministically assigns one of the ten DESIGN lenses and a rotating subset of
+configured Codex/Kimi/GLM/Grok seats, then runs the seats serially and blindly.
+Opus is an explicit experimental opt-in. Each adapter is independently
+timeboxed; malformed model JSONL is rejected and trusted finding identity,
+persona, date, and evidence are reconstructed by the lane. The lane performs no
+GitHub operations. See the commented `LANE_CMD_2` in
+`config/nightshift.conf.example` for the complete host configuration.
+Each seat receives a separate HOME containing only its own available auth
+symlink; this narrows cross-seat credential exposure, but Phase 0 has no OS
+sandbox and host files readable by the user process remain readable. If a
+later infrastructure check fails, findings already validated against the clean
+checkout are still published and ingested. The review-lane evidence manifest
+covers files only and is intentionally standalone from the `lib/evidence.sh`
+freeze-capture workflow.
+
 `LANE_HOME_LINKS` is empty by default. Any opted-in path is reachable
 **read-write** through its lane HOME symlink; linking it grants the lane the
 same access. Before linking, the dispatcher resolves and case-normalizes the
