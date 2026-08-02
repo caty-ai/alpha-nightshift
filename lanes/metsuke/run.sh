@@ -3,12 +3,20 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+ADAPTER_ROOT="$REPO_ROOT/lanes/review/adapters"
 # shellcheck source=lib/evidence.sh
 . "$REPO_ROOT/lib/evidence.sh"
 
 METSUKE_PORT=${METSUKE_PORT:-4173}
 METSUKE_PERSONAS=${METSUKE_PERSONAS:-"beginner expert impatient"}
+METSUKE_SEAT=${METSUKE_SEAT:-codex}
 METSUKE_CODEX_BIN=${METSUKE_CODEX_BIN:-codex}
+REVIEW_KIMI_BIN=${REVIEW_KIMI_BIN:-"$HOME/.kimi-code/bin/kimi"}
+REVIEW_GROK_BIN=${REVIEW_GROK_BIN:-"$HOME/.grok/bin/grok"}
+REVIEW_OPUS_ENABLED=${REVIEW_OPUS_ENABLED:-0}
+REVIEW_CLAUDE_BIN=${REVIEW_CLAUDE_BIN:-"$HOME/.claude/local/claude"}
+REVIEW_CLAUDE_CONFIG_DIR=${REVIEW_CLAUDE_CONFIG_DIR:-"$HOME/.claude"}
+METSUKE_SEAT_HOME=
 T_SERVE=0
 T_CAPTURE=0
 T_ANALYSIS=0
@@ -165,6 +173,7 @@ normalize_finding() {
   local candidate_line=$1
   local persona=$2
   local sequence=$3
+  local persona_with_seat
   local evidence_json
   local target
   local finding_id
@@ -177,9 +186,10 @@ normalize_finding() {
     "$CAPTURE_TRUST_DIR/manifest.json" \
     "$CAPTURE_TRUST_DIR/digests.json" || return 1
   finding_id=$(printf 'mk-%s-%03d' "$NIGHT_ID" "$sequence")
+  persona_with_seat="$persona@seat:$METSUKE_SEAT"
   printf '%s\n' "$VALIDATED_CANDIDATE" | jq -c \
     --arg id "$finding_id" \
-    --arg persona "$persona" \
+    --arg persona "$persona_with_seat" \
     --arg date "$NIGHT_ID" \
     '{
       id: $id,
@@ -379,21 +389,160 @@ prepare_codex_work_dir() {
   mktemp -d "$codex_root/$label.XXXXXX"
 }
 
-run_codex_prompt() {
+validate_metsuke_seat() {
+  case "$METSUKE_SEAT" in
+    codex|kimi|grok) ;;
+    opus)
+      if [ "$REVIEW_OPUS_ENABLED" != 1 ]; then
+        log "METSUKE_SEAT=opus requires REVIEW_OPUS_ENABLED=1"
+        return 1
+      fi
+      ;;
+    glm)
+      log "METSUKE_SEAT=glm is unsupported: the single-shot digest adapter cannot drive Metsuke persona flows"
+      return 1
+      ;;
+    *)
+      log "unknown METSUKE_SEAT '$METSUKE_SEAT'; allowed values: codex, kimi, grok, opus"
+      return 1
+      ;;
+  esac
+}
+
+prepare_metsuke_seat_home() {
+  local seat_home_root="$LANE_DIR/metsuke-homes"
+  local seat_home="$seat_home_root/$METSUKE_SEAT"
+  local seat_auth_name
+  local seat_auth_target
+
+  [ "$METSUKE_SEAT" != codex ] || return 0
+  [ -d "$LANE_DIR/home" ] && [ ! -L "$LANE_DIR/home" ] || {
+    log "unsafe lane HOME refused: $LANE_DIR/home"
+    return 1
+  }
+  if [ -L "$seat_home_root" ] ||
+    { [ -e "$seat_home_root" ] && [ ! -d "$seat_home_root" ]; }; then
+    log "unsafe Metsuke seat HOME root refused: $seat_home_root"
+    return 1
+  fi
+  mkdir -p "$seat_home_root" || return 1
+  [ ! -e "$seat_home" ] && [ ! -L "$seat_home" ] || {
+    log "Metsuke seat HOME already exists: $seat_home"
+    return 1
+  }
+  mkdir "$seat_home" || return 1
+  case "$METSUKE_SEAT" in
+    kimi) seat_auth_name=.kimi-code ;;
+    grok) seat_auth_name=.grok ;;
+    opus) seat_auth_name=.claude ;;
+    *) return 1 ;;
+  esac
+  if [ -L "$LANE_DIR/home/$seat_auth_name" ]; then
+    seat_auth_target=$(readlink "$LANE_DIR/home/$seat_auth_name") || return 1
+    [ -n "$seat_auth_target" ] || return 1
+    case "$seat_auth_target" in
+      /*) ;;
+      *) seat_auth_target="$LANE_DIR/home/$seat_auth_target" ;;
+    esac
+    ln -s "$seat_auth_target" "$seat_home/$seat_auth_name" || return 1
+  fi
+  METSUKE_SEAT_HOME=$seat_home
+}
+
+clear_metsuke_seat_homes() {
+  local lane_canonical
+  local seat_home_root
+
+  [ -d "$LANE_DIR" ] && [ ! -L "$LANE_DIR" ] || {
+    log "unsafe lane directory refused: $LANE_DIR"
+    return 1
+  }
+  lane_canonical=$(cd -P "$LANE_DIR" && pwd -P) || return 1
+  seat_home_root="$lane_canonical/metsuke-homes"
+  case "$seat_home_root" in
+    "$lane_canonical"/*) ;;
+    *)
+      log "refusing to clean Metsuke seat HOME root outside the lane directory"
+      return 1
+      ;;
+  esac
+  if [ -L "$seat_home_root" ] ||
+    { [ -e "$seat_home_root" ] && [ ! -d "$seat_home_root" ]; }; then
+    log "unsafe Metsuke seat HOME root refused: $seat_home_root"
+    return 1
+  fi
+  rm -rf "$seat_home_root"
+}
+
+select_persona_findings_source() {
+  local persona_output=$1
+  local persona_work_dir=$2
+  local adapter_candidates="$persona_work_dir/candidates.jsonl"
+
+  if [ -L "$persona_output" ] ||
+    { [ -e "$persona_output" ] && [ ! -f "$persona_output" ]; }; then
+    return 1
+  fi
+  if [ -L "$adapter_candidates" ] ||
+    { [ -e "$adapter_candidates" ] && [ ! -f "$adapter_candidates" ]; }; then
+    return 1
+  fi
+  if [ -s "$persona_output" ]; then
+    printf '%s\n' "$persona_output"
+    return 0
+  fi
+  if [ "$METSUKE_SEAT" != codex ] && [ -s "$adapter_candidates" ]; then
+    printf '%s\n' "$adapter_candidates"
+    return 0
+  fi
+  if [ -f "$persona_output" ]; then
+    printf '%s\n' "$persona_output"
+    return 0
+  fi
+  return 1
+}
+
+run_model_prompt() {
   local work_dir=$1
   local prompt_path=$2
-  (
-    cd "$work_dir"
-    "$METSUKE_CODEX_BIN" exec \
-      --ignore-user-config \
-      --ignore-rules \
-      --disable multi_agent \
-      --profile sol \
-      --full-auto \
-      --skip-git-repo-check \
-      --ephemeral \
-      - < "$prompt_path"
-  )
+  local adapter="$ADAPTER_ROOT/$METSUKE_SEAT.sh"
+  case "$METSUKE_SEAT" in
+    codex)
+      (
+        cd "$work_dir"
+        "$METSUKE_CODEX_BIN" exec \
+          --ignore-user-config \
+          --ignore-rules \
+          --disable multi_agent \
+          --profile sol \
+          --full-auto \
+          --skip-git-repo-check \
+          --ephemeral \
+          - < "$prompt_path"
+      )
+      ;;
+    kimi)
+      /usr/bin/env -i PATH="$PATH" HOME="$METSUKE_SEAT_HOME" \
+        TMPDIR="$LANE_DIR/tmp" LANG="${LANG:-C}" TERM=dumb \
+        REVIEW_KIMI_BIN="$REVIEW_KIMI_BIN" \
+        /bin/bash "$adapter" "$prompt_path" "$work_dir" "$work_dir"
+      ;;
+    grok)
+      /usr/bin/env -i PATH="$PATH" HOME="$METSUKE_SEAT_HOME" \
+        TMPDIR="$LANE_DIR/tmp" LANG="${LANG:-C}" TERM=dumb \
+        REVIEW_GROK_BIN="$REVIEW_GROK_BIN" \
+        /bin/bash "$adapter" "$prompt_path" "$work_dir" "$work_dir"
+      ;;
+    opus)
+      /usr/bin/env -i PATH="$PATH" HOME="$METSUKE_SEAT_HOME" \
+        TMPDIR="$LANE_DIR/tmp" LANG="${LANG:-C}" TERM=dumb \
+        REVIEW_CLAUDE_BIN="$REVIEW_CLAUDE_BIN" \
+        REVIEW_CLAUDE_CONFIG_DIR="$REVIEW_CLAUDE_CONFIG_DIR" \
+        REVIEW_OPUS_ENABLED=1 REVIEW_OPUS_WRITE_ENABLED=1 \
+        /bin/bash "$adapter" "$prompt_path" "$work_dir" "$work_dir"
+      ;;
+    *) return 2 ;;
+  esac
 }
 
 goals_set_complete() {
@@ -621,6 +770,7 @@ run_lane() {
   local persona_output
   local persona_prompt
   local persona_rc
+  local persona_input
   local persona_candidates
   local persona_valid
   local candidate_line
@@ -636,10 +786,12 @@ run_lane() {
 
   LANE_DIR=${LANE_DIR:?LANE_DIR is required}
   NIGHT_ID=${NIGHT_ID:?NIGHT_ID is required}
+  validate_metsuke_seat || return 1
   if [ -z "${STATE_DIR-}" ]; then
     STATE_DIR=$(cd "$LANE_DIR/../../.." && pwd)
   fi
   export LANE_DIR NIGHT_ID STATE_DIR
+  clear_metsuke_seat_homes || return 1
   goals_dir="$STATE_DIR/goals"
   PERSONA_FAILURES_FILE="$LANE_DIR/.persona-failures.jsonl"
   CAPTURE_TRUST_DIR="$LANE_DIR/capture-trust"
@@ -650,6 +802,7 @@ run_lane() {
   trap 'on_exit $?' EXIT
 
   evidence_prepare_dir
+  prepare_metsuke_seat_home || return 1
 
   phase_started=$(date '+%s')
   if [ -n "${METSUKE_TARGET_URL:-}" ]; then
@@ -736,14 +889,19 @@ run_lane() {
       "$(evidence_dir_path)" \
       "$persona_output" > "$persona_prompt"
     persona_rc=0
-    run_codex_prompt "$persona_work_dir" "$persona_prompt" || persona_rc=$?
+    run_model_prompt "$persona_work_dir" "$persona_prompt" || persona_rc=$?
     if ! evidence_verify_frozen_capture "$CAPTURE_TRUST_DIR"; then
       ANALYSIS_STATUS=failed
       T_ANALYSIS=$(( $(date '+%s') - phase_started ))
       log "captured manifest/evidence changed during persona analysis; lane is failing closed"
       return 1
     fi
-    if [ "$persona_rc" -ne 0 ] || [ ! -f "$persona_output" ]; then
+    persona_input=
+    if [ "$persona_rc" -eq 0 ]; then
+      persona_input=$(select_persona_findings_source \
+        "$persona_output" "$persona_work_dir") || persona_input=
+    fi
+    if [ "$persona_rc" -ne 0 ] || [ -z "$persona_input" ]; then
       log "persona analysis failed for $persona (exit=$persona_rc)"
       record_persona_failure "$persona"
       PERSONAS_FAILED=$((PERSONAS_FAILED + 1))
@@ -768,7 +926,7 @@ run_lane() {
         INVALID_FINDINGS=$((INVALID_FINDINGS + 1))
         log "rejected malformed, hedged, invented-target, cross-step, or untrusted finding from $persona"
       fi
-    done < "$persona_output"
+    done < "$persona_input"
     if [ "$persona_candidates" -gt 0 ] && [ "$persona_valid" -eq 0 ]; then
       log "persona $persona produced only invalid findings"
       record_persona_failure "$persona"
@@ -820,7 +978,7 @@ run_lane() {
           "$staged_feature_map_path" \
           "$staged_range_map_path" > "$goals_prompt"
         goals_rc=0
-        run_codex_prompt "$goals_work_dir" "$goals_prompt" || goals_rc=$?
+        run_model_prompt "$goals_work_dir" "$goals_prompt" || goals_rc=$?
         if ! evidence_verify_frozen_capture "$CAPTURE_TRUST_DIR"; then
           GOALS_FAILED=true
           GOALS_STATUS=failed

@@ -191,9 +191,16 @@ printf '%s\n' \
   'for required in "--ignore-user-config" "--ignore-rules" "--disable multi_agent" "--profile sol" "--full-auto" "--skip-git-repo-check" "--ephemeral"; do' \
   '  case "$args" in *" $required "*) ;; *) exit 81 ;; esac' \
   'done' \
+  'if [ -n "${FAKE_CODEX_ARGV_FILE:-}" ] && [ ! -e "$FAKE_CODEX_ARGV_FILE" ]; then' \
+  '  printf "%s\n" "$@" > "$FAKE_CODEX_ARGV_FILE"' \
+  '  pwd > "$FAKE_CODEX_CWD_FILE"' \
+  'fi' \
   'prompt=$(mktemp "${TMPDIR:-/tmp}/fake-codex.XXXXXX")' \
   'trap '\''rm -f "$prompt"'\'' EXIT' \
   'cat > "$prompt"' \
+  'if [ -n "${FAKE_CODEX_STDIN_FILE:-}" ] && [ ! -e "$FAKE_CODEX_STDIN_FILE" ]; then' \
+  '  cp "$prompt" "$FAKE_CODEX_STDIN_FILE"' \
+  'fi' \
   'output=$(sed -n "s/^OUTPUT_PATH: //p" "$prompt" | sed -n "1p")' \
   'lane_dir=$(cd "$PWD/../.." && pwd)' \
   'if [ -n "$output" ]; then' \
@@ -254,6 +261,43 @@ printf '%s\n' \
   '  printf "%s\n" "# generated ${marker}" > "$destination"' \
   'done' \
   > "$fake_bin/codex"
+
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/bash' \
+  'set -euo pipefail' \
+  '[ "$#" -eq 6 ]' \
+  '[ "$1" = -p ]' \
+  '[ "$3" = -m ] && [ "$4" = kimi-code/k3 ]' \
+  '[ "$5" = --output-format ] && [ "$6" = text ]' \
+  'prompt=$2' \
+  'mode=$(basename "$0" | sed "s/^kimi-//")' \
+  'case "$mode" in stdout-only|file-priority) ;; *) mode=write-output ;; esac' \
+  'output=$(printf "%s\n" "$prompt" | sed -n "s/^OUTPUT_PATH: //p" | sed -n "1p")' \
+  'if [ -n "$output" ]; then' \
+  '  evidence=$(printf "%s\n" "$prompt" | sed -n "s/^EVIDENCE_DIR: //p" | sed -n "1p")' \
+  '  [ -n "$evidence" ]' \
+  '  printf "%s\n" "$HOME" > "$(dirname "$output")/seen-home.txt"' \
+  '  case "$mode" in' \
+  '    stdout-only)' \
+  '      printf "%s\n" "{\"target\":\"hero/cta\",\"symptom\":\"CTA text is visible from stdout only\",\"interpretation\":\"the persona cannot quickly connect it to value\",\"confirm_cost\":\"即断\",\"evidence\":[\"evidence/proof.txt\"]}"' \
+  '      ;;' \
+  '    file-priority)' \
+  '      printf "%s\n" "{\"target\":\"hero/cta\",\"symptom\":\"CTA text is visible from OUTPUT_PATH\",\"interpretation\":\"the persona cannot quickly connect it to value\",\"confirm_cost\":\"即断\",\"evidence\":[\"evidence/proof.txt\"]}" > "$output"' \
+  '      printf "%s\n" "{\"target\":\"hero/cta\",\"symptom\":\"CTA text is visible from stdout alternative\",\"interpretation\":\"the persona cannot quickly connect it to value\",\"confirm_cost\":\"即断\",\"evidence\":[\"evidence/proof.txt\"]}"' \
+  '      ;;' \
+  '    *)' \
+  '      printf "%s\n" "{\"target\":\"hero/cta\",\"symptom\":\"CTA text is visible\",\"interpretation\":\"the persona cannot quickly connect it to value\",\"confirm_cost\":\"即断\",\"evidence\":[\"evidence/proof.txt\"]}" > "$output"' \
+  '      ;;' \
+  '  esac' \
+  'else' \
+  '  for marker in GOALS_OUTPUT_PATH FEATURE_MAP_OUTPUT_PATH RANGE_MAP_OUTPUT_PATH; do' \
+  '    destination=$(printf "%s\n" "$prompt" | sed -n "s/^${marker}: //p" | sed -n "1p")' \
+  '    [ -n "$destination" ]' \
+  '    printf "%s\n" "# generated ${marker}" > "$destination"' \
+  '  done' \
+  'fi' \
+  > "$fake_bin/kimi"
 
 # shellcheck disable=SC2016
 printf '%s\n' \
@@ -350,12 +394,15 @@ printf '%s\n' \
 chmod +x \
   "$fake_bin/node" \
   "$fake_bin/codex" \
+  "$fake_bin/kimi" \
   "$fake_bin/mv" \
   "$fake_bin/npm" \
   "$fake_bin/lsof" \
   "$fake_bin/curl" \
   "$fake_bin/ps" \
   "$fake_bin/rmdir"
+ln -s kimi "$fake_bin/kimi-stdout-only"
+ln -s kimi "$fake_bin/kimi-file-priority"
 
 if [ ! -d "$PLAYWRIGHT_MARKER" ]; then
   mkdir -p "$PLAYWRIGHT_MARKER"
@@ -410,6 +457,9 @@ run_lane_case() {
     FAKE_NO_METADATA_MARKER="$CASE_LANE/no-metadata-file" \
     FAKE_RMDIR_FAIL="$rmdir_fail" \
     FAKE_BASELINE_ANCHOR_PID="$$" \
+    FAKE_CODEX_ARGV_FILE="$CASE_LANE/codex-argv.txt" \
+    FAKE_CODEX_CWD_FILE="$CASE_LANE/codex-cwd.txt" \
+    FAKE_CODEX_STDIN_FILE="$CASE_LANE/codex-stdin.txt" \
     /bin/bash "$RUN_SH" >"$CASE_LANE/stdout" 2>"$CASE_LANE/stderr"
   CASE_RC=$?
   set -e
@@ -417,6 +467,28 @@ run_lane_case() {
 
 run_lane_case success
 [ "$CASE_RC" -eq 0 ] || fail "successful stubbed lane failed"
+printf '%s\n' \
+  exec \
+  --ignore-user-config \
+  --ignore-rules \
+  --disable \
+  multi_agent \
+  --profile \
+  sol \
+  --full-auto \
+  --skip-git-repo-check \
+  --ephemeral \
+  - \
+  > "$TEST_TMP/expected-codex-argv.txt"
+cmp -s "$TEST_TMP/expected-codex-argv.txt" "$CASE_LANE/codex-argv.txt" ||
+  fail "default seat Codex argv changed"
+codex_first_cwd=$(sed -n '1p' "$CASE_LANE/codex-cwd.txt")
+codex_persona_dir=$(find "$CASE_LANE/codex-work" -maxdepth 1 -type d \
+  -name 'persona-beginner.*' | sed -n '1p')
+[ -n "$codex_persona_dir" ] && [ "$codex_first_cwd" -ef "$codex_persona_dir" ] ||
+  fail "default seat Codex cwd changed: $codex_first_cwd"
+cmp -s "$codex_first_cwd/prompt.md" "$CASE_LANE/codex-stdin.txt" ||
+  fail "default seat Codex stdin changed"
 metrics="$CASE_LANE/metrics.json"
 assert_file_exists "$metrics"
 jq -e '
@@ -441,6 +513,9 @@ jq -e '
   fail "metrics did not record explicit successful stage/persona status"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 3 ] ||
   fail "stubbed persona findings were not merged"
+jq -e -s 'all(.[]; .persona | test("^(beginner|expert|impatient)@seat:codex$"))' \
+  "$CASE_LANE/findings.jsonl" >/dev/null ||
+  fail "default seat marker was not recorded"
 assert_file_exists "$CASE_STATE/goals/GOALS-draft.md"
 assert_file_exists "$CASE_STATE/goals/feature-map.md"
 assert_file_exists "$CASE_STATE/goals/range-map.md"
@@ -448,6 +523,96 @@ find "$CASE_LANE/codex-work" -maxdepth 1 -type d -name 'persona-*' |
   grep . >/dev/null || fail "persona Codex work directories were not isolated"
 find "$CASE_LANE/codex-work" -maxdepth 1 -type d -name 'goals.*' |
   grep . >/dev/null || fail "goals Codex work directory was not isolated"
+
+kimi_state="$TEST_TMP/cases/kimi-seat/state"
+kimi_night=2026-07-29-kimi-seat
+kimi_lane="$kimi_state/lanes/$kimi_night/lane_1"
+kimi_auth="$TEST_TMP/kimi-auth"
+mkdir -p "$kimi_lane/home" "$kimi_lane/tmp" "$kimi_auth"
+ln -s "$kimi_auth" "$kimi_lane/home/.kimi-code"
+run_kimi_lane() {
+  local mode=$1
+  set +e
+  /usr/bin/env -i \
+    PATH="$stub_path" HOME="$kimi_lane/home" TMPDIR="$kimi_lane/tmp" \
+    LANG=C TERM=dumb NIGHT_ID="$kimi_night" LANE_DIR="$kimi_lane" \
+    METSUKE_TARGET_URL='http://127.0.0.1:9999' METSUKE_PERSONAS=beginner \
+    METSUKE_SEAT=kimi REVIEW_KIMI_BIN="$fake_bin/kimi-$mode" \
+    PLAYWRIGHT_BROWSERS_PATH_REAL="$browser_cache" \
+    /bin/bash "$RUN_SH" >"$kimi_lane/stdout" 2>"$kimi_lane/stderr"
+  kimi_rc=$?
+  set -e
+  return "$kimi_rc"
+}
+
+run_kimi_lane stdout-only
+[ "$kimi_rc" -eq 0 ] || {
+  cat "$kimi_lane/stderr" >&2
+  fail "Kimi adapter seat did not complete the persona flow"
+}
+jq -e '
+  .persona == "beginner@seat:kimi" and
+  .target == "hero/cta" and
+  .symptom == "CTA text is visible from stdout only"
+' \
+  "$kimi_lane/findings.jsonl" >/dev/null ||
+  fail "Kimi stdout-only fallback did not retain persona and seat metadata"
+kimi_persona_dir=$(find "$kimi_lane/codex-work" -maxdepth 1 -type d \
+  -name 'persona-beginner.*' | sed -n '1p')
+[ -n "$kimi_persona_dir" ] || fail "Kimi persona work directory is missing"
+[ "$(sed -n '1p' "$kimi_persona_dir/seen-home.txt")" = \
+  "$kimi_lane/metsuke-homes/kimi" ] ||
+  fail "Kimi adapter did not receive its isolated HOME"
+[ -L "$kimi_lane/metsuke-homes/kimi/.kimi-code" ] ||
+  fail "Kimi isolated HOME did not expose the opted-in auth link"
+(
+  # shellcheck source=lib/common.sh
+  . "$ROOT/lib/common.sh"
+  # shellcheck source=lib/ledger.sh
+  . "$ROOT/lib/ledger.sh"
+  STATE_DIR="$TEST_TMP/kimi-ledger-state"
+  NIGHT_ID="$kimi_night"
+  mkdir -p "$STATE_DIR/ledger"
+  ledger_ingest_proposals "$kimi_lane/findings.jsonl"
+  [ "$LEDGER_INGESTED_COUNT" -eq 1 ]
+  ledger_validate_jsonl_shape
+) || fail "Kimi seat marker failed ledger ingestion"
+run_kimi_lane file-priority
+[ "$kimi_rc" -eq 0 ] || {
+  cat "$kimi_lane/stderr" >&2
+  fail "same-lane Kimi rerun did not complete"
+}
+jq -e '
+  .persona == "beginner@seat:kimi" and
+  .symptom == "CTA text is visible from OUTPUT_PATH"
+' "$kimi_lane/findings.jsonl" >/dev/null ||
+  fail "Kimi OUTPUT_PATH finding did not win over stdout fallback"
+if grep -F 'stdout alternative' "$kimi_lane/findings.jsonl" >/dev/null; then
+  fail "Kimi stdout fallback overrode a nonempty OUTPUT_PATH"
+fi
+[ "$(find "$kimi_lane/codex-work" -maxdepth 1 -type d \
+  -name 'persona-beginner.*' | wc -l | tr -d ' ')" -ge 2 ] ||
+  fail "same-lane Kimi rerun did not create a fresh persona work directory"
+[ -L "$kimi_lane/metsuke-homes/kimi/.kimi-code" ] ||
+  fail "same-lane Kimi rerun did not recreate the isolated auth link"
+
+for rejected_seat in glm unknown-seat; do
+  rejected_lane="$TEST_TMP/rejected-$rejected_seat"
+  mkdir -p "$rejected_lane/home" "$rejected_lane/tmp"
+  if /usr/bin/env -i \
+    PATH="$stub_path" HOME="$rejected_lane/home" TMPDIR="$rejected_lane/tmp" \
+    LANG=C TERM=dumb NIGHT_ID="2026-07-29-$rejected_seat" \
+    LANE_DIR="$rejected_lane" METSUKE_SEAT="$rejected_seat" \
+    /bin/bash "$RUN_SH" >"$rejected_lane/stdout" 2>"$rejected_lane/stderr"; then
+    fail "METSUKE_SEAT=$rejected_seat did not fail closed"
+  fi
+  [ ! -e "$rejected_lane/evidence" ] ||
+    fail "METSUKE_SEAT=$rejected_seat reached capture setup"
+done
+assert_contains "METSUKE_SEAT=glm is unsupported" \
+  "$TEST_TMP/rejected-glm/stderr"
+assert_contains "unknown METSUKE_SEAT 'unknown-seat'" \
+  "$TEST_TMP/rejected-unknown-seat/stderr"
 
 run_lane_case direct-dispatcher-forge "beginner" "" valid valid 0 0 "" both
 [ "$CASE_RC" -eq 0 ] || fail "direct dispatcher forgery changed honest lane exit behavior"

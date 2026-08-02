@@ -124,7 +124,9 @@ assert_contains '    --output-format text' "$ROOT/lanes/review/adapters/kimi.sh"
 assert_contains '    -m grok-4.5' "$ROOT/lanes/review/adapters/grok.sh"
 assert_contains '    --no-subagents' "$ROOT/lanes/review/adapters/grok.sh"
 assert_contains '      --permission-mode dontAsk' "$ROOT/lanes/review/adapters/opus.sh"
-assert_contains '      --allowedTools Read,Glob,Grep' "$ROOT/lanes/review/adapters/opus.sh"
+[ "$(grep -Fxc "        --allowedTools Read,Glob,Grep \\" \
+  "$ROOT/lanes/review/adapters/opus.sh")" -eq 1 ] ||
+  fail "Opus adapter lost its exact single Write-free allowedTools line"
 # This is a literal source-string assertion, not an expansion.
 # shellcheck disable=SC2016
 assert_contains 'curl_bin=${REVIEW_CURL_BIN:-/usr/bin/curl}' \
