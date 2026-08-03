@@ -12,32 +12,58 @@ concurrency:
 
 jobs:
   guard:
-    # macOS 15 is the supported arm64 runner that provides the contract's
-    # fixed system jq location at /usr/bin/jq.
-    runs-on: macos-15
+    # Self-hosted Mac mini runner (Issue #32): arm64 macOS providing the
+    # contract's fixed system jq location at /usr/bin/jq.
+    # Outage fallback: revert this line to `runs-on: macos-15`
+    # (GitHub-hosted, 10x minute rate) until the runner is back online.
+    runs-on: [self-hosted, macOS, ARM64, mac-mini]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Install ShellCheck
-        run: brew install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            brew install shellcheck
+          fi
+          shellcheck --version
 
       - name: Install pinned gitleaks path
+        # The binary hash is verified on EVERY run (not only on install) so a
+        # tampered binary on a persistent self-hosted runner fails the job
+        # instead of being trusted by presence alone.
         run: |
-          curl -L \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz \
-            -o /tmp/gitleaks.tar.gz
-          mkdir -p /tmp/gitleaks
-          tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks
-          sudo install -d /opt/homebrew/Cellar/gitleaks/8.30.1/bin
-          sudo install -m 0755 /tmp/gitleaks/gitleaks /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+          gitleaks_bin=/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+          gitleaks_sha256=ba52fb1bfabbcde42f032afad3d6e0b19dff8ed105229a16e7caa338bbc0e84f
+          if [ ! -x "$gitleaks_bin" ]; then
+            curl -L \
+              https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz \
+              -o /tmp/gitleaks.tar.gz
+            mkdir -p /tmp/gitleaks
+            tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks
+            install -d "$(dirname "$gitleaks_bin")" 2>/dev/null ||
+              sudo -n install -d "$(dirname "$gitleaks_bin")"
+            install -m 0755 /tmp/gitleaks/gitleaks "$gitleaks_bin" 2>/dev/null ||
+              sudo -n install -m 0755 /tmp/gitleaks/gitleaks "$gitleaks_bin"
+          fi
+          printf '%s  %s\n' "$gitleaks_sha256" "$gitleaks_bin" | shasum -a 256 -c -
+          "$gitleaks_bin" version
 
       - name: Install Git compatibility path shim
+        # Non-sudo first: on the self-hosted runner /opt/homebrew is
+        # user-owned (and brew cleanup can remove the shim dir on git
+        # upgrades, so this also self-heals); sudo -n is the hosted-runner
+        # fallback and fails fast instead of hanging on a password prompt.
         run: |
-          sudo install -d /opt/homebrew/Cellar/git/2.48.1/bin
-          sudo ln -sf "$(command -v git)" /opt/homebrew/Cellar/git/2.48.1/bin/git
-          actual_version=$(/opt/homebrew/Cellar/git/2.48.1/bin/git --version)
+          shim=/opt/homebrew/Cellar/git/2.48.1/bin/git
+          if [ ! -x "$shim" ]; then
+            install -d "$(dirname "$shim")" 2>/dev/null ||
+              sudo -n install -d "$(dirname "$shim")"
+            ln -sf "$(command -v git)" "$shim" 2>/dev/null ||
+              sudo -n ln -sf "$(command -v git)" "$shim"
+          fi
+          actual_version=$("$shim" --version)
           echo "Compatibility shim actual ${actual_version}"
           printf '%s\n' "$actual_version" |
             grep -E '^git version [0-9]+(\.[0-9]+){1,3}([.-].*| .*)?$'
@@ -46,6 +72,14 @@ jobs:
         run: |
           test -x /usr/bin/jq
           /usr/bin/jq --version
+
+      - name: Verify brew git contract
+        # Several test suites invoke /opt/homebrew/bin/git directly; hosted
+        # macos-15 ships it via brew, the self-hosted runner provides it via
+        # `brew install git`. Fail fast with a clear message if it is gone.
+        run: |
+          test -x /opt/homebrew/bin/git
+          /opt/homebrew/bin/git --version
 
       - name: Bash syntax
         run: bash -n guard/*.sh tests/*.sh
