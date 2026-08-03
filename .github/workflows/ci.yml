@@ -12,31 +12,42 @@ concurrency:
 
 jobs:
   guard:
-    # macOS 15 is the supported arm64 runner that provides the contract's
-    # fixed system jq location at /usr/bin/jq.
-    runs-on: macos-15
+    # Self-hosted Mac mini runner (Issue #32): arm64 macOS providing the
+    # contract's fixed system jq location at /usr/bin/jq.
+    # Outage fallback: revert this line to `runs-on: macos-15`
+    # (GitHub-hosted, 10x minute rate) until the runner is back online.
+    runs-on: [self-hosted, macOS, ARM64, mac-mini]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Install ShellCheck
-        run: brew install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            brew install shellcheck
+          fi
+          shellcheck --version
 
       - name: Install pinned gitleaks path
         run: |
-          curl -L \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz \
-            -o /tmp/gitleaks.tar.gz
-          mkdir -p /tmp/gitleaks
-          tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks
-          sudo install -d /opt/homebrew/Cellar/gitleaks/8.30.1/bin
-          sudo install -m 0755 /tmp/gitleaks/gitleaks /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+          if [ ! -x /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks ]; then
+            curl -L \
+              https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz \
+              -o /tmp/gitleaks.tar.gz
+            mkdir -p /tmp/gitleaks
+            tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks
+            sudo install -d /opt/homebrew/Cellar/gitleaks/8.30.1/bin
+            sudo install -m 0755 /tmp/gitleaks/gitleaks /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
+          fi
+          /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks version
 
       - name: Install Git compatibility path shim
         run: |
-          sudo install -d /opt/homebrew/Cellar/git/2.48.1/bin
-          sudo ln -sf "$(command -v git)" /opt/homebrew/Cellar/git/2.48.1/bin/git
+          if [ ! -x /opt/homebrew/Cellar/git/2.48.1/bin/git ]; then
+            sudo install -d /opt/homebrew/Cellar/git/2.48.1/bin
+            sudo ln -sf "$(command -v git)" /opt/homebrew/Cellar/git/2.48.1/bin/git
+          fi
           actual_version=$(/opt/homebrew/Cellar/git/2.48.1/bin/git --version)
           echo "Compatibility shim actual ${actual_version}"
           printf '%s\n' "$actual_version" |
