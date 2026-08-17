@@ -87,7 +87,10 @@
 
 rejection_reason は機械テンプレのみ（LLM 自由文は 200 字整形・改行/タブ/パイプ除去して部分埋め込み）:
 - `already fixed on main <sha>: <説明> (<file>:<line>); not a false positive`
-- `duplicate of <canonical_full_id> (<共通欠陥の一言>[, canonical is deferred]); not a false positive`
+- `duplicate of <canonical_full_id> (<共通欠陥の一言>; evidence <anchor>[, canonical is deferred][, 起因 <deferred|その他>]); not a false positive`
+  - `<anchor>` は #37 制約「file:line 証拠を必ず埋める」の機械充足: 新 finding の target が `file[:line]` 形にパースできればそれ・できなければ target の正規化 60 字（LLM 自由文にしない）。継承 canonical の起因種別（deferred/その他）は1語で明示する
+
+**再発見回数の可視化**（#38 副次価値の出力先）: レポートのクラスタ提示欄・自動 dup 却下欄に「canonical X への累計 dup-reject 数 = 再発見 n 回」を投影から導出して1列表示する
 
 ## 5. 照合キー層構造（#38 の核）
 
@@ -172,8 +175,10 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 | G4 | （G2 に統合） | — |
 | G5 | fixed 非矛盾 | ALREADY_FIXED 経路（decision+推奨とも）が人裁定の「main済6件 ∪ 35977df7」の**外に出ない** |
 
+| G6 | dup 却下経路の実データ検証 | **確定 canonical 派生 fixture**: 再構成台帳の変種（dup クラスタの canonical 9件の adopted verdict と deferred canonical の rejected verdict だけを残し、他の #36 verdict を除外）で再実行し、①15件の dup が settled canonical への自動却下 decision として draft に現れ ②その decisions.jsonl（source_ref はダミー URL 注入）を**実物の verdict-sync --input** に隔離 state-dir で通し observed=appended・投影 rejected 化を確認（§4.2 上2行+B 経路が実データで最低1本走る） |
+
 - 参考指標（合否外・レポート表示）: already-fixed 検出率（目標 6/6）・CONFIRMED_CURRENT 率・LLM 呼数・所要時間
-- **合格条件は連続 2 回のフル PASS**（LLM 非決定性対策）
+- **合格条件は連続 2 回のフル PASS**（LLM 非決定性対策・G6 は record/replay キャッシュ再生で2回目を回してよい）
 - **record/replay モード**: 初回実走で LLM 応答を fixture 保存 → 以降の反復はキャッシュ再生でゲート再判定（プロンプト以外の調整を課金なし・決定論で回帰テスト化）。プロンプトを変えたら再実走
 - G2 未達はプロンプト/しきい値の反復調整（fail-closed 側の失敗）。**G0/G1/G3/G5 の失敗は設計欠陥として判定基準でなく構造を直す**。注: 確定 canonical への自動 dup 却下経路（§4.2 上2行）は本リプレイでは実データ上発火しないため、CI の stub テストで網羅する
 
@@ -209,7 +214,7 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 ## 12. テスト計画（CI = LLM なし・stub adapter・決定論）
 
 - fail-closed 網羅: LLM 出力不正（行単位 fail-closed の粒度検証込み）/ 証拠ゲート6段の各 FAIL / **negative fixture**（実在する無関係行・自明短行・removed_pattern 残存・履歴なし）/ canonical パーサ5書式（実台帳から fixture 化）+ 非一意サフィックス + 複数参照 + ループ / fixed・open・already-fixed 起因 canonical の各分岐 / confidence=medium / コスト・締切・HARD_WALL 超過 / GitHub 不達で B 中止 / B1 の drop（finding 側+canonical 側の両方）/ 実行窓外 exit / 二重起動（ロック敗退）/ dry-run の不書込み
-- 決定合成: 生成 decision が**実物の `verdict_validate_decision` を通る**こと（lib/verdict.sh を source）/ draft に source_ref キーが無いこと・確定版で埋まること / B2.5 の all-rejected ゲート / observed_at =ウォーターマーク固定・全件同一 / 同一 finding への二重 decision の機械 dedup
+- 決定合成: 生成 decision が**実物の `verdict_validate_decision` を通る**こと（lib/verdict.sh を source）/ **全 decision が actor=`auto-triage`・source=`manual-comment` 固定値であること** / draft に source_ref キーが無いこと・確定版で埋まること / B2.5 の all-rejected ゲート / observed_at =ウォーターマーク固定・全件同一 / 同一 finding への二重 decision の機械 dedup / dup 理由テンプレに evidence anchor と起因種別が埋まること
 - L0 完全一致 / クラスタ canonical 優先順位（adopted member 優先・同値 fail-closed）/ 閉包未完クラスタの部分採用禁止
 - リプレイハーネス自体の G0〜G5 判定ロジック（縮小 fixture で PASS/FAIL 両分岐）
 
@@ -222,7 +227,7 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 | D-3 | source_ref | 検証済みコメント URL 必須・不達なら書込み中止 | 公開記録なき機械裁定を作らない |
 | D-4 | dedup 実行点 | 朝 triage 時 | 夜のロック保持中に LLM を入れない・証跡が台帳に残る |
 | D-5 | 定時 | 06:35+実行窓ガード | digest 後・morning-report 前・スリープ復帰対策 |
-| D-6 | ALREADY_FIXED 段階運用 | suggest 既定→実測後 reject 昇格 | 証拠ゲートは物理裏付けまで・意味論の残存リスクは実測ゼロを見てから自動化（席 C2/C3 反映） |
+| D-6 | ALREADY_FIXED 段階運用 | suggest 既定→実測後 reject 昇格。**昇格基準（数値）**: fixed 推奨の人検分 累計 ≥15件・false-fix 0件・suggest 運用 14 日経過の3条件成立で reject 昇格を翔さんに提案。**退場トリガー（LC-1）**: 2026-09-15 までに昇格可否の判断を仰ぐ（suggest 恒久化=自動化の実効値ほぼゼロを防ぐ） | 証拠ゲートは物理裏付けまで・意味論の残存リスクは実測ゼロを見てから自動化（席 C2/C3/N4 反映）。suggest 期間中の自動却下は dup（確定 canonical）のみで、v1 出荷時の実効値が限定的であることは既知・意図的 |
 | D-7 | 競合安全の主防御 | Phase A〜B2 ロック保持+observed_at ウォーターマーク | 運用規律でなく既存コードの検証を防壁化（席3席収束） |
 | D-8 | open canonical への自動却下 | しない（クラスタ提示のみ） | 「自動却下の根拠は必ず確定 verdict 済み」の不変条件で矛盾書込みを構造的に排除（席 C1 反映） |
 
@@ -233,3 +238,4 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 - 席: Kimi K3（正式ファイル納品・GO-with-changes・C1+M4+m6）/ Opus 5（requested=opus-5, actual=opus-5・ファイル書込みが席サンドボックスで不能のため SendMessage 納品・GO-with-changes・C3+M8+m8）/ GLM 5.3（初回沈黙→再試行1回で正式納品・GO-with-changes・C1+M6+m5）
 - 収束（複数席独立=採用確定級）: observed_at 未指定（3席）/ open canonical 自動却下の矛盾経路（3席）/ 証拠ゲート素通り形（3席）/ canonical パーサ契約（2席）/ クラスタ粒度の受入再定義（3席）/ B2-B3 整流と二重起動（3席）
 - 全 findings の裁定と反映は #37 のレビュー裁定コメント参照。不採用: Kimi「B1 を B2 後へ移動」（ロック保持設計で上位互換に置換）・Opus「morning-report を 07:15 へ」（HARD_WALL で解決・他系統の変更を避ける）
+- coverage-matrix（Opus 席 delta・spec-kit 実験）: zero-coverage 0・unrequested MAJOR 0・前回19件=18 RESOLVED/1 PARTIAL 許容・累積 GO。新規 N1〜N5 は v1.1 に反映済み（N1→§9 G6・N2→§12 actor/source 検証復活・N3→§4 dup テンプレ evidence anchor・N4→D-6 数値昇格基準+退場トリガー・N5→§4 再発見回数の表示列）。M2 PARTIAL への追補=「その他起因」継承時は理由文に起因1語を明示（§4 テンプレ）
