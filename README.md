@@ -144,6 +144,33 @@ The run lock is `state/locks/nightshift.lock`. A stale lock is deliberately
 never removed automatically. Inspect its `meta` file and remove the lock
 directory manually only after confirming that the recorded process is gone.
 
+## Morning triage
+
+`launchd/ai.caty.nightshift.triage.plist` schedules `bin/morning-triage` at
+06:35. Keep the job disabled until local config sets `TRIAGE_ENABLED=1`,
+`TRIAGE_REPORT_ISSUE` points to the pinned + locked `auto-triage` execution
+record Issue, and `TRIAGE_TARGET_REPOS` lists the repos to triage.
+
+Keep that execution-record Issue pinned and locked forever. Do not close or
+delete it; `source_ref` values depend on the URL staying live.
+
+The run is meant for the 06:30-08:00 morning window. `bin/morning-triage`
+exits outside that window, so the launchd schedule is a trigger, not the only
+guard.
+
+`--dry-run` stays inside the selected `--state-dir`, publishes the Phase A
+draft, report, cluster, verification, and watermark artifacts under
+`state/triage/`, and skips GitHub, final `decisions.jsonl`, and `verdict-sync`.
+
+The watermark is the A1 projection read time frozen for that run. If
+`verdict-sync --github-links` rejects an old label or comment because it
+predates that watermark, leave the old evidence in place and post a fresh
+comment or relabel after the next run instead of trying to rewrite the stale
+record.
+
+B4 always posts a visible result comment, including sync failures, so a broken
+morning run is visible instead of silent.
+
 ## Record morning verdicts
 
 `verdict-sync` is a daytime/core command, not a lane. It takes the same
@@ -202,6 +229,11 @@ The comment author must have GitHub type `User`, must not equal
 `NIGHT_BOT_LOGIN` (default `night-bot`), and the comment must provide a valid
 UTC creation timestamp. Missing or conflicting state, markers, actors, times,
 or reasons fail the complete invocation before any append.
+
+Morning triage still writes the verdict decision set, but the template contract
+now treats `removed_pattern` as part of the verification evidence for fixed
+findings. The design in `docs/morning-triage.md` is the source of truth for the
+triage templates and their field names.
 
 After a durable verdict append, the command atomically publishes an explicitly
 incomplete draft at
