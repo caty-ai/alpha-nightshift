@@ -16,6 +16,26 @@ BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 NIGHT_BOT_LOGIN='night-bot'
 VERDICT_GH_BIN='gh'
 
+# Morning triage settings. These are not exported into lane processes.
+# Defaults mirror docs/morning-triage.md §10.
+# TRIAGE_REPORT_ISSUE must point at the pinned + locked execution-record Issue.
+# TRIAGE_TARGET_REPOS uses "<ledger_repo>=<owner/name>" pairs.
+TRIAGE_ENABLED=0
+TRIAGE_ALREADY_FIXED_MODE='suggest'
+TRIAGE_MAX_VERIFY_PER_RUN=25
+TRIAGE_REVERIFY_INTERVAL_DAYS=7
+TRIAGE_MAX_NEW_FOR_DEDUP=40
+TRIAGE_VERIFY_BATCH=5
+TRIAGE_DEDUP_BATCH=10
+TRIAGE_CONCURRENCY=3
+TRIAGE_LLM_TIMEOUT_SEC=300
+TRIAGE_PHASE_A_DEADLINE_SEC=900
+TRIAGE_HARD_WALL='06:58'
+TRIAGE_DEDUP_POOL_MAX=150
+TRIAGE_ADAPTER="$REPO_ROOT/lanes/review/adapters/codex.sh"
+TRIAGE_REPORT_ISSUE=''
+TRIAGE_TARGET_REPOS=''
+
 # Colon-separated absolute paths exposed READ-WRITE through symlinks inside the
 # isolated lane HOME. Metsuke and review seats require their matching CLI
 # auth/config directory below.

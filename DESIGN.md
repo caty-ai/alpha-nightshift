@@ -44,7 +44,7 @@
 | findings 台帳 | 発見の永続記録と重複検出（§8）。カウンタ（retry・レーン数・Issue 数）の永続化もここ |
 | night-guard | 安全強制4層（§10） |
 | packet + digest | 完成パケット様式（§9）と朝ダイジェスト生成。**null digest 保証**: LLM ゼロで生成できる機械テンプレートを別プロセスで必ず走らせ、「夜番が起きなかった夜」と「0件の夜」を区別可能にする（dead-man） |
-| verdict-sync | **朝の裁定の書き戻し**。PR の merge/close 状態と理由 label を照会し、台帳へ adopted/fixed/rejected(+理由) を記録。L1-7 完了記録の下書きも生成。KPI（差し戻し率・revert 率）の計測源 |
+| verdict-sync | **朝の裁定の書き戻し**。PR の merge/close 状態と理由 label を照会し、台帳へ adopted/fixed/rejected(+理由) を記録。L1-7 完了記録の下書きも生成。triage の verify/dedup 契約は `docs/morning-triage.md` を正とする。KPI（差し戻し率・revert 率）の計測源 |
 
 ### 3.2 コア/アダプタ分離（OSS 前提）
 

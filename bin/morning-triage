@@ -1,0 +1,70 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+# shellcheck source=../lib/common.sh disable=SC1091
+. "$REPO_ROOT/lib/common.sh"
+nightshift_init "$REPO_ROOT"
+
+# shellcheck source=../lib/lock.sh disable=SC1091
+. "$REPO_ROOT/lib/lock.sh"
+# shellcheck source=../lib/ledger.sh disable=SC1091
+. "$REPO_ROOT/lib/ledger.sh"
+# shellcheck source=../lib/verdict.sh disable=SC1091
+. "$REPO_ROOT/lib/verdict.sh"
+# shellcheck source=../lib/triage.sh disable=SC1091
+. "$REPO_ROOT/lib/triage.sh"
+
+triage_dry_run=false
+triage_force=false
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run)
+      triage_dry_run=true
+      shift
+      ;;
+    --force)
+      triage_force=true
+      shift
+      ;;
+    --state-dir)
+      [ "$#" -ge 2 ] || { triage_usage; exit 2; }
+      triage_validate_absolute_dir "$2" || { triage_usage; exit 2; }
+      STATE_DIR=$2
+      NIGHTSHIFT_STATE_DIR=$2
+      export STATE_DIR NIGHTSHIFT_STATE_DIR
+      shift 2
+      ;;
+    --repo-pin)
+      [ "$#" -ge 2 ] || { triage_usage; exit 2; }
+      triage_pin_json=$(triage_parse_repo_pin "$2") || { triage_usage; exit 2; }
+      triage_pending_pins=${triage_pending_pins:-}
+      triage_pending_pins="${triage_pending_pins}${triage_pin_json}
+"
+      shift 2
+      ;;
+    *)
+      triage_usage
+      exit 2
+      ;;
+  esac
+done
+
+triage_load_defaults || {
+  printf '%s\n' 'Invalid triage configuration' >&2
+  exit 2
+}
+nightshift_prepare_state
+nightshift_start_logging morning-triage
+export TRIAGE_LOGGING_STARTED=true
+trap triage_cleanup EXIT
+
+if [ -n "${triage_pending_pins:-}" ]; then
+  TRIAGE_REPO_PINS_JSONL=$triage_pending_pins
+  export TRIAGE_REPO_PINS_JSONL
+fi
+
+triage_run "$triage_dry_run" "$triage_force"
