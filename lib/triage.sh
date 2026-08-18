@@ -80,7 +80,7 @@ triage_now_hhmm() {
 
 triage_phase_budget_available() {
   [ "$TRIAGE_PHASE_A_END_EPOCH" -gt 0 ] || return 0
-  [ "$(date '+%s')" -lt "$TRIAGE_PHASE_A_END_EPOCH" ]
+  [ "$(/bin/date '+%s')" -lt "$TRIAGE_PHASE_A_END_EPOCH" ]
 }
 
 triage_before_hard_wall() {
@@ -547,7 +547,7 @@ triage_prompt_hash() {
 }
 
 triage_cache_dir() {
-  printf '%s\n' "${TRIAGE_LLM_CACHE_DIR:-$STATE_DIR/triage/cache}"
+  printf '%s\n' "${TRIAGE_LLM_CACHE_DIR:-$TRIAGE_WORK_DIR/cache}"
 }
 
 triage_adapter_run() {
@@ -609,6 +609,35 @@ triage_adapter_run() {
     '{stage: $stage, prompt_hash: $prompt_hash, adapter: $adapter, cached_at: $cached_at, source: $source}' \
     > "$triage_cache_meta"
   printf '%s\n' "$triage_candidates_file"
+}
+
+triage_adapter_jobs_wait() {
+  triage_jobs_file=$1
+  while IFS= read -r triage_job_pid || [ -n "$triage_job_pid" ]; do
+    [ -n "$triage_job_pid" ] || continue
+    wait "$triage_job_pid" || true
+  done < "$triage_jobs_file"
+  : > "$triage_jobs_file"
+}
+
+triage_adapter_job_launch() {
+  triage_job_stage=$1
+  triage_job_prompt=$2
+  triage_job_workdir=$3
+  triage_job_out_dir=$4
+  triage_job_result=$5
+  triage_jobs_file=$6
+  (
+    if ! triage_adapter_run "$triage_job_stage" "$triage_job_prompt" \
+      "$triage_job_workdir" "$triage_job_out_dir" > "$triage_job_result"; then
+      : > "$triage_job_result"
+    fi
+  ) &
+  printf '%s\n' "$!" >> "$triage_jobs_file"
+  triage_job_count=$(wc -l < "$triage_jobs_file" | tr -d ' ')
+  if [ "$triage_job_count" -ge "$TRIAGE_CONCURRENCY" ]; then
+    triage_adapter_jobs_wait "$triage_jobs_file"
+  fi
 }
 
 triage_validate_verify_line() {
@@ -814,7 +843,7 @@ triage_resolve_canonical_root() {
     triage_ref=$(triage_resolve_reference_id "$triage_reason" "$triage_ids_file") || return 1
     [ "$triage_ref" != "$triage_finding_id" ] || return 1
     triage_root=$(triage_resolve_canonical_root "$triage_ref" "$triage_projection_file_path" "$triage_ids_file" $((triage_depth + 1))) || return 1
-    printf '%s\n' "$triage_root" | jq -c --arg cause "$triage_class" '. + {cause: $cause}'
+    printf '%s\n' "$triage_root"
     return 0
   fi
   jq -n -c \
@@ -965,6 +994,10 @@ triage_process_dedup_repo() {
   if [ -s "$triage_llm_input" ]; then
     triage_chunks="$triage_repo_dir/chunks"
     triage_chunk_jsonl "$triage_llm_input" "$TRIAGE_DEDUP_BATCH" "$triage_chunks"
+    triage_jobs_file="$triage_repo_dir/adapter-jobs.txt"
+    triage_scheduled_file="$triage_repo_dir/adapter-scheduled.tsv"
+    : > "$triage_jobs_file"
+    : > "$triage_scheduled_file"
     for triage_chunk in "$triage_chunks"/chunk-*.jsonl; do
       [ -f "$triage_chunk" ] || continue
       if ! triage_phase_budget_available; then
@@ -988,7 +1021,19 @@ EOF
       triage_prompt="$triage_chunk.prompt.md"
       triage_render_dedup_prompt "$triage_pool_file" "$triage_chunk" "$triage_prompt"
       triage_run_dir="$triage_repo_dir/adapter-$(basename "$triage_chunk" .jsonl)"
-      triage_candidate_output=$(triage_adapter_run dedup "$triage_prompt" "$(printf '%s\n' "$triage_clone_json" | jq -r '.clone_dir')" "$triage_run_dir") || continue
+      triage_candidate_ref="$triage_run_dir/candidate-path.txt"
+      mkdir -p "$triage_run_dir"
+      triage_adapter_job_launch dedup "$triage_prompt" \
+        "$(printf '%s\n' "$triage_clone_json" | jq -r '.clone_dir')" \
+        "$triage_run_dir" "$triage_candidate_ref" "$triage_jobs_file"
+      printf '%s\t%s\n' "$triage_chunk" "$triage_candidate_ref" >> "$triage_scheduled_file"
+    done
+    triage_adapter_jobs_wait "$triage_jobs_file"
+    while IFS="$(printf '\t')" read -r triage_chunk triage_candidate_ref ||
+      [ -n "$triage_chunk" ]; do
+      [ -n "$triage_chunk" ] || continue
+      triage_candidate_output=$(sed -n '1p' "$triage_candidate_ref")
+      [ -n "$triage_candidate_output" ] && [ -f "$triage_candidate_output" ] || continue
       while IFS= read -r triage_line || [ -n "$triage_line" ]; do
         [ -n "$triage_line" ] || continue
         if triage_valid=$(printf '%s\n' "$triage_line" | triage_validate_dedup_line 2>/dev/null); then
@@ -1016,7 +1061,7 @@ EOF
           triage_stats_increment dedup_invalid_lines 1
         fi
       done < "$triage_candidate_output"
-    done
+    done < "$triage_scheduled_file"
   fi
   cat "$triage_llm_results" >> "$triage_final_results"
   printf '%s\n' "$triage_final_results"
@@ -1056,6 +1101,10 @@ triage_process_verify_repo() {
 
   triage_chunks="$triage_repo_dir/chunks"
   triage_chunk_jsonl "$triage_verify_file" "$TRIAGE_VERIFY_BATCH" "$triage_chunks"
+  triage_jobs_file="$triage_repo_dir/adapter-jobs.txt"
+  triage_scheduled_file="$triage_repo_dir/adapter-scheduled.tsv"
+  : > "$triage_jobs_file"
+  : > "$triage_scheduled_file"
   for triage_chunk in "$triage_chunks"/chunk-*.jsonl; do
     [ -f "$triage_chunk" ] || continue
     if ! triage_phase_budget_available; then
@@ -1065,7 +1114,19 @@ triage_process_verify_repo() {
     triage_prompt="$triage_chunk.prompt.md"
     triage_render_verify_prompt "$triage_chunk" "$triage_prompt"
     triage_run_dir="$triage_repo_dir/adapter-$(basename "$triage_chunk" .jsonl)"
-    triage_candidate_output=$(triage_adapter_run verify "$triage_prompt" "$(printf '%s\n' "$triage_clone_json" | jq -r '.clone_dir')" "$triage_run_dir") || continue
+    triage_candidate_ref="$triage_run_dir/candidate-path.txt"
+    mkdir -p "$triage_run_dir"
+    triage_adapter_job_launch verify "$triage_prompt" \
+      "$(printf '%s\n' "$triage_clone_json" | jq -r '.clone_dir')" \
+      "$triage_run_dir" "$triage_candidate_ref" "$triage_jobs_file"
+    printf '%s\t%s\n' "$triage_chunk" "$triage_candidate_ref" >> "$triage_scheduled_file"
+  done
+  triage_adapter_jobs_wait "$triage_jobs_file"
+  while IFS="$(printf '\t')" read -r triage_chunk triage_candidate_ref ||
+    [ -n "$triage_chunk" ]; do
+    [ -n "$triage_chunk" ] || continue
+    triage_candidate_output=$(sed -n '1p' "$triage_candidate_ref")
+    [ -n "$triage_candidate_output" ] && [ -f "$triage_candidate_output" ] || continue
     while IFS= read -r triage_line || [ -n "$triage_line" ]; do
       [ -n "$triage_line" ] || continue
       if triage_valid=$(printf '%s\n' "$triage_line" | triage_validate_verify_line 2>/dev/null); then
@@ -1082,7 +1143,7 @@ triage_process_verify_repo() {
         triage_stats_increment verify_invalid_lines 1
       fi
     done < "$triage_candidate_output"
-  done
+  done < "$triage_scheduled_file"
 
   triage_clone_dir=$(printf '%s\n' "$triage_clone_json" | jq -r '.clone_dir')
   triage_head_sha=$(printf '%s\n' "$triage_clone_json" | jq -r '.head_sha')
@@ -1145,7 +1206,7 @@ triage_verify_results_file() {
 triage_collect_machine_results() {
   triage_verify_all=$(triage_verify_results_file)
   : > "$triage_verify_all"
-  for triage_machine_file in "$TRIAGE_WORK_DIR"/verify/*/results.jsonl; do
+  for triage_machine_file in "$TRIAGE_WORK_DIR"/verify/*/validated.jsonl; do
     [ -f "$triage_machine_file" ] || continue
     cat "$triage_machine_file" >> "$triage_verify_all"
   done
@@ -1252,8 +1313,10 @@ triage_synthesize_decisions() {
   triage_verify_dir="$TRIAGE_WORK_DIR/verify"
   triage_draft=$(triage_decisions_draft_file)
   triage_seen="$TRIAGE_WORK_DIR/decision-seen.txt"
+  triage_branches="$TRIAGE_WORK_DIR/decision-branches.jsonl"
   : > "$triage_draft"
   : > "$triage_seen"
+  : > "$triage_branches"
   for triage_repo_dir in "$triage_dedup_dir"/*; do
     [ -d "$triage_repo_dir" ] || continue
     triage_repo=$(basename "$triage_repo_dir")
@@ -1305,6 +1368,15 @@ triage_synthesize_decisions() {
               rejection_reason: $reason
             }' >> "$triage_draft"
           printf '%s\n' "$triage_finding_id" >> "$triage_seen"
+          jq -n -c \
+            --arg finding_id "$triage_finding_id" \
+            --arg canonical_id "$triage_canonical_id" \
+            --arg root_id "$triage_root_id" \
+            --arg root_status "$triage_root_status" \
+            --arg root_cause "$triage_root_cause" \
+            '{finding_id:$finding_id,canonical_id:$canonical_id,
+              root_id:$root_id,root_status:$root_status,root_cause:$root_cause}' \
+            >> "$triage_branches"
           ;;
         rejected:fixed|fixed:*)
           :
@@ -1362,11 +1434,38 @@ triage_revalidate_drafts() {
     triage_reason=$(printf '%s\n' "$triage_line" | jq -r '.rejection_reason')
     case "$triage_reason" in
       duplicate\ of*)
-        triage_root_id=$(printf '%s\n' "$triage_reason" | sed -E 's/^duplicate of ([^ ]+).*/\1/')
-        triage_root=$(triage_resolve_canonical_root "$triage_root_id" "$(triage_projection_file)" "$(triage_current_ids_file)" 0 2>/dev/null || true)
-        if [ -z "$triage_root" ] || [ "$(printf '%s\n' "$triage_root" | jq -r '.status')" = open ]; then
-          triage_stats_increment decision_drops_canonical 1
-          continue
+        triage_branch=
+        if [ -f "$TRIAGE_WORK_DIR/decision-branches.jsonl" ]; then
+          triage_branch=$(jq -e -c --arg id "$triage_finding_id" \
+            'select(.finding_id == $id)' "$TRIAGE_WORK_DIR/decision-branches.jsonl" \
+            2>/dev/null || true)
+        fi
+        if [ -n "$triage_branch" ]; then
+          triage_canonical_id=$(printf '%s\n' "$triage_branch" | jq -r '.canonical_id')
+          triage_root=$(triage_resolve_canonical_root "$triage_canonical_id" \
+            "$(triage_projection_file)" "$(triage_current_ids_file)" 0 \
+            2>/dev/null || true)
+          if [ -n "$triage_root" ] && printf '%s\n' "$triage_root" | jq -e \
+            --arg root_id "$(printf '%s\n' "$triage_branch" | jq -r '.root_id')" \
+            --arg status "$(printf '%s\n' "$triage_branch" | jq -r '.root_status')" \
+            --arg cause "$(printf '%s\n' "$triage_branch" | jq -r '.root_cause')" '
+              .root_id == $root_id and .status == $status and
+              (.cause // "") == $cause and .status != "open"
+            ' >/dev/null 2>&1; then
+            :
+          else
+            triage_stats_increment decision_drops_canonical 1
+            continue
+          fi
+        else
+          triage_root_id=$(printf '%s\n' "$triage_reason" | sed -E 's/^duplicate of ([^ ]+).*/\1/')
+          triage_root=$(triage_resolve_canonical_root "$triage_root_id" \
+            "$(triage_projection_file)" "$(triage_current_ids_file)" 0 \
+            2>/dev/null || true)
+          if [ -z "$triage_root" ] || [ "$(printf '%s\n' "$triage_root" | jq -r '.status')" = open ]; then
+            triage_stats_increment decision_drops_canonical 1
+            continue
+          fi
         fi
         ;;
     esac
@@ -1382,6 +1481,62 @@ triage_report_nonce() {
   fi
   TRIAGE_REPORT_NONCE="run:$TRIAGE_RUN_ID:$(printf '%s' "$TRIAGE_RUN_ID" | shasum -a 256 | awk '{print substr($1,1,8)}')"
   printf '%s\n' "$TRIAGE_REPORT_NONCE"
+}
+
+triage_report_duplicate_class() {
+  triage_wanted_class=$1
+  for triage_class_file in "$TRIAGE_WORK_DIR"/dedup/*/final.jsonl; do
+    [ -f "$triage_class_file" ] || continue
+    while IFS= read -r triage_class_line || [ -n "$triage_class_line" ]; do
+      [ -n "$triage_class_line" ] || continue
+      triage_class_finding=$(printf '%s\n' "$triage_class_line" | jq -r '.finding_id')
+      triage_class_canonical=$(printf '%s\n' "$triage_class_line" | jq -r '.canonical_id')
+      triage_class_verify=$(jq -r --arg id "$triage_class_finding" \
+        'select(.finding_id == $id) | .verdict' "$(triage_verify_results_file)" |
+        sed -n '1p')
+      triage_class_root=$(triage_resolve_canonical_root "$triage_class_canonical" \
+        "$(triage_projection_file)" "$(triage_current_ids_file)" 0 \
+        2>/dev/null || true)
+      triage_class_actual=
+      if [ -z "$triage_class_root" ]; then
+        triage_class_actual=unresolved
+      else
+        triage_class_status=$(printf '%s\n' "$triage_class_root" | jq -r '.status')
+        triage_class_cause=$(printf '%s\n' "$triage_class_root" | jq -r '.cause // empty')
+        case "$triage_class_status:$triage_class_cause" in
+          fixed:*) triage_class_actual=regression ;;
+          rejected:fixed)
+            triage_class_actual=known-fixed
+            if [ "$triage_wanted_class" = regression ] &&
+              [ "$triage_class_verify" = CONFIRMED_CURRENT ]; then
+              triage_class_actual=regression
+            fi
+            ;;
+        esac
+      fi
+      [ "$triage_class_actual" = "$triage_wanted_class" ] || continue
+      printf -- '- \140%s\140 → \140%s\140 (V=%s)\n' \
+        "$triage_class_finding" "$triage_class_canonical" \
+        "${triage_class_verify:-not-settled}"
+    done < <(jq -c 'select(.verdict == "DUPLICATE" and .confidence == "high")' \
+      "$triage_class_file")
+  done
+}
+
+triage_report_fixed_evidence_failures() {
+  for triage_raw_verify in "$TRIAGE_WORK_DIR"/verify/*/results.jsonl; do
+    [ -f "$triage_raw_verify" ] || continue
+    triage_valid_verify="$(dirname "$triage_raw_verify")/validated.jsonl"
+    while IFS= read -r triage_raw_line || [ -n "$triage_raw_line" ]; do
+      [ -n "$triage_raw_line" ] || continue
+      triage_raw_id=$(printf '%s\n' "$triage_raw_line" | jq -r '.finding_id')
+      if ! jq -e --arg id "$triage_raw_id" \
+        'select(.finding_id == $id and .verdict == "ALREADY_FIXED")' \
+        "$triage_valid_verify" >/dev/null 2>&1; then
+        printf -- '- \140%s\140 — fixed 疑い・証拠不一致\n' "$triage_raw_id"
+      fi
+    done < <(jq -c 'select(.verdict == "ALREADY_FIXED")' "$triage_raw_verify")
+  done
 }
 
 triage_render_report() {
@@ -1400,11 +1555,28 @@ triage_render_report() {
   triage_rediscovery=$(jq -s -r '[.[] | select(.current_status == "rejected" and
     ((.latest_verdict.rejection_reason // "") | startswith("duplicate of ")))] | length' \
     "$(triage_projection_file)" 2>/dev/null || printf '0')
+  triage_report_decisions="$TRIAGE_WORK_DIR/report-decisions.jsonl"
+  cp "$(triage_decisions_draft_file)" "$triage_report_decisions"
+  triage_auto_rows=$(while IFS= read -r triage_report_decision || [ -n "$triage_report_decision" ]; do
+    [ -n "$triage_report_decision" ] || continue
+    triage_report_id=$(printf '%s\n' "$triage_report_decision" | jq -r '.finding_id')
+    triage_report_reason=$(printf '%s\n' "$triage_report_decision" | jq -r '.rejection_reason' | tr '\r\n\t|' '    ' | cut -c1-240)
+    triage_report_root=$(printf '%s\n' "$triage_report_reason" | sed -n 's/^duplicate of \([^ ]*\).*/\1/p')
+    triage_report_repeat=0
+    if [ -n "$triage_report_root" ]; then
+      triage_report_repeat=$(jq -s -r --arg root "$triage_report_root" '[.[] | select(.current_status == "rejected" and ((.latest_verdict.rejection_reason // "") | startswith("duplicate of " + $root + " ")))] | length' "$(triage_projection_file)")
+      triage_report_pending=$(jq -s -r --arg root "$triage_report_root" \
+        '[.[] | select((.rejection_reason // "") | startswith("duplicate of " + $root + " "))] | length' \
+        "$(triage_decisions_draft_file)")
+      triage_report_repeat=$((triage_report_repeat + triage_report_pending))
+    fi
+    printf '| %s | %s | %s |\n' "$triage_report_id" "$triage_report_reason" "$triage_report_repeat"
+  done < "$triage_report_decisions")
   cat > "$triage_report" <<EOF
 # morning-triage report
 
-run_id: $TRIAGE_RUN_ID  
-watermark: $triage_watermark  
+run_id: $TRIAGE_RUN_ID
+watermark: $triage_watermark
 nonce: $(triage_report_nonce)
 
 ## repo pins
@@ -1434,21 +1606,15 @@ $(printf '%b' "$triage_branch_lines")
 
 | finding | reason | 再発見回数 |
 |---|---|---:|
-$(while IFS= read -r triage_report_decision || [ -n "$triage_report_decision" ]; do
-  [ -n "$triage_report_decision" ] || continue
-  triage_report_id=$(printf '%s\n' "$triage_report_decision" | jq -r '.finding_id')
-  triage_report_reason=$(printf '%s\n' "$triage_report_decision" | jq -r '.rejection_reason' | tr '\r\n\t|' '    ' | cut -c1-240)
-  triage_report_root=$(printf '%s\n' "$triage_report_reason" | sed -n 's/^duplicate of \([^ ]*\).*/\1/p')
-  triage_report_repeat=0
-  if [ -n "$triage_report_root" ]; then
-    triage_report_repeat=$(jq -s -r --arg root "$triage_report_root" '[.[] | select(.current_status == "rejected" and ((.latest_verdict.rejection_reason // "") | startswith("duplicate of " + $root + " ")))] | length' "$(triage_projection_file)")
-  fi
-  printf '| %s | %s | %s |\n' "$triage_report_id" "$triage_report_reason" "$triage_report_repeat"
-done < "$(triage_decisions_draft_file)")
+$triage_auto_rows
 
 ## fixed 推奨
 
-$(jq -r 'select(.verdict == "ALREADY_FIXED") | "- `" + .finding_id + "` — " + (.explanation // "")' "$(triage_verify_results_file)" 2>/dev/null || true)
+$(jq -r 'select(.verdict == "ALREADY_FIXED") | "- `" + .finding_id + "` — " + (.reason // .explanation // "")' "$(triage_verify_results_file)" 2>/dev/null || true)
+
+### fixed 疑い・証拠不一致
+
+$(triage_report_fixed_evidence_failures)
 
 ## 採用候補
 
@@ -1456,11 +1622,11 @@ $(jq -r 'select(.verdict == "CONFIRMED_CURRENT") | "- `" + .finding_id + "` — 
 
 ## regression 疑い
 
-- settled fixed canonical への high duplicate は自動裁定せず、この欄に留めます。
+$(triage_report_duplicate_class regression)
 
 ## 既知修正済み同型疑い
 
-- already-fixed 起因 canonical への high duplicate は自動裁定しません。
+$(triage_report_duplicate_class known-fixed)
 
 ## クラスタ提示
 
@@ -1479,6 +1645,8 @@ done)
 
 - invalid verify lines: $(printf '%s\n' "$triage_stats" | jq -r '.verify_invalid_lines')
 - invalid dedup lines: $(printf '%s\n' "$triage_stats" | jq -r '.dedup_invalid_lines')
+- canonical 解決不能:
+$(triage_report_duplicate_class unresolved)
 - 人裁定先行 target drops: $(printf '%s\n' "$triage_stats" | jq -r '.decision_drops_target')
 - 人裁定先行 canonical drops: $(printf '%s\n' "$triage_stats" | jq -r '.decision_drops_canonical')
 
@@ -1567,14 +1735,26 @@ triage_render_result_comment() {
   triage_result_file=$(triage_result_comment_file)
   if [ -f "$triage_sync_output_file" ]; then
     triage_summary=$(sed -n '1,20p' "$triage_sync_output_file" | tr '\n' ' ')
+    triage_appended=$(sed -nE 's/.*appended=([0-9]+).*/\1/p' "$triage_sync_output_file" | sed -n '1p')
+    triage_idempotent=$(sed -nE 's/.*idempotent=([0-9]+).*/\1/p' "$triage_sync_output_file" | sed -n '1p')
   else
     triage_summary='sync output unavailable'
+    triage_appended=0
+    triage_idempotent=0
+  fi
+  triage_dropped=$(jq -r '.decision_drops_target + .decision_drops_canonical' \
+    "$(triage_stage_stats_file)")
+  if [ "$triage_status" != success ]; then
+    triage_summary="同期失敗・台帳は open のまま・翌朝再試行; $triage_summary"
   fi
   cat > "$triage_result_file" <<EOF
 morning-triage result: $triage_status
 
 nonce: $(triage_report_nonce)
 run_id: $TRIAGE_RUN_ID
+appended: ${triage_appended:-0}
+idempotent: ${triage_idempotent:-0}
+dropped: $triage_dropped
 summary: $triage_summary
 EOF
 }
@@ -1583,7 +1763,9 @@ triage_run() {
   triage_dry_run=$1
   triage_force=$2
 
-  triage_check_window "$triage_force" || {
+  triage_window_force=$triage_force
+  [ "$triage_dry_run" != true ] || triage_window_force=true
+  triage_check_window "$triage_window_force" || {
     triage_rc=$?
     [ "$triage_rc" -eq 2 ] && return 0
     return "$triage_rc"
@@ -1613,7 +1795,7 @@ triage_run() {
   triage_projection_snapshot
   triage_watermark=$(nightshift_iso_now)
   triage_build_current_ids
-  TRIAGE_PHASE_A_END_EPOCH=$(( $(date '+%s') + TRIAGE_PHASE_A_DEADLINE_SEC ))
+  TRIAGE_PHASE_A_END_EPOCH=$(( $(/bin/date '+%s') + TRIAGE_PHASE_A_DEADLINE_SEC ))
   export TRIAGE_PHASE_A_END_EPOCH
 
   for triage_repo in $(triage_target_repos_present); do
@@ -1623,7 +1805,10 @@ triage_run() {
       break
     fi
     if ! triage_target_repo_for "$triage_repo" >/dev/null 2>&1; then
-      triage_stats_increment outside_repo_count 1
+      triage_outside_count=$(jq -s -r --arg repo "$triage_repo" \
+        '[.[] | select(.repo == $repo and .current_status == "open")] | length' \
+        "$(triage_projection_file)")
+      triage_stats_increment outside_repo_count "$triage_outside_count"
       continue
     fi
     triage_clone_json=$(triage_clone_repo_for "$triage_repo") || return 1
