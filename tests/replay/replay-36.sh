@@ -16,7 +16,7 @@ Usage: tests/replay/replay-36.sh [--record|--replay] [--cache-dir <abs>] [--keep
 
 Environment overrides:
   REPLAY_SOURCE_LEDGER  Absolute path to the production ledger snapshot.
-  REPLAY_PINNED_CLONE   History-preserving caty-agent-harness clone at b7e1be1.
+  REPLAY_PINNED_CLONE   Required history-preserving caty-agent-harness clone at b7e1be1.
   TRIAGE_REPLAY_ADAPTER Adapter used for cache misses in --record mode.
   TRIAGE_LLM_CACHE_DIR  Cache directory (same meaning as --cache-dir).
 USAGE
@@ -73,8 +73,11 @@ main_worktree=$(git -C "$REPO_ROOT" worktree list --porcelain |
     $1 == "branch" && $2 == "refs/heads/main" { print path; exit }
   ')
 source_ledger=${REPLAY_SOURCE_LEDGER:-"$main_worktree/state/ledger/ledger.jsonl"}
-default_pinned_clone=/tmp/replay-pinned-clone
-pinned_clone=${REPLAY_PINNED_CLONE:-$default_pinned_clone}
+pinned_clone=${REPLAY_PINNED_CLONE:-}
+[ -n "$pinned_clone" ] || {
+  printf 'replay-36: REPLAY_PINNED_CLONE is required\n' >&2
+  exit 2
+}
 
 for replay_required in "$GROUND_TRUTH" "$source_ledger" "$MORNING_TRIAGE" "$VERDICT_SYNC"; do
   [ -f "$replay_required" ] && [ -r "$replay_required" ] || {
@@ -479,7 +482,7 @@ run_full_pass() {
   }
   printf 'replay-36 pass %s: G2 PASS\n' "$replay_pass"
   printf 'replay-36 pass %s: G3 PASS\n' "$replay_pass"
-  printf 'replay-36 pass %s: G4 PASS (integrated into G2)\n' "$replay_pass"
+  printf 'replay-36 pass %s: G4 (integrated into G2; no separate check)\n' "$replay_pass"
   gate_g5 \
     "$replay_open_triage/decisions.draft.jsonl" \
     "$replay_open_triage/verify-results.jsonl" || {
@@ -519,5 +522,5 @@ run_full_pass 1 "$record_adapter"
 # A failing adapter makes the second pass prove that every response came from
 # the prompt-sha256 cache, rather than merely repeating another live run.
 run_full_pass 2 "$fail_adapter"
-printf 'replay-36: two consecutive full passes succeeded (%s mode)\n' \
+printf 'replay-36: cached replay determinism check (not an independence check) succeeded (%s mode)\n' \
   "$replay_mode"

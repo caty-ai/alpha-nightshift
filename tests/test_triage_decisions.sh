@@ -89,6 +89,7 @@ config="$TEST_TMP/nightshift.conf"
 queue="$TEST_TMP/adapter.queue"
 adapter_log="$TEST_TMP/adapter.log"
 gh_log="$TEST_TMP/gh.log"
+lock_log="$TEST_TMP/lock-at-post.log"
 mkdir -p "$state" "$gh_dir"
 triage_write_config \
   "$config" \
@@ -153,13 +154,25 @@ triage_seed_finding \
 
 resp_adopted="$TEST_TMP/dedup-adopted.jsonl"
 resp_deferred="$TEST_TMP/dedup-deferred.jsonl"
+verify_adopted="$TEST_TMP/verify-adopted.jsonl"
+verify_deferred="$TEST_TMP/verify-deferred.jsonl"
 printf '%s\n' \
   '{"finding_id":"dup-adopted","verdict":"DUPLICATE","canonical_id":"canon-adopted","confidence":"high","shared_defect":"same guard removal"}' \
   > "$resp_adopted"
 printf '%s\n' \
   '{"finding_id":"dup-deferred","verdict":"DUPLICATE","canonical_id":"canon-deferred","confidence":"high","shared_defect":"same deferred defect"}' \
   > "$resp_deferred"
-printf '%s\n' "$resp_adopted" "$resp_deferred" > "$queue"
+printf '%s\n' \
+  '{"finding_id":"dup-adopted","verdict":"CONFIRMED_CURRENT","file":"app/render.sh","line":5,"quoted_line":"current evidence","removed_pattern":"","explanation":"still current"}' \
+  > "$verify_adopted"
+printf '%s\n' \
+  '{"finding_id":"dup-deferred","verdict":"CONFIRMED_CURRENT","file":"app/render.sh","line":5,"quoted_line":"current evidence","removed_pattern":"","explanation":"still current"}' \
+  > "$verify_deferred"
+printf '%s\n' \
+  "$resp_adopted" \
+  "$resp_deferred" \
+  "$verify_adopted" \
+  "$verify_deferred" > "$queue"
 
 export TRIAGE_FAKE_GH_DIR="$gh_dir"
 export TRIAGE_FAKE_GH_LOG="$gh_log"
@@ -222,8 +235,14 @@ assert_contains 'evidence app/render.sh:5' "$draft"
 triage_decisions_validate_with_dummy_source "$draft" "$ROOT" ||
   fail "draft decisions do not pass verdict_validate_decision once source_ref is injected"
 
-printf '%s\n' "$resp_adopted" "$resp_deferred" > "$queue"
-/bin/bash "$ROOT/bin/morning-triage" \
+printf '%s\n' \
+  "$resp_adopted" \
+  "$resp_deferred" \
+  "$verify_adopted" \
+  "$verify_deferred" > "$queue"
+TRIAGE_FAKE_GH_LOCK_PATH="$state/locks/nightshift.lock" \
+  TRIAGE_FAKE_GH_LOCK_LOG="$lock_log" \
+  /bin/bash "$ROOT/bin/morning-triage" \
   --force \
   --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
 
@@ -241,6 +260,14 @@ printf '%s\n' "$report_post_body" | grep -F '# morning-triage report' >/dev/null
 if printf '%s\n' "$report_post_body" | jq -e . >/dev/null 2>&1; then
   fail 'GitHub report comment body was parseable as standalone JSON'
 fi
+[ "$(sed -n '1p' "$lock_log")" = present ] ||
+  fail 'B2 report POST did not observe nightshift.lock as held'
+[ "$(sed -n '2p' "$lock_log")" = absent ] ||
+  fail 'B4 result POST unexpectedly observed nightshift.lock as held'
+jq -e '.verified | length == 2' "$state/triage/state/triage-state.json" >/dev/null ||
+  fail 'successful full run did not persist verification timestamps'
+[ "$(wc -l < "$state/triage/verified.jsonl" | tr -d ' ')" -eq 2 ] ||
+  fail 'successful full run did not republish current verified state'
 
 # This global configures the sourced ledger projector.
 # shellcheck disable=SC2034
@@ -249,5 +276,64 @@ STATE_DIR="$state"
   fail "full run did not append the dup-adopted verdict"
 [ "$(ledger_get_current_finding dup-deferred | jq -r '.current_status')" = rejected ] ||
   fail "full run did not append the dup-deferred verdict"
+
+b1_state="$TEST_TMP/b1-e2e-state"
+b1_gh="$TEST_TMP/b1-e2e-gh"
+b1_config="$TEST_TMP/b1-e2e.conf"
+b1_extra="$TEST_TMP/b1-e2e-extra.conf"
+b1_date_bin="$TEST_TMP/b1-date-bin"
+b1_settled="$TEST_TMP/b1-settled"
+mkdir -p "$b1_state" "$b1_gh" "$b1_date_bin"
+printf '%s\n' "TRIAGE_MAX_VERIFY_PER_RUN='0'" > "$b1_extra"
+triage_write_config \
+  "$b1_config" \
+  "$b1_state" \
+  "$TEST_DIR/fixtures/triage/fake-gh.sh" \
+  "$b1_extra"
+triage_seed_report_issue "$b1_gh" demo/repo 201
+triage_seed_finding \
+  "$b1_state" b1-canonical demo app/render.sh:5 "same settled symptom" Bug \
+  2026-08-10
+triage_seed_verdict \
+  "$b1_state" b1-canonical adopted 2026-08-11T00:00:00Z human \
+  comment:b1-adopted
+triage_seed_finding \
+  "$b1_state" b1-duplicate demo app/render.sh:5 "same settled symptom" Bug \
+  2026-08-12
+cat > "$b1_date_bin/date" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+if [ "${*: -1}" = '+%H:%M' ] && [ -n "${B1_SETTLED_SENTINEL:-}" ]; then
+  while [ ! -f "$B1_SETTLED_SENTINEL" ]; do
+    sleep 0.01
+  done
+fi
+/bin/date "$@"
+EOF
+chmod +x "$b1_date_bin/date"
+(
+  while [ ! -s "$b1_state/triage/decisions.draft.jsonl" ]; do
+    sleep 0.01
+  done
+  triage_seed_verdict \
+    "$b1_state" b1-canonical fixed 2026-08-12T00:00:00Z human \
+    comment:b1-fixed
+  : > "$b1_settled"
+) &
+b1_watcher_pid=$!
+TRIAGE_FAKE_GH_DIR="$b1_gh" \
+  TRIAGE_STUB_FAIL=1 \
+  NIGHTSHIFT_CONFIG="$b1_config" \
+  B1_SETTLED_SENTINEL="$b1_settled" \
+  PATH="$b1_date_bin:/usr/bin:/bin" \
+  /bin/bash "$ROOT/bin/morning-triage" \
+  --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+wait "$b1_watcher_pid"
+[ -f "$b1_settled" ] ||
+  fail 'B1 e2e fixture did not settle the canonical after draft publication'
+[ ! -s "$b1_state/triage/decisions.jsonl" ] ||
+  fail 'B1 full-run wiring retained a decision after its canonical settled'
+assert_contains 'decision_drops_canonical: 1' "$b1_state/triage/report.md"
 
 printf 'test_triage_decisions: PASS\n'

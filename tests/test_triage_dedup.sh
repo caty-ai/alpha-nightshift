@@ -43,6 +43,7 @@ cat > "$canonical_projection" <<'EOF'
 {"id":"rv-leaf-ellipsis-66666666","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-root-…abc12345"}}
 {"id":"rv-loop-a-77777777","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-loop-b-88888888"}}
 {"id":"rv-loop-b-88888888","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate/absorbed rv-loop-a-77777777"}}
+{"id":"rv-leaf-empty-99999999","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of"}}
 EOF
 jq -r '.id' "$canonical_projection" > "$canonical_ids"
 
@@ -74,6 +75,30 @@ assert_canonical_rejected rv-leaf-ambiguous-44444444 'ambiguous 8hex suffix'
 assert_canonical_rejected rv-leaf-multiple-55555555 'multiple full references'
 assert_canonical_rejected rv-leaf-ellipsis-66666666 'unrecoverable ellipsis id'
 assert_canonical_rejected rv-loop-a-77777777 'canonical loop'
+assert_canonical_rejected rv-leaf-empty-99999999 'empty duplicate reference'
+
+depth_projection="$TEST_TMP/depth-projection.jsonl"
+depth_ids="$TEST_TMP/depth-ids.txt"
+cat > "$depth_projection" <<'EOF'
+{"id":"rv-depth-root","current_status":"adopted","latest_verdict":{"rejection_reason":""}}
+{"id":"rv-depth-01","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-root"}}
+{"id":"rv-depth-02","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-01"}}
+{"id":"rv-depth-03","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-02"}}
+{"id":"rv-depth-04","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-03"}}
+{"id":"rv-depth-05","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-04"}}
+{"id":"rv-depth-06","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-05"}}
+{"id":"rv-depth-07","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-06"}}
+{"id":"rv-depth-08","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-07"}}
+{"id":"rv-depth-09","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-08"}}
+{"id":"rv-depth-10","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-09"}}
+{"id":"rv-depth-11","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of rv-depth-10"}}
+EOF
+jq -r '.id' "$depth_projection" > "$depth_ids"
+canonical_projection="$depth_projection"
+canonical_ids="$depth_ids"
+assert_canonical_rejected rv-depth-11 'transition depth boundary'
+canonical_projection="$TEST_TMP/canonical-projection.jsonl"
+canonical_ids="$TEST_TMP/canonical-ids.txt"
 [ "$(triage_reason_prefix_class 'already fixed on main abc')" = fixed ] ||
   fail 'already-fixed origin classification changed'
 [ "$(triage_reason_prefix_class 'deferred pending owner')" = deferred ] ||
@@ -159,7 +184,8 @@ jq -e -s '
 
 printf '%s\n' '{"closure_incomplete_count":1}' > "$cluster_dir/stats.json"
 triage_build_clusters
-jq -e -s 'all(.[]; .complete == false)' "$cluster_dir/clusters.jsonl" >/dev/null ||
+jq -e -s 'length >= 1 and all(.[]; .complete == false)' \
+  "$cluster_dir/clusters.jsonl" >/dev/null ||
   fail 'closure-incomplete cluster remained eligible for presentation'
 
 cat >> "$cluster_dir/current.jsonl" <<'EOF'
@@ -173,6 +199,75 @@ triage_build_clusters
 jq -e -s 'length == 1 and .[0].canonical_id == null and .[0].complete == false' \
   "$cluster_dir/clusters.jsonl" >/dev/null ||
   fail 'multiple adopted cluster members did not fail closed'
+
+sibling_dir="$TEST_TMP/sibling-cluster"
+TRIAGE_WORK_DIR="$sibling_dir"
+mkdir -p \
+  "$sibling_dir/dedup/demo" \
+  "$sibling_dir/verify/demo" \
+  "$sibling_dir/clones"
+printf '%s\n' '{}' > "$sibling_dir/clones/demo.json"
+cat > "$sibling_dir/current.jsonl" <<'EOF'
+{"id":"sibling-adopted","repo":"demo","target":"app/render.sh:5","night_id":"2026-08-10","ts":"2026-08-10T00:00:00Z","current_status":"adopted","latest_verdict":null}
+{"id":"sibling-open","repo":"demo","target":"app/render.sh:5","night_id":"2026-08-11","ts":"2026-08-11T00:00:00Z","current_status":"open","latest_verdict":null}
+{"id":"sibling-new","repo":"demo","target":"app/render.sh:5","night_id":"2026-08-12","ts":"2026-08-12T00:00:00Z","current_status":"open","latest_verdict":null}
+EOF
+jq -r '.id' "$sibling_dir/current.jsonl" > "$sibling_dir/current-ids.txt"
+cat > "$sibling_dir/dedup/demo/final.jsonl" <<'EOF'
+{"finding_id":"sibling-new","verdict":"DUPLICATE","canonical_id":"sibling-open","confidence":"high","shared_defect":"`one component`"}
+{"finding_id":"sibling-open","verdict":"DUPLICATE","canonical_id":"sibling-adopted","confidence":"high","shared_defect":"one component"}
+EOF
+: > "$sibling_dir/verify/demo/validated.jsonl"
+triage_stats_init
+triage_build_clusters
+triage_synthesize_decisions '2026-08-18T00:00:00Z'
+jq -e '
+  select(.finding_id == "sibling-new") |
+  .rejection_reason | startswith("duplicate of sibling-adopted ")
+' "$sibling_dir/decisions.draft.jsonl" >/dev/null ||
+  fail 'open sibling did not fall back through the complete cluster canonical'
+jq -e '
+  select(.finding_id == "sibling-new") |
+  .canonical_id == "sibling-adopted" and
+  .root_id == "sibling-adopted" and .root_status == "adopted"
+' "$sibling_dir/decision-branches.jsonl" >/dev/null ||
+  fail 'cluster fallback branch metadata did not record the adopted canonical'
+if jq -e --arg id sibling-new '
+  select(.finding_id == $id and (.rejection_reason | contains("`")))
+' "$sibling_dir/decisions.draft.jsonl" >/dev/null; then
+  fail 'shared_defect sanitizer retained a backtick'
+fi
+
+open_cluster_dir="$TEST_TMP/open-only-cluster"
+# This global configures triage_build_clusters and triage_synthesize_decisions.
+# shellcheck disable=SC2034
+TRIAGE_WORK_DIR="$open_cluster_dir"
+mkdir -p \
+  "$open_cluster_dir/dedup/demo" \
+  "$open_cluster_dir/verify/demo" \
+  "$open_cluster_dir/clones"
+printf '%s\n' '{}' > "$open_cluster_dir/clones/demo.json"
+cat > "$open_cluster_dir/current.jsonl" <<'EOF'
+{"id":"open-cluster-old","repo":"demo","target":"app/render.sh:5","night_id":"2026-08-10","ts":"2026-08-10T00:00:00Z","current_status":"open","latest_verdict":null}
+{"id":"open-cluster-new","repo":"demo","target":"app/render.sh:5","night_id":"2026-08-11","ts":"2026-08-11T00:00:00Z","current_status":"open","latest_verdict":null}
+EOF
+jq -r '.id' "$open_cluster_dir/current.jsonl" > \
+  "$open_cluster_dir/current-ids.txt"
+cat > "$open_cluster_dir/dedup/demo/final.jsonl" <<'EOF'
+{"finding_id":"open-cluster-new","verdict":"DUPLICATE","canonical_id":"open-cluster-old","confidence":"high","shared_defect":"one component"}
+EOF
+: > "$open_cluster_dir/verify/demo/validated.jsonl"
+triage_stats_init
+triage_build_clusters
+jq -e -s '
+  length == 1 and
+  .[0].canonical_id == "open-cluster-old" and
+  .[0].complete == true
+' "$open_cluster_dir/clusters.jsonl" >/dev/null ||
+  fail 'open-only cluster did not keep the oldest open finding as canonical'
+triage_synthesize_decisions '2026-08-18T00:00:00Z'
+[ ! -s "$open_cluster_dir/decisions.draft.jsonl" ] ||
+  fail 'cluster without an adopted canonical emitted an automatic decision'
 
 make_repo_pin() {
   pin_repo_dir=$1

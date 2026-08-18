@@ -1,4 +1,4 @@
-# morning-triage 設計書 v1.1 — 朝の裁定自動化 (#37) + 夜またぎ重複検知 (#38)
+# morning-triage 設計書 v1.1.1 — 朝の裁定自動化 (#37) + 夜またぎ重複検知 (#38)
 
 - 起点: shojikumaru/alpha-nightshift #37 / #38（設計は合同1本・Issue は分離のまま）
 - 作成: Alpha 2026-08-18 / 翔さん決裁: 自動化 GO・Hands-off（push まで自走・事後確認）
@@ -39,7 +39,7 @@
 1. **台帳形式不変**: 書込みは `bin/verdict-sync --input` のみ。lib/verdict.sh・lib/ledger.sh・bin/verdict-sync・lib/lock.sh は**一切変更しない**。台帳投影は STATE_DIR 差し替えで**本物の `ledger_project_findings` を呼ぶ**（投影ロジックの再実装禁止・リプレイも同じ投影器を通す）
 2. **fail-closed**: 確信が持てない finding は open のまま。LLM 出力不正・証拠ゲート不一致・canonical 解決不能・コスト超過・GitHub 不達 → すべて「書かない」側。打ち切り・スキップ・対象外は**種別ごとに件数をレポート明示**（no silent caps: コスト繰越／再検証スキップ／対象外 repo／閉包未完クラスタを区別する）
 3. **可逆性**: 自動却下は人が `rejected → adopted`（actor ≠ night-bot）で戻せる。**前提**: 単調性検査（lib/verdict.sh:717-723）により、人の訂正 verdict は observed_at がウォーターマーク（§2-6）より新しい必要がある。`--github-links` 経路はイベント時刻を使うため、ウォーターマーク以前に付けたラベルでの訂正は stale 拒否される — レポートに当該 run のウォーターマークを必ず表示し、復旧手順（ラベル貼り直し/新コメント）を README triage 節に記載する
-4. **actor 名義**: `auto-triage` 固定。初回実行前に既存台帳に actor=auto-triage の verdict が無いことを確認（名義一意性の前提検証）
+4. **actor 名義**: `auto-triage` 固定。各 run で本物の台帳投影を行い、actor=auto-triage の既存 verdict が無いことを確認する。投影不能も含め、検査不能時は fail-closed とする
 5. **単一 writer + ロック規律**: morning-triage は**起動直後に既存の `state/locks/nightshift.lock` を取得し、Phase A〜B2 の間保持し、B3 で verdict-sync を呼ぶ直前に解放する**（verdict-sync が自ら取得するため）。二重起動の敗者は Phase A 開始前に敗退する（LLM コスト・コメント投稿とも発生しない）。新しいロックは増やさない
 6. **observed_at ウォーターマーク**: run 内の全 decision の observed_at は **A1 で台帳投影を読んだ瞬間の UTC 秒（`nightshift_iso_now` と同書式）に固定**（全件同一値）。open finding は過去 verdict を持たない（open へ戻る遷移が存在しない）ため相互衝突しない。ロック保持と合わせ、分析中に着地した人裁定は verdict-sync の stale 検査（第二の網）でバッチごと fail-closed になる
 7. **実行窓**: 現在時刻が 06:30〜08:00 の外なら即 exit 0+ログ（launchd のスリープ復帰発火対策）。`--dry-run`/`--force` は窓検査を免除（リプレイ・手動運用）
@@ -78,12 +78,12 @@
 | DUPLICATE/high | rejected（dup/deferred/その他起因） | rejected (auto)・deferred 起因は `canonical is deferred` 注記 |
 | DUPLICATE/high | rejected（already-fixed 起因） | dup 却下しない。V の結果に従う（V=ALREADY_FIXED なら 4.1 へ・それ以外は「既知修正済み同型疑い」欄+V=CONFIRMED_CURRENT なら regression 疑い欄） |
 | DUPLICATE/high | fixed | 書かない→「regression 疑い」欄（V 結果併記） |
-| DUPLICATE/high | open | 書かない→「クラスタ提示」欄（人が一括裁定・#36 と同型） |
+| DUPLICATE/high | open | 同 finding が属する complete クラスタに adopted canonical があれば、その canonical で rejected (auto)。クラスタとして settled canonical を持たなければ「クラスタ提示」欄 |
 | DUPLICATE/high | 解決不能（参照パース不能・不在・ループ・複数参照） | 書かない→「要人裁定」欄 |
 | DUPLICATE/medium・low | — | 書かない→「dup 疑い」欄 |
 | DISTINCT | — | （dedup 由来の書込みなし） |
 
-**自動 dup 却下は「確定 verdict 済み canonical」限定**（レビュー3席収束）。これにより「人がこれから裁定する対象を機械が先取りして矛盾する」経路が構造的に消える。open×open クラスタは提示のみ — 定常運用では canonical は前日までに裁定済みのことが多く、自動化の減衰は同夜クラスタと1日窓に限られる。
+**自動 dup 却下は「確定 verdict 済み canonical」限定**（レビュー3席収束）。LLM が同じ complete クラスタの open sibling を指した場合も、推移閉包後に選ばれた adopted canonical を使う。クラスタが incomplete、canonical が null、または adopted 以外なら提示のみに留める。
 
 rejection_reason は機械テンプレのみ（LLM 自由文は 200 字整形・改行/タブ/パイプ除去して部分埋め込み）:
 - `already fixed on main <sha>: <説明> (<file>:<line>); not a false positive`
@@ -115,10 +115,10 @@ LLM 出力契約: `{finding_id, verdict, file, line, quoted_line, removed_patter
 
 機械検証（**全 PASS で初めて** mode=reject の decision 化。1つでも FAIL → open 残し+「fixed 疑い・証拠不一致」欄）:
 
-1. `file` が pinned SHA の clone に存在。パス述語は lib/verdict.sh の `safe_relative_path` と同一（制御文字・絶対パス・スキーム・`..` 拒否）+ symlink 拒否+realpath が clone 配下
+1. finding.target を `file[:anchor]` として解釈し、file 部と出力 `file` が同じ pinned SHA の clone 内実在ファイルを指す。散文、ディレクトリ、glob、`+` 等の複数ファイル連結は FAIL。パス述語は lib/verdict.sh の `safe_relative_path` と同一（制御文字・絶対パス・スキーム・`..` 拒否）+ symlink 拒否+realpath が clone 配下
 2. `line` がファイル行数以内
 3. `quoted_line`: 空白正規化後に**行完全一致**・正規化後 **20 字以上**・記号のみは拒否・`line ± 3` 窓内で**一意**（複数マッチは FAIL）・finding.target がファイルを指す場合は `file` と整合すること
-4. **不在証明**: `removed_pattern`（欠陥時の形の literal/regex）が `file` 内に 1 件もマッチしないこと（「新しい行がある」でなく「古い形が消えている」が ALREADY_FIXED の本質）
+4. **不在証明**: `removed_pattern` は POSIX 拡張正規表現（ERE）のみ。空白正規化後8字以上で、`file` 内に 1 件もマッチしないこと（「新しい行がある」でなく「古い形が消えている」が ALREADY_FIXED の本質）
 5. **履歴ゲート**: `git log --since=<finding.date> -- <file>` が非空（報告日以降に当該ファイルが変更されていなければ fixed は原理的に不可能）。このため A2 の clone は blob:none の partial clone 等**履歴を保持する形**にする（§8 A2）
 6. rejection_reason は機械テンプレ生成のみ
 
@@ -149,7 +149,7 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
     B2 レポートコメント投稿 → §7 の検証 → PASS で source_ref を埋めた decisions.jsonl を tmp→mv で確定
     B2.5 機械ゲート: `jq -e 'all(.status == "rejected")'`（自動 adopted/fixed の構造的禁止）
   ロック解放 → B3 verdict-sync --input decisions.jsonl（verdict-sync が自らロック取得・失敗時 60s×5 リトライ）
-  B4 結果コメント（**必須**・appended/idempotent/dropped の3値+失敗時は「同期失敗・台帳は open のまま・翌朝再試行」を必ず投稿 — 静かな毎朝全滅を可視化する）
+  B4 結果コメント（B2 投稿成功後は best-effort。appended/idempotent/dropped の3値+B2.5/B3失敗を投稿。コメント経路確立前の lock/設定/投影/clone/HARD_WALL/POST エラーは state ログのみ）
 ```
 
 - 分析〜B2 のロック保持により、人裁定（verdict-sync）は当該時間帯 fail-fast する（数分・06:35 台の実害なし）。それでも B3 直前のロック解放〜verdict-sync 再取得の微小窓は残る — §2-6 のウォーターマークが第二の網（stale でバッチ全滅=fail-closed）

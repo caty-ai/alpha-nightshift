@@ -42,7 +42,7 @@ make_repo_with_history() {
     git init >/dev/null
     git config user.name tests
     git config user.email tests@example.com
-    mkdir -p src
+    mkdir -p src scripts
     cat > src/good.sh <<'EOF'
 #!/bin/bash
 echo "modern validation guard remains enabled here"
@@ -70,6 +70,9 @@ EOF
 #!/bin/bash
 ============================
 EOF
+    printf '%s\n' 'original evidence row' > src/nineteen.txt
+    cp src/good.sh scripts/task-runner.sh
+    cp src/good.sh 'src/glob*.sh'
     ln -s good.sh src/link.sh
     git add src
     GIT_AUTHOR_DATE='2026-08-15T00:00:00Z' \
@@ -80,10 +83,15 @@ EOF
 #!/bin/bash
 echo "modern validation guard remains enabled here"
 echo "post-fix history marker makes this file eligible"
+echo "window-unique cited-line mismatch sentinel stays nearby"
 EOF
     printf '%s\n' '# post-finding history' >> src/duplicate.sh
     printf '%s\n' '# post-finding history' >> src/symbol.sh
-    git add src/good.sh src/duplicate.sh src/symbol.sh
+    printf '%s\n' 'abcdefghijklmnopqrs' > src/nineteen.txt
+    printf '%s\n' '# post-finding history' >> scripts/task-runner.sh
+    printf '%s\n' '# post-finding history' >> 'src/glob*.sh'
+    git add src/good.sh src/duplicate.sh src/symbol.sh src/nineteen.txt \
+      scripts/task-runner.sh 'src/glob*.sh'
     GIT_AUTHOR_DATE='2026-08-17T00:00:00Z' \
       GIT_COMMITTER_DATE='2026-08-17T00:00:00Z' \
       git commit -m update-good >/dev/null
@@ -228,6 +236,9 @@ run_triage() {
 
 window_state="$TEST_TMP/window-state"
 window_config="$TEST_TMP/window.conf"
+window_adapter_log="$TEST_TMP/window-adapter.log"
+window_repo="$TEST_TMP/window-repo"
+window_table="$TEST_TMP/window-table.tsv"
 fake_bin="$TEST_TMP/fake-bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/date" <<'EOF'
@@ -236,17 +247,54 @@ set -euo pipefail
 case "${*: -1}" in
   +%F) printf '%s\n' '2026-08-17' ;;
   +%H:%M) printf '%s\n' '05:59' ;;
+  +%s) /bin/date "$@" ;;
   -u) /bin/date "$@" ;;
   *) printf '%s\n' '2026-08-17T05:59:00Z' ;;
 esac
 EOF
 chmod +x "$fake_bin/date"
+make_repo_with_history "$window_repo"
+window_sha=$(git -C "$window_repo" rev-parse HEAD)
+seed_finding "$window_state" "rv-window-guard" "src/good.sh:2" \
+  "window guard adapter probe"
+cat > "$window_table" <<'EOF'
+verify	rv-window-guard	{"finding_id":"rv-window-guard","verdict":"UNCLEAR","file":"src/good.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"","explanation":"probe"}
+EOF
 write_config "$window_config" "$window_state"
-PATH="$fake_bin:/usr/bin:/bin" run_triage "$window_config" --dry-run >/dev/null
-[ ! -d "$window_state/ledger" ] ||
-  [ ! -f "$window_state/ledger/ledger.jsonl" ] ||
-  [ "$(wc -l < "$window_state/ledger/ledger.jsonl" | tr -d ' ')" -eq 0 ] ||
-  fail "window guard unexpectedly mutated state"
+PATH="$fake_bin:/usr/bin:/bin" TRIAGE_STUB_LOG_FILE="$window_adapter_log" \
+  TRIAGE_STUB_RESPONSE_TABLE="$window_table" \
+  run_triage "$window_config" \
+  --repo-pin "demo=$window_sha@$window_repo" >/dev/null
+[ ! -s "$window_adapter_log" ] ||
+  fail "window guard still invoked the adapter"
+[ "$(wc -l < "$window_state/ledger/ledger.jsonl" | tr -d ' ')" -eq 1 ] ||
+  fail "window guard unexpectedly mutated the ledger"
+
+window_dry_state="$TEST_TMP/window-dry-state"
+window_dry_config="$TEST_TMP/window-dry.conf"
+window_dry_log="$TEST_TMP/window-dry-adapter.log"
+seed_finding "$window_dry_state" "rv-window-guard" "src/good.sh:2" \
+  "window guard adapter probe"
+write_config "$window_dry_config" "$window_dry_state"
+PATH="$fake_bin:/usr/bin:/bin" TRIAGE_STUB_LOG_FILE="$window_dry_log" \
+  TRIAGE_STUB_RESPONSE_TABLE="$window_table" \
+  run_triage "$window_dry_config" --dry-run \
+  --repo-pin "demo=$window_sha@$window_repo" >/dev/null
+[ -s "$window_dry_log" ] ||
+  fail "dry-run did not preserve its execution-window bypass"
+
+disabled_state="$TEST_TMP/disabled-state"
+disabled_config="$TEST_TMP/disabled.conf"
+disabled_log="$TEST_TMP/disabled-adapter.log"
+write_config "$disabled_config" "$disabled_state"
+printf '%s\n' 'TRIAGE_ENABLED=0' >> "$disabled_config"
+disabled_rc=0
+TRIAGE_STUB_LOG_FILE="$disabled_log" \
+  run_triage "$disabled_config" --force >/dev/null 2>&1 || disabled_rc=$?
+[ "$disabled_rc" -eq 1 ] ||
+  fail "--force bypassed TRIAGE_ENABLED=0"
+[ ! -s "$disabled_log" ] ||
+  fail "disabled --force run invoked the adapter"
 
 lock_state="$TEST_TMP/lock-state"
 lock_config="$TEST_TMP/lock.conf"
@@ -271,6 +319,17 @@ run_triage "$actor_config" --dry-run --force >/dev/null 2>&1 || actor_rc=$?
 [ "$actor_rc" -eq 1 ] ||
   fail "preexisting auto-triage actor collision returned $actor_rc instead of 1"
 
+malformed_state="$TEST_TMP/malformed-ledger-state"
+malformed_config="$TEST_TMP/malformed-ledger.conf"
+mkdir -p "$malformed_state/ledger"
+printf '%s\n' '{not-json' > "$malformed_state/ledger/ledger.jsonl"
+write_config "$malformed_config" "$malformed_state"
+malformed_rc=0
+run_triage "$malformed_config" --dry-run --force >/dev/null 2>&1 ||
+  malformed_rc=$?
+[ "$malformed_rc" -eq 1 ] ||
+  fail "actor uniqueness check did not fail closed on an unparseable ledger"
+
 dry_state="$TEST_TMP/dry-state"
 dry_repo="$TEST_TMP/dry-repo"
 dry_config="$TEST_TMP/dry.conf"
@@ -285,6 +344,38 @@ triage_evidence_gate_already_fixed \
   fail "valid ALREADY_FIXED evidence did not pass all six gates"
 assert_contains "already fixed on main $dry_sha" "$gate_reason"
 assert_contains '(src/good.sh:2); not a false positive' "$gate_reason"
+task_runner_result=$(printf '%s\n' "$gate_good" | jq -c \
+  '.file = "scripts/task-runner.sh"')
+symbol_target_finding='{"id":"rv-gate","target":"scripts/task-runner.sh:load_state","date":"2026-08-16"}'
+triage_evidence_gate_already_fixed \
+  "$symbol_target_finding" "$task_runner_result" "$dry_repo" "$dry_sha" \
+  "$TEST_TMP/reason-symbol-target" ||
+  fail "file:symbol target was not accepted as an existing file target"
+file_only_target_finding='{"id":"rv-gate","target":"scripts/task-runner.sh","date":"2026-08-16"}'
+triage_evidence_gate_already_fixed \
+  "$file_only_target_finding" "$task_runner_result" "$dry_repo" "$dry_sha" \
+  "$TEST_TMP/reason-file-only-target" ||
+  fail "existing file target without an anchor was rejected"
+
+assert_evidence_rejected \
+  '{"id":"rv-gate","target":"validation logic around the startup guard","date":"2026-08-16"}' \
+  "$gate_good" "$dry_repo" "$dry_sha" prose-target
+assert_evidence_rejected \
+  '{"id":"rv-gate","target":"src/good.sh+src/unrelated.sh","date":"2026-08-16"}' \
+  "$gate_good" "$dry_repo" "$dry_sha" multi-file-target
+glob_result=$(printf '%s\n' "$gate_good" | jq -c '.file = "src/glob*.sh"')
+assert_evidence_rejected \
+  '{"id":"rv-gate","target":"src/glob*.sh:2","date":"2026-08-16"}' \
+  "$glob_result" "$dry_repo" "$dry_sha" literal-existing-glob-target
+assert_evidence_rejected "$gate_finding" \
+  '{"file":"src/good.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"seven77","explanation":"short removed pattern"}' \
+  "$dry_repo" "$dry_sha" short-removed-pattern
+assert_evidence_rejected \
+  '{"id":"rv-gate","target":"src/nineteen.txt:1","date":"2026-08-16"}' \
+  '{"file":"src/nineteen.txt","line":1,"quoted_line":"abcdefghijklmnopqrs","removed_pattern":"removed_evidence","explanation":"nineteen characters"}' \
+  "$dry_repo" "$dry_sha" nineteen-character-line
+git -C "$dry_repo" log --since=2026-08-16 -- src/nineteen.txt | grep . >/dev/null ||
+  fail "19-character fixture was not history-gate eligible"
 
 assert_evidence_rejected "$gate_finding" \
   '{"file":"../outside.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"legacy","explanation":"bad path"}' \
@@ -298,6 +389,9 @@ assert_evidence_rejected "$gate_finding" \
 assert_evidence_rejected "$gate_finding" \
   '{"file":"src/good.sh","line":2,"quoted_line":"echo \"a different existing-looking line entirely\"","removed_pattern":"legacy","explanation":"mismatch"}' \
   "$dry_repo" "$dry_sha" exact-line
+assert_evidence_rejected "$gate_finding" \
+  '{"file":"src/good.sh","line":2,"quoted_line":"echo \"window-unique cited-line mismatch sentinel stays nearby\"","removed_pattern":"legacy","explanation":"window-unique mismatch"}' \
+  "$dry_repo" "$dry_sha" exact-line-window-unique
 assert_evidence_rejected \
   '{"id":"rv-gate","target":"src/unrelated.sh:2","date":"2026-08-16"}' \
   "$gate_good" "$dry_repo" "$dry_sha" unrelated-existing-line
@@ -327,13 +421,14 @@ assert_evidence_rejected \
 
 long_explanation=$(printf '%0260d' 0 | tr '0' x)
 sanitized_result=$(printf '%s\n' "$gate_good" | jq -c \
-  --arg explanation "$long_explanation | injected" \
+  --arg explanation "$long_explanation | \`injected\`" \
   '.explanation = $explanation')
 sanitized_reason="$TEST_TMP/reason-sanitized"
 triage_evidence_gate_already_fixed \
   "$gate_finding" "$sanitized_result" "$dry_repo" "$dry_sha" "$sanitized_reason" ||
   fail 'sanitization fixture unexpectedly failed the physical evidence gates'
 assert_not_contains '|' "$sanitized_reason"
+assert_not_contains '`' "$sanitized_reason"
 [ "$(wc -c < "$sanitized_reason" | tr -d ' ')" -le 350 ] ||
   fail 'LLM explanation was not capped before entering rejection_reason'
 seed_finding "$dry_state" "rv-bug-seat-good-aaaa1111" "src/good.sh:2" \
@@ -348,6 +443,8 @@ seed_finding "$dry_state" "rv-bug-seat-badjson-eeee5555" "src/good.sh:2" \
   "malformed adapter line"
 seed_finding "$dry_state" "rv-bug-seat-wrongid-ffff6666" "src/good.sh:2" \
   "schema-valid response names a different finding"
+seed_finding "$dry_state" "rv-bug-seat-prose-77778888" \
+  "validation logic around the startup guard" "prose target hallucination"
 cat > "$dry_table" <<'EOF'
 verify	rv-bug-seat-good-aaaa1111	{"finding_id":"rv-bug-seat-good-aaaa1111","verdict":"ALREADY_FIXED","file":"src/good.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"legacy_removed_guard","explanation":"good evidence chain"}
 verify	rv-bug-seat-short-bbbb2222	{"finding_id":"rv-bug-seat-short-bbbb2222","verdict":"ALREADY_FIXED","file":"src/short.sh","line":2,"quoted_line":"echo ok","removed_pattern":"legacy_short_guard","explanation":"too short must fail"}
@@ -355,6 +452,7 @@ verify	rv-bug-seat-removed-cccc3333	{"finding_id":"rv-bug-seat-removed-cccc3333"
 verify	rv-bug-seat-history-dddd4444	{"finding_id":"rv-bug-seat-history-dddd4444","verdict":"ALREADY_FIXED","file":"src/unrelated.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"legacy_unrelated_guard","explanation":"history gate must fail"}
 verify	rv-bug-seat-badjson-eeee5555	not-json
 verify	rv-bug-seat-wrongid-ffff6666	{"finding_id":"rv-not-in-this-batch","verdict":"UNCLEAR","file":"src/good.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"","explanation":"wrong finding id"}
+verify	rv-bug-seat-prose-77778888	{"finding_id":"rv-bug-seat-prose-77778888","verdict":"ALREADY_FIXED","file":"src/good.sh","line":2,"quoted_line":"echo \"modern validation guard remains enabled here\"","removed_pattern":"legacy_removed_guard","explanation":"hallucinated evidence for prose target"}
 EOF
 write_config "$dry_config" "$dry_state"
 TRIAGE_STUB_RESPONSE_TABLE="$dry_table" \
@@ -366,6 +464,9 @@ dry_draft=$(find "$dry_state" -name 'decisions.draft.jsonl' -print | sed -n '1p'
   fail "fail-closed dry-run expected exactly one accepted verify decision"
 [ "$(jq -r '.finding_id' "$dry_draft")" = "rv-bug-seat-good-aaaa1111" ] ||
   fail "fail-closed dry-run let a bad verify decision through"
+assert_contains 'rv-bug-seat-prose-77778888' "$dry_state/triage/report.md"
+jq -e '.verified == {}' "$dry_state/triage/state/triage-state.json" >/dev/null ||
+  fail "dry-run persisted last-verified-at state"
 
 gh_state="$TEST_TMP/gh-state"
 gh_repo="$TEST_TMP/gh-repo"
@@ -387,6 +488,20 @@ FAKE_GH_FAIL_POST=1 TRIAGE_STUB_RESPONSE_TABLE="$gh_table" \
 [ "$(jq -r 'select(.type == "verdict" and .actor == "auto-triage") | .finding_id' \
   "$gh_state/ledger/ledger.jsonl" | wc -l | tr -d ' ')" -eq 0 ] ||
   fail "GitHub failure still appended an auto-triage verdict"
+jq -e '.verified == {}' "$gh_state/triage/state/triage-state.json" >/dev/null ||
+  fail "failed full run persisted last-verified-at state"
+
+empty_state="$TEST_TMP/empty-adapter-state"
+empty_config="$TEST_TMP/empty-adapter.conf"
+empty_table="$TEST_TMP/empty-adapter-table.tsv"
+seed_finding "$empty_state" "rv-bug-seat-empty-99990000" \
+  "src/good.sh:2" "empty adapter response"
+: > "$empty_table"
+write_config "$empty_config" "$empty_state"
+TRIAGE_STUB_RESPONSE_TABLE="$empty_table" \
+  run_triage "$empty_config" --dry-run --force \
+  --repo-pin "demo=$dry_sha@$dry_repo" >/dev/null
+assert_contains 'adapter_failures: 1' "$empty_state/triage/report.md"
 
 deadline_state="$TEST_TMP/deadline-state"
 deadline_config="$TEST_TMP/deadline.conf"

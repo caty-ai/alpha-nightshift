@@ -19,7 +19,6 @@ nightshift_init "$REPO_ROOT"
 
 triage_dry_run=false
 triage_force=false
-: > /dev/null
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

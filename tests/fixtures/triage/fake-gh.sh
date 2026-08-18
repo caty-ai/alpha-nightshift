@@ -80,6 +80,14 @@ case "$method:$endpoint" in
     ;;
   POST:repos/*/issues/*/comments)
     [ "${FAKE_GH_FAIL_POST:-0}" != 1 ] || exit 1
+    if [ -n "${TRIAGE_FAKE_GH_LOCK_LOG:-}" ]; then
+      if [ -n "${TRIAGE_FAKE_GH_LOCK_PATH:-}" ] &&
+        /usr/bin/stat "${TRIAGE_FAKE_GH_LOCK_PATH}" >/dev/null 2>&1; then
+        printf '%s\n' present >> "$TRIAGE_FAKE_GH_LOCK_LOG"
+      else
+        printf '%s\n' absent >> "$TRIAGE_FAKE_GH_LOCK_LOG"
+      fi
+    fi
     counter_file="$fixture_root/.comment-counter"
     if [ -f "$counter_file" ]; then counter=$(cat "$counter_file"); else counter=0; fi
     counter=$((counter + 1))

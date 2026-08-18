@@ -158,6 +158,9 @@ The run is meant for the 06:30-08:00 morning window. `bin/morning-triage`
 exits outside that window, so the launchd schedule is a trigger, not the only
 guard.
 
+`--force` bypasses only that execution-window check. It does not bypass
+`TRIAGE_ENABLED=0` or the `TRIAGE_HARD_WALL` Phase B cutoff.
+
 `--dry-run` stays inside the selected `--state-dir`, publishes the Phase A
 draft, report, cluster, verification, and watermark artifacts under
 `state/triage/`, and skips GitHub, final `decisions.jsonl`, and `verdict-sync`.
@@ -168,8 +171,10 @@ predates that watermark, leave the old evidence in place and post a fresh
 comment or relabel after the next run instead of trying to rewrite the stale
 record.
 
-B4 always posts a visible result comment, including sync failures, so a broken
-morning run is visible instead of silent.
+After the initial report can be posted, B2.5 gate failures and B3 sync failures
+also get a best-effort visible result comment. Earlier lock, configuration,
+ledger-projection, clone, hard-wall, or report-post failures may not have a
+working comment channel and are visible only in the state log.
 
 ## Record morning verdicts
 

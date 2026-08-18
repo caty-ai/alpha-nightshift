@@ -16,4 +16,4 @@ fail-closed 原則: 確信が持てなければ UNCLEAR に倒すこと。ALREAD
 
 ## 出力契約
 各 finding について1行ずつ、以下の JSONL を出力（余計な行・コードフェンス禁止。最終応答は JSONL のみ）:
-{"finding_id":"...","verdict":"CONFIRMED_CURRENT"|"ALREADY_FIXED"|"NOT_REPRODUCIBLE"|"UNCLEAR","file":"リポジトリ相対パス","line":123,"quoted_line":"その行の内容を一字一句そのまま","removed_pattern":"ALREADY_FIXED時は旧欠陥形の literal/regex、それ以外は空文字列","explanation":"80字以内"}
+{"finding_id":"...","verdict":"CONFIRMED_CURRENT"|"ALREADY_FIXED"|"NOT_REPRODUCIBLE"|"UNCLEAR","file":"リポジトリ相対パス","line":123,"quoted_line":"その行の内容を一字一句そのまま","removed_pattern":"ALREADY_FIXED時は旧欠陥形を表すPOSIX拡張正規表現（ERE）のみ。それ以外は空文字列","explanation":"80字以内"}

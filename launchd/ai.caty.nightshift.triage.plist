@@ -9,6 +9,11 @@
     <string>/bin/bash</string>
     <string>__NIGHTSHIFT_ROOT__/bin/morning-triage</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
