@@ -162,8 +162,9 @@ guard.
 `TRIAGE_ENABLED=0` or the `TRIAGE_HARD_WALL` Phase B cutoff.
 
 `--dry-run` stays inside the selected `--state-dir`, publishes the Phase A
-draft, report, cluster, verification, and watermark artifacts under
-`state/triage/`, and skips GitHub, final `decisions.jsonl`, and `verdict-sync`.
+draft, report, cluster, and verification artifacts under `state/triage/`,
+and skips GitHub, final `decisions.jsonl`, `verdict-sync`, and every
+persistent run marker (`last-run-watermark`, verified/carryover state).
 
 The watermark is the A1 projection read time frozen for that run. If
 `verdict-sync --github-links` rejects an old label or comment because it

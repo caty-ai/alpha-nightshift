@@ -558,23 +558,6 @@ triage_publish_dedup_carryover() {
     "$(triage_dedup_carryover_state_file)"
 }
 
-triage_capture_replay_dedup_results() {
-  [ -n "${TRIAGE_REPLAY_DEDUP_RESULTS_FILE:-}" ] || return 0
-  case "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE" in
-    /*) ;;
-    *) return 1 ;;
-  esac
-  triage_replay_capture_parent=$(dirname "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE")
-  [ -d "$triage_replay_capture_parent" ] || return 1
-  triage_replay_capture_tmp="$TRIAGE_REPLAY_DEDUP_RESULTS_FILE.tmp.$$"
-  : > "$triage_replay_capture_tmp"
-  for triage_replay_final in "$TRIAGE_WORK_DIR"/dedup/*/final.jsonl; do
-    [ -f "$triage_replay_final" ] || continue
-    cat "$triage_replay_final" >> "$triage_replay_capture_tmp"
-  done
-  mv "$triage_replay_capture_tmp" "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE"
-}
-
 triage_verify_candidates_for_repo() {
   triage_repo=$1
   triage_recent_days=$TRIAGE_REVERIFY_INTERVAL_DAYS
@@ -2013,7 +1996,6 @@ triage_run() {
     triage_process_verify_repo "$triage_repo" "$triage_clone_json" >/dev/null
   done
 
-  triage_capture_replay_dedup_results || return 1
   if [ "$triage_dry_run" != true ]; then
     triage_publish_dedup_carryover || return 1
   fi

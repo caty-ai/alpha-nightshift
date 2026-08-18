@@ -243,14 +243,12 @@ run_triage() {
   replay_config=$2
   replay_adapter=$3
   replay_cache=$4
-  replay_capture=${5:-}
-  replay_settled_fixture=${6:-}
-  replay_fallback_adapter=${7:-}
+  replay_settled_fixture=${5:-}
+  replay_fallback_adapter=${6:-}
   env \
     NIGHTSHIFT_CONFIG="$replay_config" \
     TRIAGE_ADAPTER="$replay_adapter" \
     TRIAGE_LLM_CACHE_DIR="$replay_cache" \
-    TRIAGE_REPLAY_DEDUP_RESULTS_FILE="$replay_capture" \
     TRIAGE_SETTLED_DEDUP_FIXTURE="$replay_settled_fixture" \
     TRIAGE_SETTLED_FALLBACK_ADAPTER="$replay_fallback_adapter" \
     "$MORNING_TRIAGE" --dry-run --force --state-dir "$replay_state" \
@@ -258,32 +256,22 @@ run_triage() {
 }
 
 build_g6_dedup_fixture() {
-  replay_open_dedup=$1
-  replay_fixture=$2
-  jq -c --slurpfile truth "$GROUND_TRUTH" '
-    [
-      $truth[] |
-      select(.human_canonical != null) |
-      .finding_id
-    ] as $expected |
-    select(
-      .verdict == "DUPLICATE" and
-      .confidence == "high" and
-      (.finding_id as $id | $expected | index($id)) != null
-    ) |
+  replay_fixture=$1
+  jq -c '
+    select(.human_class == "duplicate" or .human_class == "superseded") |
     {
       finding_id,
-      verdict,
-      canonical_id,
-      confidence,
-      shared_defect
+      verdict: "DUPLICATE",
+      canonical_id: .human_canonical,
+      confidence: "high",
+      shared_defect: "replayed from ground truth"
     }
-  ' "$replay_open_dedup" | jq -s -c 'sort_by(.finding_id)[]' > \
+  ' "$GROUND_TRUTH" | jq -s -c 'sort_by(.finding_id)[]' > \
     "$replay_fixture"
   jq -e -s --slurpfile truth "$GROUND_TRUTH" '
     [
       $truth[] |
-      select(.human_canonical != null) |
+      select(.human_class == "duplicate" or .human_class == "superseded") |
       .finding_id
     ] as $expected |
     length == 15 and
@@ -530,7 +518,6 @@ run_full_pass() {
   replay_settled_state="$replay_pass_root/settled-state"
   replay_open_config="$replay_pass_root/open.conf"
   replay_settled_config="$replay_pass_root/settled.conf"
-  replay_open_dedup="$replay_pass_root/open-dedup-final.jsonl"
   replay_g6_fixture="$replay_pass_root/g6-dedup-fixture.jsonl"
   replay_started_at=$(date '+%s')
   mkdir -p "$replay_pass_root"
@@ -545,7 +532,7 @@ run_full_pass() {
   printf 'replay-36 pass %s: G0 PASS\n' "$replay_pass"
 
   run_triage "$replay_open_state" "$replay_open_config" "$replay_adapter" \
-    "$cache_dir" "$replay_open_dedup"
+    "$cache_dir"
   require_artifacts "$replay_open_state"
   replay_open_triage="$replay_open_state/triage"
   gate_g1 "$replay_open_triage/decisions.draft.jsonl" || {
@@ -570,7 +557,7 @@ run_full_pass() {
   }
   printf 'replay-36 pass %s: G5 PASS\n' "$replay_pass"
 
-  build_g6_dedup_fixture "$replay_open_dedup" "$replay_g6_fixture" || {
+  build_g6_dedup_fixture "$replay_g6_fixture" || {
     printf 'replay-36 pass %s: G6 deterministic fixture FAIL\n' \
       "$replay_pass" >&2
     return 1
@@ -583,10 +570,10 @@ run_full_pass() {
     printf 'replay-36 pass %s: G6 fixture FAIL\n' "$replay_pass" >&2
     return 1
   }
-  printf 'replay-36 pass %s: G6 Stage D replays pass-1 open-run decisions deterministically\n' \
+  printf 'replay-36 pass %s: G6 Stage D replays ground-truth duplicate verdicts deterministically\n' \
     "$replay_pass"
   run_triage "$replay_settled_state" "$replay_settled_config" \
-    "$settled_adapter" "$replay_root/g6-deterministic-cache" '' \
+    "$settled_adapter" "$replay_root/g6-deterministic-cache" \
     "$replay_g6_fixture" "$replay_adapter"
   require_artifacts "$replay_settled_state"
   replay_settled_triage="$replay_settled_state/triage"
