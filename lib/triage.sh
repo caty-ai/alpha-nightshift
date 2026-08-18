@@ -193,9 +193,18 @@ triage_init_state_file() {
 
 triage_assert_actor_uniqueness() {
   triage_actor_projection="$TRIAGE_WORK_DIR/actor-projection.jsonl"
+  triage_actor_repo=$(triage_report_repo_full_name) || return 1
+  triage_actor_source_prefix="https://github.com/$triage_actor_repo/issues/"
   ledger_project_findings > "$triage_actor_projection" || return 1
-  if jq -e --arg actor "$TRIAGE_ACTOR" '
-    select(.latest_verdict.actor == $actor)
+  if jq -e --arg actor "$TRIAGE_ACTOR" \
+    --arg source_prefix "$triage_actor_source_prefix" '
+    select(
+      .latest_verdict.actor == $actor and
+      (
+        (.latest_verdict.source_ref | type) != "string" or
+        ((.latest_verdict.source_ref | startswith($source_prefix)) | not)
+      )
+    )
   ' "$triage_actor_projection" >/dev/null 2>&1; then
     return 1
   else
@@ -549,6 +558,23 @@ triage_publish_dedup_carryover() {
     "$(triage_dedup_carryover_state_file)"
 }
 
+triage_capture_replay_dedup_results() {
+  [ -n "${TRIAGE_REPLAY_DEDUP_RESULTS_FILE:-}" ] || return 0
+  case "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  triage_replay_capture_parent=$(dirname "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE")
+  [ -d "$triage_replay_capture_parent" ] || return 1
+  triage_replay_capture_tmp="$TRIAGE_REPLAY_DEDUP_RESULTS_FILE.tmp.$$"
+  : > "$triage_replay_capture_tmp"
+  for triage_replay_final in "$TRIAGE_WORK_DIR"/dedup/*/final.jsonl; do
+    [ -f "$triage_replay_final" ] || continue
+    cat "$triage_replay_final" >> "$triage_replay_capture_tmp"
+  done
+  mv "$triage_replay_capture_tmp" "$TRIAGE_REPLAY_DEDUP_RESULTS_FILE"
+}
+
 triage_verify_candidates_for_repo() {
   triage_repo=$1
   triage_recent_days=$TRIAGE_REVERIFY_INTERVAL_DAYS
@@ -782,6 +808,11 @@ triage_whitespace_normalize() {
   printf '%s\n' "$1" | awk '{$1=$1; print}'
 }
 
+triage_sanitize_anchor() {
+  printf '%s\n' "$1" | tr -d '\r\n\t|`' |
+    awk '{$1=$1; print substr($0,1,60)}'
+}
+
 triage_removed_pattern_absent() {
   triage_pattern=$1
   triage_file=$2
@@ -812,15 +843,25 @@ triage_evidence_gate_already_fixed() {
   triage_date=$(printf '%s\n' "$triage_finding_json" | jq -r '.date')
 
   case "$triage_target" in
-    *+*) return 1 ;;
-  esac
-  triage_target_file=${triage_target%%:*}
-  case "$triage_target_file" in
     *'*'*|*'?'*|*'['*) return 1 ;;
   esac
-  triage_safe_relative_path "$triage_target_file" || return 1
-  triage_target_abs=$(triage_resolve_path_in_clone \
-    "$triage_clone_root" "$triage_target_file") || return 1
+  triage_target_file=$triage_target
+  if triage_target_abs=$(triage_resolve_path_in_clone \
+    "$triage_clone_root" "$triage_target_file" 2>/dev/null); then
+    :
+  else
+    triage_target_file=${triage_target%%:*}
+    if [ "$triage_target_file" != "$triage_target" ] &&
+      triage_target_abs=$(triage_resolve_path_in_clone \
+        "$triage_clone_root" "$triage_target_file" 2>/dev/null); then
+      :
+    else
+      case "$triage_target" in
+        *+*|*';'*) return 1 ;;
+      esac
+      return 1
+    fi
+  fi
   [ "$triage_target_abs" = "$triage_abs_file" ] || return 1
   [ "$triage_target_file" = "$triage_rel_file" ] || return 1
 
@@ -1375,8 +1416,9 @@ triage_build_clusters() {
         rediscovery_count:(if $canonical == null then 0 else
           [$projected[] | select(
             .current_status == "rejected" and
-            ((.latest_verdict.rejection_reason // "") |
-              test("^duplicate of " + $canonical + "($|[[:space:](])"))
+            ((.latest_verdict.rejection_reason // "") as $reason |
+              ($reason | startswith("duplicate of " + $canonical + " ")) or
+              ($reason | startswith("duplicate of " + $canonical + "(")))
           )] | length end)
       }
     ' > "$triage_clusters"
@@ -1392,6 +1434,7 @@ triage_atomic_publish_file() {
 
 triage_publish_artifacts() {
   triage_watermark=$1
+  triage_publish_operational_state=${2:-true}
   triage_atomic_publish_file "$(triage_decisions_draft_file)" \
     "$STATE_DIR/triage/decisions.draft.jsonl" || return 1
   triage_atomic_publish_file "$(triage_report_file)" \
@@ -1400,9 +1443,11 @@ triage_publish_artifacts() {
     "$STATE_DIR/triage/clusters.jsonl" || return 1
   triage_atomic_publish_file "$(triage_verify_results_file)" \
     "$STATE_DIR/triage/verify-results.jsonl" || return 1
-  printf '%s\n' "$triage_watermark" > "$TRIAGE_WORK_DIR/last-run-watermark"
-  triage_atomic_publish_file "$TRIAGE_WORK_DIR/last-run-watermark" \
-    "$STATE_DIR/triage/last-run-watermark"
+  if [ "$triage_publish_operational_state" = true ]; then
+    printf '%s\n' "$triage_watermark" > "$TRIAGE_WORK_DIR/last-run-watermark"
+    triage_atomic_publish_file "$TRIAGE_WORK_DIR/last-run-watermark" \
+      "$STATE_DIR/triage/last-run-watermark"
+  fi
   triage_publish_verified_state
 }
 
@@ -1485,12 +1530,7 @@ triage_synthesize_decisions() {
       fi
       triage_target=$(jq -r --arg id "$triage_finding_id" \
         'select(.id == $id) | .target' "$(triage_projection_file)")
-      if [[ "$triage_target" =~ ^[^[:space:]:\|]+(:[1-9][0-9]*)?$ ]]; then
-        triage_anchor=$triage_target
-      else
-        triage_anchor=$(printf '%s\n' "$triage_target" |
-          sed 's/[|[:cntrl:]]/ /g' | cut -c1-60)
-      fi
+      triage_anchor=$(triage_sanitize_anchor "$triage_target")
       triage_shared=$(printf '%s\n' "$triage_line" | jq -r '.shared_defect' |
         tr '\r\n\t|`' '     ' | awk '{$1=$1; print substr($0,1,200)}')
       case "$triage_root_status:$triage_root_cause" in
@@ -1707,9 +1747,9 @@ triage_render_report() {
     triage_report_root=$(printf '%s\n' "$triage_report_reason" | sed -n 's/^duplicate of \([^ ]*\).*/\1/p')
     triage_report_repeat=0
     if [ -n "$triage_report_root" ]; then
-      triage_report_repeat=$(jq -s -r --arg root "$triage_report_root" '[.[] | select(.current_status == "rejected" and ((.latest_verdict.rejection_reason // "") | test("^duplicate of " + $root + "($|[[:space:](])")))] | length' "$(triage_projection_file)")
+      triage_report_repeat=$(jq -s -r --arg root "$triage_report_root" '[.[] | select(.current_status == "rejected" and ((.latest_verdict.rejection_reason // "") as $reason | ($reason | startswith("duplicate of " + $root + " ")) or ($reason | startswith("duplicate of " + $root + "("))))] | length' "$(triage_projection_file)")
       triage_report_pending=$(jq -s -r --arg root "$triage_report_root" \
-        '[.[] | select((.rejection_reason // "") | test("^duplicate of " + $root + "($|[[:space:](])"))] | length' \
+        '[.[] | select((.rejection_reason // "") as $reason | ($reason | startswith("duplicate of " + $root + " ")) or ($reason | startswith("duplicate of " + $root + "(")))] | length' \
         "$(triage_decisions_draft_file)")
       triage_report_repeat=$((triage_report_repeat + triage_report_pending))
     fi
@@ -1973,13 +2013,20 @@ triage_run() {
     triage_process_verify_repo "$triage_repo" "$triage_clone_json" >/dev/null
   done
 
-  triage_publish_dedup_carryover
+  triage_capture_replay_dedup_results || return 1
+  if [ "$triage_dry_run" != true ]; then
+    triage_publish_dedup_carryover || return 1
+  fi
 
   triage_collect_machine_results
   triage_build_clusters
   triage_synthesize_decisions "$triage_watermark"
   triage_render_report "$triage_watermark"
-  triage_publish_artifacts "$triage_watermark"
+  if [ "$triage_dry_run" = true ]; then
+    triage_publish_artifacts "$triage_watermark" false
+  else
+    triage_publish_artifacts "$triage_watermark" true
+  fi
   if [ "$triage_dry_run" = true ]; then
     return 0
   fi

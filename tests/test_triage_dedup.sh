@@ -165,22 +165,24 @@ cluster_dir="$TEST_TMP/clusters"
 TRIAGE_WORK_DIR="$cluster_dir"
 mkdir -p "$cluster_dir/dedup/demo"
 cat > "$cluster_dir/current.jsonl" <<'EOF'
-{"id":"cluster-adopted","repo":"demo","night_id":"2026-08-10","ts":"2026-08-10T00:00:00Z","current_status":"adopted","latest_verdict":null}
+{"id":"cluster+adopted","repo":"demo","night_id":"2026-08-10","ts":"2026-08-10T00:00:00Z","current_status":"adopted","latest_verdict":null}
 {"id":"cluster-open-old","repo":"demo","night_id":"2026-08-11","ts":"2026-08-11T00:00:00Z","current_status":"open","latest_verdict":null}
 {"id":"cluster-open-new","repo":"demo","night_id":"2026-08-12","ts":"2026-08-12T00:00:00Z","current_status":"open","latest_verdict":null}
+{"id":"cluster-rediscovery","repo":"demo","night_id":"2026-08-13","ts":"2026-08-13T00:00:00Z","current_status":"rejected","latest_verdict":{"rejection_reason":"duplicate of cluster+adopted (same defect)"}}
 EOF
 printf '%s\n' '{"closure_incomplete_count":0}' > "$cluster_dir/stats.json"
 cat > "$cluster_dir/dedup/demo/final.jsonl" <<'EOF'
 {"finding_id":"cluster-open-new","verdict":"DUPLICATE","canonical_id":"cluster-open-old","confidence":"high","shared_defect":"one component"}
-{"finding_id":"cluster-open-old","verdict":"DUPLICATE","canonical_id":"cluster-adopted","confidence":"high","shared_defect":"one component"}
+{"finding_id":"cluster-open-old","verdict":"DUPLICATE","canonical_id":"cluster+adopted","confidence":"high","shared_defect":"one component"}
 EOF
 triage_build_clusters
 jq -e -s '
   length == 1 and
-  .[0].canonical_id == "cluster-adopted" and
-  .[0].complete == true
+  .[0].canonical_id == "cluster+adopted" and
+  .[0].complete == true and
+  .[0].rediscovery_count == 1
 ' "$cluster_dir/clusters.jsonl" >/dev/null ||
-  fail 'cluster canonical did not prioritize its single adopted member'
+  fail 'cluster canonical or literal rediscovery match was incorrect'
 
 printf '%s\n' '{"closure_incomplete_count":1}' > "$cluster_dir/stats.json"
 triage_build_clusters

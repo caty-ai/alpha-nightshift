@@ -73,6 +73,8 @@ EOF
     printf '%s\n' 'original evidence row' > src/nineteen.txt
     cp src/good.sh scripts/task-runner.sh
     cp src/good.sh 'src/glob*.sh'
+    cp src/good.sh 'src/foo+bar.sh'
+    cp src/good.sh 'src/foo;bar.sh'
     ln -s good.sh src/link.sh
     git add src
     GIT_AUTHOR_DATE='2026-08-15T00:00:00Z' \
@@ -90,8 +92,10 @@ EOF
     printf '%s\n' 'abcdefghijklmnopqrs' > src/nineteen.txt
     printf '%s\n' '# post-finding history' >> scripts/task-runner.sh
     printf '%s\n' '# post-finding history' >> 'src/glob*.sh'
+    printf '%s\n' '# post-finding history' >> 'src/foo+bar.sh'
+    printf '%s\n' '# post-finding history' >> 'src/foo;bar.sh'
     git add src/good.sh src/duplicate.sh src/symbol.sh src/nineteen.txt \
-      scripts/task-runner.sh 'src/glob*.sh'
+      scripts/task-runner.sh 'src/glob*.sh' 'src/foo+bar.sh' 'src/foo;bar.sh'
     GIT_AUTHOR_DATE='2026-08-17T00:00:00Z' \
       GIT_COMMITTER_DATE='2026-08-17T00:00:00Z' \
       git commit -m update-good >/dev/null
@@ -216,6 +220,7 @@ write_config() {
     "TRIAGE_ALREADY_FIXED_MODE='reject'" \
     "TRIAGE_ADAPTER='$STUB_ADAPTER'" \
     "TRIAGE_REPORT_ISSUE='123'" \
+    "TRIAGE_REPORT_REPO_FULL_NAME='shojikumaru/alpha-nightshift'" \
     "TRIAGE_TARGET_REPOS='demo=owner/demo'" \
     "TRIAGE_MAX_NEW_FOR_DEDUP=0" \
     "TRIAGE_MAX_VERIFY_PER_RUN=20" \
@@ -319,6 +324,18 @@ run_triage "$actor_config" --dry-run --force >/dev/null 2>&1 || actor_rc=$?
 [ "$actor_rc" -eq 1 ] ||
   fail "preexisting auto-triage actor collision returned $actor_rc instead of 1"
 
+self_actor_state="$TEST_TMP/self-actor-state"
+self_actor_config="$TEST_TMP/self-actor.conf"
+seed_finding "$self_actor_state" "rv-self-actor" "src/good.sh:2" \
+  "prior automatic decision"
+printf '%s\n' \
+  '{"type":"verdict","verdict_id":"prior-owned-auto-triage","ts":"2026-08-17T01:00:00Z","finding_id":"rv-self-actor","status":"rejected","actor":"auto-triage","source":"manual-comment","source_ref":"https://github.com/shojikumaru/alpha-nightshift/issues/123#issuecomment-1","observed_at":"2026-08-17T01:00:00Z","rejection_reason":"prior owned identity"}' \
+  >> "$self_actor_state/ledger/ledger.jsonl"
+write_config "$self_actor_config" "$self_actor_state"
+run_triage "$self_actor_config" --dry-run --force \
+  --repo-pin "demo=$window_sha@$window_repo" >/dev/null ||
+  fail 'a prior auto-triage verdict from the report Issue blocked the next run'
+
 malformed_state="$TEST_TMP/malformed-ledger-state"
 malformed_config="$TEST_TMP/malformed-ledger.conf"
 mkdir -p "$malformed_state/ledger"
@@ -356,6 +373,20 @@ triage_evidence_gate_already_fixed \
   "$file_only_target_finding" "$task_runner_result" "$dry_repo" "$dry_sha" \
   "$TEST_TMP/reason-file-only-target" ||
   fail "existing file target without an anchor was rejected"
+plus_target_result=$(printf '%s\n' "$gate_good" | jq -c \
+  '.file = "src/foo+bar.sh"')
+plus_target_finding='{"id":"rv-gate","target":"src/foo+bar.sh:2","date":"2026-08-16"}'
+triage_evidence_gate_already_fixed \
+  "$plus_target_finding" "$plus_target_result" "$dry_repo" "$dry_sha" \
+  "$TEST_TMP/reason-plus-target" ||
+  fail 'existing file target containing + was rejected'
+semicolon_target_result=$(printf '%s\n' "$gate_good" | jq -c \
+  '.file = "src/foo;bar.sh"')
+semicolon_target_finding='{"id":"rv-gate","target":"src/foo;bar.sh:2","date":"2026-08-16"}'
+triage_evidence_gate_already_fixed \
+  "$semicolon_target_finding" "$semicolon_target_result" "$dry_repo" \
+  "$dry_sha" "$TEST_TMP/reason-semicolon-target" ||
+  fail 'existing file target containing ; was rejected'
 
 assert_evidence_rejected \
   '{"id":"rv-gate","target":"validation logic around the startup guard","date":"2026-08-16"}' \
@@ -363,6 +394,9 @@ assert_evidence_rejected \
 assert_evidence_rejected \
   '{"id":"rv-gate","target":"src/good.sh+src/unrelated.sh","date":"2026-08-16"}' \
   "$gate_good" "$dry_repo" "$dry_sha" multi-file-target
+assert_evidence_rejected \
+  '{"id":"rv-gate","target":"src/good.sh;src/unrelated.sh","date":"2026-08-16"}' \
+  "$gate_good" "$dry_repo" "$dry_sha" semicolon-multi-file-target
 glob_result=$(printf '%s\n' "$gate_good" | jq -c '.file = "src/glob*.sh"')
 assert_evidence_rejected \
   '{"id":"rv-gate","target":"src/glob*.sh:2","date":"2026-08-16"}' \

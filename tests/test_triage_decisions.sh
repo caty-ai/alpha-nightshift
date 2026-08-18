@@ -27,6 +27,13 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 
 [ -f "$ROOT/bin/morning-triage" ] || fail "missing bin/morning-triage"
 
+sanitized_anchor=$(triage_sanitize_anchor \
+  $'app/unsafe`anchor|name.sh:\t12\nignored-abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz')
+case "$sanitized_anchor" in
+  *'`'*|*'|'*|*$'\t'*|*$'\n'*) fail 'decision anchor retained unsafe delimiters' ;;
+esac
+[ "${#sanitized_anchor}" -le 60 ] || fail 'decision anchor exceeded 60 characters'
+
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-triage-decisions.XXXXXX")
 cleanup() {
   if [ "${TRIAGE_TEST_KEEP_TMP:-0}" = 1 ]; then
@@ -139,7 +146,7 @@ triage_seed_finding \
   "$state" \
   dup-adopted \
   demo \
-  app/render.sh:5 \
+  'app/render`tick.sh:5' \
   "$malicious_symptom" \
   Bug \
   2026-08-12
@@ -180,6 +187,11 @@ export TRIAGE_STUB_QUEUE_FILE="$queue"
 export TRIAGE_STUB_LOG_FILE="$adapter_log"
 export NIGHTSHIFT_CONFIG="$config"
 
+mkdir -p "$state/triage/state"
+printf '%s\n' '2026-08-01T00:00:00Z' > "$state/triage/last-run-watermark"
+printf '%s\n' '"carry-sentinel"' > \
+  "$state/triage/state/dedup-carryover.jsonl"
+
 /bin/bash "$ROOT/bin/morning-triage" \
   --dry-run \
   --force \
@@ -192,7 +204,10 @@ watermark_file="$state/triage/last-run-watermark"
 [ -f "$report" ] || fail "dry-run did not write report.md"
 [ "$(wc -c < "$report" | tr -d ' ')" -le 61440 ] ||
   fail 'report exceeded the 60KB comment budget'
-[ -f "$watermark_file" ] || fail "dry-run did not persist last-run-watermark"
+[ "$(cat "$watermark_file")" = '2026-08-01T00:00:00Z' ] ||
+  fail 'dry-run polluted last-run-watermark'
+[ "$(cat "$state/triage/state/dedup-carryover.jsonl")" = '"carry-sentinel"' ] ||
+  fail 'dry-run polluted dedup carryover state'
 [ ! -f "$state/triage/decisions.jsonl" ] ||
   fail "dry-run unexpectedly wrote decisions.jsonl"
 [ "$(wc -l < "$draft" | tr -d ' ')" -eq 2 ] ||
@@ -225,13 +240,17 @@ jq -e -s '
 
 observed_count=$(jq -r '.observed_at' "$draft" | sort -u | wc -l | tr -d ' ')
 [ "$observed_count" -eq 1 ] || fail "draft decisions do not share a single watermark"
-[ "$(cat "$watermark_file")" = "$(sed -n '1p' "$draft" | jq -r '.observed_at')" ] ||
-  fail "last-run-watermark does not match the draft observed_at"
 
 assert_contains 'duplicate of canon-adopted' "$draft"
 assert_contains 'duplicate of canon-deferred' "$draft"
 assert_contains 'canonical is deferred' "$draft"
 assert_contains 'evidence app/render.sh:5' "$draft"
+jq -e '
+  select(.finding_id == "dup-adopted") |
+  (.rejection_reason | contains("evidence app/rendertick.sh:5")) and
+  (.rejection_reason | contains("`") | not)
+' "$draft" >/dev/null ||
+  fail 'file:line-shaped decision anchor bypassed sanitization'
 triage_decisions_validate_with_dummy_source "$draft" "$ROOT" ||
   fail "draft decisions do not pass verdict_validate_decision once source_ref is injected"
 
@@ -250,7 +269,7 @@ final_decisions="$state/triage/decisions.jsonl"
 [ -f "$final_decisions" ] || fail "full run did not write decisions.jsonl"
 [ "$(wc -l < "$final_decisions" | tr -d ' ')" -eq 2 ] ||
   fail "full run did not preserve the rejected decision count"
-jq -e -s 'all(.[]; .source_ref == "https://github.test/comments/1")' \
+jq -e -s 'all(.[]; .source_ref == "https://github.com/shojikumaru/alpha-nightshift/issues/201#issuecomment-1")' \
   "$final_decisions" >/dev/null ||
   fail "final decisions did not backfill the verified report comment URL"
 report_post_body=$(jq -r \
@@ -276,6 +295,74 @@ STATE_DIR="$state"
   fail "full run did not append the dup-adopted verdict"
 [ "$(ledger_get_current_finding dup-deferred | jq -r '.current_status')" = rejected ] ||
   fail "full run did not append the dup-deferred verdict"
+
+auto_verdict_count=$(jq -r \
+  'select(.type == "verdict" and .actor == "auto-triage") | .finding_id' \
+  "$state/ledger/ledger.jsonl" | wc -l | tr -d ' ')
+/bin/bash "$ROOT/bin/morning-triage" \
+  --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null ||
+  fail 'a successful run was blocked by its own prior auto-triage verdicts'
+[ "$(jq -r 'select(.type == "verdict" and .actor == "auto-triage") | .finding_id' \
+  "$state/ledger/ledger.jsonl" | wc -l | tr -d ' ')" -eq "$auto_verdict_count" ] ||
+  fail 'no-decision rerun unexpectedly appended another auto-triage verdict'
+
+carry_state="$TEST_TMP/carry-state"
+carry_gh="$TEST_TMP/carry-gh"
+carry_config="$TEST_TMP/carry.conf"
+carry_extra="$TEST_TMP/carry-extra.conf"
+carry_table="$TEST_TMP/carry-table.tsv"
+carry_adapter_log="$TEST_TMP/carry-adapter.log"
+mkdir -p "$carry_state" "$carry_gh"
+printf '%s\n' \
+  "TRIAGE_MAX_NEW_FOR_DEDUP='1'" \
+  "TRIAGE_MAX_VERIFY_PER_RUN='0'" \
+  "TRIAGE_DEDUP_BATCH='1'" > "$carry_extra"
+triage_write_config \
+  "$carry_config" \
+  "$carry_state" \
+  "$TEST_DIR/fixtures/triage/fake-gh.sh" \
+  "$carry_extra"
+triage_seed_report_issue "$carry_gh" shojikumaru/alpha-nightshift 201
+triage_seed_finding \
+  "$carry_state" carry-canonical demo app/render.sh:5 \
+  'canonical comparison finding' Bug 2026-08-10
+triage_seed_verdict \
+  "$carry_state" carry-canonical adopted 2026-08-11T00:00:00Z human \
+  comment:carry-canonical
+triage_seed_finding \
+  "$carry_state" carry-a demo app/render.sh:6 \
+  'first distinct carryover candidate' Bug 2026-08-12
+triage_seed_finding \
+  "$carry_state" carry-b demo app/render.sh:7 \
+  'second distinct carryover candidate' Bug 2026-08-12
+cat > "$carry_table" <<'EOF'
+dedup	carry-a	{"finding_id":"carry-a","verdict":"DISTINCT","confidence":"high"}
+dedup	carry-b	{"finding_id":"carry-b","verdict":"DISTINCT","confidence":"high"}
+EOF
+env -u TRIAGE_STUB_QUEUE_FILE \
+  TRIAGE_FAKE_GH_DIR="$carry_gh" \
+  TRIAGE_STUB_RESPONSE_TABLE="$carry_table" \
+  TRIAGE_STUB_LOG_FILE="$carry_adapter_log" \
+  NIGHTSHIFT_CONFIG="$carry_config" \
+  /bin/bash "$ROOT/bin/morning-triage" --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+carry_state_file="$carry_state/triage/state/dedup-carryover.jsonl"
+[ "$(cat "$carry_state_file")" = '"carry-b"' ] ||
+  fail 'first bounded run did not persist the overflow finding as carryover'
+[ "$(wc -l < "$carry_adapter_log" | tr -d ' ')" -eq 1 ] ||
+  fail 'first bounded run did not process exactly one dedup candidate'
+env -u TRIAGE_STUB_QUEUE_FILE \
+  TRIAGE_FAKE_GH_DIR="$carry_gh" \
+  TRIAGE_STUB_RESPONSE_TABLE="$carry_table" \
+  TRIAGE_STUB_LOG_FILE="$carry_adapter_log" \
+  NIGHTSHIFT_CONFIG="$carry_config" \
+  /bin/bash "$ROOT/bin/morning-triage" --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+[ ! -s "$carry_state_file" ] ||
+  fail 'second run did not consume the mandatory carryover finding'
+[ "$(wc -l < "$carry_adapter_log" | tr -d ' ')" -eq 2 ] ||
+  fail 'second run reprocessed a completed dedup candidate'
 
 b1_state="$TEST_TMP/b1-e2e-state"
 b1_gh="$TEST_TMP/b1-e2e-gh"

@@ -135,6 +135,31 @@ exit 97
 ADAPTER
 chmod +x "$fail_adapter"
 
+settled_adapter="$replay_root/settled-deterministic-adapter"
+cat > "$settled_adapter" <<'ADAPTER'
+#!/bin/bash
+set -euo pipefail
+[ "$#" -eq 3 ] || exit 2
+prompt_file=$1
+out_dir=$3
+if grep -F '# 重複判定タスク' "$prompt_file" >/dev/null 2>&1; then
+  [ -f "$TRIAGE_SETTLED_DEDUP_FIXTURE" ] || exit 2
+  target_json="$out_dir/settled-targets.json"
+  awk '
+    /^## 判定対象 findings$/ { capture=1; next }
+    /^## 出力契約$/ { capture=0 }
+    capture { print }
+  ' "$prompt_file" > "$target_json"
+  jq -c --slurpfile targets "$target_json" '
+    .finding_id as $id |
+    select(any($targets[0][]; .id == $id))
+  ' "$TRIAGE_SETTLED_DEDUP_FIXTURE"
+  exit 0
+fi
+exec "$TRIAGE_SETTLED_FALLBACK_ADAPTER" "$@"
+ADAPTER
+chmod +x "$settled_adapter"
+
 record_adapter=${TRIAGE_REPLAY_ADAPTER:-${TRIAGE_ADAPTER:-"$REPO_ROOT/lanes/review/adapters/codex.sh"}}
 case "$record_adapter" in
   /*) ;;
@@ -152,9 +177,9 @@ fi
 
 write_replay_config() {
   replay_config=$1
+  replay_already_fixed_mode=$2
   cat > "$replay_config" <<'CONFIG'
 TRIAGE_ENABLED=1
-TRIAGE_ALREADY_FIXED_MODE=reject
 TRIAGE_MAX_VERIFY_PER_RUN=1000
 TRIAGE_REVERIFY_INTERVAL_DAYS=0
 TRIAGE_MAX_NEW_FOR_DEDUP=1000
@@ -168,6 +193,8 @@ TRIAGE_DEDUP_POOL_MAX=1000
 TRIAGE_TARGET_REPOS='caty-agent-harness=shojikumaru/caty-agent-harness'
 TRIAGE_REPORT_ISSUE=37
 CONFIG
+  printf 'TRIAGE_ALREADY_FIXED_MODE=%s\n' "$replay_already_fixed_mode" >> \
+    "$replay_config"
 }
 
 project_ledger() {
@@ -215,12 +242,59 @@ run_triage() {
   replay_state=$1
   replay_config=$2
   replay_adapter=$3
+  replay_cache=$4
+  replay_capture=${5:-}
+  replay_settled_fixture=${6:-}
+  replay_fallback_adapter=${7:-}
   env \
     NIGHTSHIFT_CONFIG="$replay_config" \
     TRIAGE_ADAPTER="$replay_adapter" \
-    TRIAGE_LLM_CACHE_DIR="$cache_dir" \
+    TRIAGE_LLM_CACHE_DIR="$replay_cache" \
+    TRIAGE_REPLAY_DEDUP_RESULTS_FILE="$replay_capture" \
+    TRIAGE_SETTLED_DEDUP_FIXTURE="$replay_settled_fixture" \
+    TRIAGE_SETTLED_FALLBACK_ADAPTER="$replay_fallback_adapter" \
     "$MORNING_TRIAGE" --dry-run --force --state-dir "$replay_state" \
       --repo-pin "$repo_pin"
+}
+
+build_g6_dedup_fixture() {
+  replay_open_dedup=$1
+  replay_fixture=$2
+  jq -c --slurpfile truth "$GROUND_TRUTH" '
+    [
+      $truth[] |
+      select(.human_canonical != null) |
+      .finding_id
+    ] as $expected |
+    select(
+      .verdict == "DUPLICATE" and
+      .confidence == "high" and
+      (.finding_id as $id | $expected | index($id)) != null
+    ) |
+    {
+      finding_id,
+      verdict,
+      canonical_id,
+      confidence,
+      shared_defect
+    }
+  ' "$replay_open_dedup" | jq -s -c 'sort_by(.finding_id)[]' > \
+    "$replay_fixture"
+  jq -e -s --slurpfile truth "$GROUND_TRUTH" '
+    [
+      $truth[] |
+      select(.human_canonical != null) |
+      .finding_id
+    ] as $expected |
+    length == 15 and
+    ([.[].finding_id] | sort) == ($expected | sort) and
+    all(.[];
+      .verdict == "DUPLICATE" and
+      .confidence == "high" and
+      (.canonical_id | type == "string" and length > 0) and
+      (.shared_defect | type == "string" and length > 0)
+    )
+  ' "$replay_fixture" >/dev/null
 }
 
 require_artifacts() {
@@ -454,10 +528,14 @@ run_full_pass() {
   replay_pass_root="$replay_root/pass-$replay_pass"
   replay_open_state="$replay_pass_root/open-state"
   replay_settled_state="$replay_pass_root/settled-state"
-  replay_config="$replay_pass_root/nightshift.conf"
+  replay_open_config="$replay_pass_root/open.conf"
+  replay_settled_config="$replay_pass_root/settled.conf"
+  replay_open_dedup="$replay_pass_root/open-dedup-final.jsonl"
+  replay_g6_fixture="$replay_pass_root/g6-dedup-fixture.jsonl"
   replay_started_at=$(date '+%s')
   mkdir -p "$replay_pass_root"
-  write_replay_config "$replay_config"
+  write_replay_config "$replay_open_config" reject
+  write_replay_config "$replay_settled_config" suggest
 
   build_open_ledger "$replay_open_state"
   gate_g0 "$replay_open_state" "$replay_pass_root/open-projection.jsonl" || {
@@ -466,7 +544,8 @@ run_full_pass() {
   }
   printf 'replay-36 pass %s: G0 PASS\n' "$replay_pass"
 
-  run_triage "$replay_open_state" "$replay_config" "$replay_adapter"
+  run_triage "$replay_open_state" "$replay_open_config" "$replay_adapter" \
+    "$cache_dir" "$replay_open_dedup"
   require_artifacts "$replay_open_state"
   replay_open_triage="$replay_open_state/triage"
   gate_g1 "$replay_open_triage/decisions.draft.jsonl" || {
@@ -491,6 +570,12 @@ run_full_pass() {
   }
   printf 'replay-36 pass %s: G5 PASS\n' "$replay_pass"
 
+  build_g6_dedup_fixture "$replay_open_dedup" "$replay_g6_fixture" || {
+    printf 'replay-36 pass %s: G6 deterministic fixture FAIL\n' \
+      "$replay_pass" >&2
+    return 1
+  }
+
   build_settled_ledger "$replay_settled_state"
   project_ledger "$replay_settled_state" > \
     "$replay_pass_root/settled-before.jsonl"
@@ -498,7 +583,11 @@ run_full_pass() {
     printf 'replay-36 pass %s: G6 fixture FAIL\n' "$replay_pass" >&2
     return 1
   }
-  run_triage "$replay_settled_state" "$replay_config" "$replay_adapter"
+  printf 'replay-36 pass %s: G6 Stage D replays pass-1 open-run decisions deterministically\n' \
+    "$replay_pass"
+  run_triage "$replay_settled_state" "$replay_settled_config" \
+    "$settled_adapter" "$replay_root/g6-deterministic-cache" '' \
+    "$replay_g6_fixture" "$replay_adapter"
   require_artifacts "$replay_settled_state"
   replay_settled_triage="$replay_settled_state/triage"
   gate_g6_decisions "$replay_settled_triage/decisions.draft.jsonl" || {

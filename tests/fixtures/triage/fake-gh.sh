@@ -93,7 +93,11 @@ case "$method:$endpoint" in
     counter=$((counter + 1))
     printf '%s\n' "$counter" > "$counter_file"
     api_url="https://api.github.test/comments/$counter"
-    html_url="https://github.test/comments/$counter"
+    issue_path=${endpoint#repos/}
+    issue_repo=${issue_path%%/issues/*}
+    issue_number=${issue_path#*/issues/}
+    issue_number=${issue_number%%/*}
+    html_url="https://github.com/$issue_repo/issues/$issue_number#issuecomment-$counter"
     get_sha=$(printf '%s' "$api_url" | shasum -a 256 | awk '{print $1}')
     jq -n \
       --argjson id "$counter" \

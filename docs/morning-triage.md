@@ -39,7 +39,7 @@
 1. **台帳形式不変**: 書込みは `bin/verdict-sync --input` のみ。lib/verdict.sh・lib/ledger.sh・bin/verdict-sync・lib/lock.sh は**一切変更しない**。台帳投影は STATE_DIR 差し替えで**本物の `ledger_project_findings` を呼ぶ**（投影ロジックの再実装禁止・リプレイも同じ投影器を通す）
 2. **fail-closed**: 確信が持てない finding は open のまま。LLM 出力不正・証拠ゲート不一致・canonical 解決不能・コスト超過・GitHub 不達 → すべて「書かない」側。打ち切り・スキップ・対象外は**種別ごとに件数をレポート明示**（no silent caps: コスト繰越／再検証スキップ／対象外 repo／閉包未完クラスタを区別する）
 3. **可逆性**: 自動却下は人が `rejected → adopted`（actor ≠ night-bot）で戻せる。**前提**: 単調性検査（lib/verdict.sh:717-723）により、人の訂正 verdict は observed_at がウォーターマーク（§2-6）より新しい必要がある。`--github-links` 経路はイベント時刻を使うため、ウォーターマーク以前に付けたラベルでの訂正は stale 拒否される — レポートに当該 run のウォーターマークを必ず表示し、復旧手順（ラベル貼り直し/新コメント）を README triage 節に記載する
-4. **actor 名義**: `auto-triage` 固定。各 run で本物の台帳投影を行い、actor=auto-triage の既存 verdict が無いことを確認する。投影不能も含め、検査不能時は fail-closed とする
+4. **actor 名義**: `auto-triage` 固定。各 run で本物の台帳投影を行い、actor=auto-triage の verdict は、すべて報告 Issue と同じ repo の `https://github.com/<repo full name>/issues/` 配下を `source_ref` に持つこと（= 他人が auto-triage を名乗っていないこと）を前提検証する。自動 triage 自身の過去 verdict は許可し、異形 URL・欠落・投影不能を含む検査不能時は fail-closed とする
 5. **単一 writer + ロック規律**: morning-triage は**起動直後に既存の `state/locks/nightshift.lock` を取得し、Phase A〜B2 の間保持し、B3 で verdict-sync を呼ぶ直前に解放する**（verdict-sync が自ら取得するため）。二重起動の敗者は Phase A 開始前に敗退する（LLM コスト・コメント投稿とも発生しない）。新しいロックは増やさない
 6. **observed_at ウォーターマーク**: run 内の全 decision の observed_at は **A1 で台帳投影を読んだ瞬間の UTC 秒（`nightshift_iso_now` と同書式）に固定**（全件同一値）。open finding は過去 verdict を持たない（open へ戻る遷移が存在しない）ため相互衝突しない。ロック保持と合わせ、分析中に着地した人裁定は verdict-sync の stale 検査（第二の網）でバッチごと fail-closed になる
 7. **実行窓**: 現在時刻が 06:30〜08:00 の外なら即 exit 0+ログ（launchd のスリープ復帰発火対策）。`--dry-run`/`--force` は窓検査を免除（リプレイ・手動運用）
@@ -175,12 +175,12 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 | G4 | （G2 に統合） | — |
 | G5 | fixed 非矛盾 | ALREADY_FIXED 経路（decision+推奨とも）が人裁定の「main済6件 ∪ 35977df7」の**外に出ない** |
 
-| G6 | dup 却下経路の実データ検証 | **確定 canonical 派生 fixture**: 再構成台帳の変種（dup クラスタの canonical 9件の adopted verdict と deferred canonical の rejected verdict だけを残し、他の #36 verdict を除外）で再実行し、①15件の dup が settled canonical への自動却下 decision として draft に現れ ②その decisions.jsonl（source_ref はダミー URL 注入）を**実物の verdict-sync --input** に隔離 state-dir で通し observed=appended・投影 rejected 化を確認（§4.2 上2行+B 経路が実データで最低1本走る） |
+| G6 | dup 却下経路の実データ検証 | **確定 canonical 派生 fixture**: 再構成台帳の変種（dup クラスタの canonical 9件の adopted verdict と deferred canonical の rejected verdict だけを残し、他の #36 verdict を除外）を `TRIAGE_ALREADY_FIXED_MODE=suggest` で再実行する。Stage D は open 本走の検証済み `dedup/*/final.jsonl` から15件の確定判定を機械生成して決定論再生し、①15件の dup が settled canonical への自動却下 decision として draft に現れ ②その decisions.jsonl（source_ref はダミー URL 注入）を**実物の verdict-sync --input** に隔離 state-dir で通し observed=appended・投影 rejected 化を確認（§4.2 上2行+B 経路が実データで最低1本走る）。LLM 頑健性は open 本走の G2/G3 が担当する |
 
 - 参考指標（合否外・レポート表示）: already-fixed 検出率（目標 6/6）・CONFIRMED_CURRENT 率・LLM 呼数・所要時間
-- **合格条件は連続 2 回のフル PASS**（LLM 非決定性対策・G6 は record/replay キャッシュ再生で2回目を回してよい）
+- **合格条件は record パス1回 + cache 再生1回**（cache 再生は決定性検査であり独立検証ではない。LLM 非決定性に対する頑健性は record パスを別途反復して確認する）
 - **record/replay モード**: 初回実走で LLM 応答を fixture 保存 → 以降の反復はキャッシュ再生でゲート再判定（プロンプト以外の調整を課金なし・決定論で回帰テスト化）。プロンプトを変えたら再実走
-- G2 未達はプロンプト/しきい値の反復調整（fail-closed 側の失敗）。**G0/G1/G3/G5 の失敗は設計欠陥として判定基準でなく構造を直す**。注: 確定 canonical への自動 dup 却下経路（§4.2 上2行）は本リプレイでは実データ上発火しないため、CI の stub テストで網羅する
+- G2 未達はプロンプト/しきい値の反復調整（fail-closed 側の失敗）。**G0/G1/G3/G5/G6 の失敗は設計欠陥として判定基準でなく構造を直す**
 
 ## 10. コスト上限と締切（config・`TRIAGE_*` 名前空間・v1.1 改訂）
 
