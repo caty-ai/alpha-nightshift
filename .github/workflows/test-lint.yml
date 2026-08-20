@@ -1,0 +1,18 @@
+name: Test + Lint
+on:
+  pull_request:
+permissions: {contents: read}
+concurrency: {group: 'test-lint-${{ github.event.pull_request.number }}', cancel-in-progress: true}
+jobs:
+  test-lint:
+    uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
+    permissions: {contents: read}
+    with:
+      run_macos: true
+      require_suite_reconciliation: true
+      # Ubuntu runners lack the macOS-only suite contracts (sandbox-exec,
+      # the pinned gitleaks path, brew git): 6 of 28 suites skip there with
+      # printed reasons (~21%), so the default 20% cap would fail an honest
+      # run. The self-hosted full-contract lane in ci.yml executes those
+      # suites with zero skips.
+      max_skip_percent: '25'

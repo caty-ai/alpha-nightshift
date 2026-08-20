@@ -82,7 +82,12 @@ jobs:
           /opt/homebrew/bin/git --version
 
       - name: Bash syntax
-        run: bash -n guard/*.sh tests/*.sh
+        # One bash -n per file: `bash -n a.sh b.sh` only checks the first
+        # file and treats the rest as script arguments.
+        run: |
+          for f in guard/*.sh tests/*.sh; do
+            bash -n "$f"
+          done
 
       - name: ShellCheck changed publisher surface
         run: |
@@ -102,28 +107,9 @@ jobs:
       - name: Tests
         run: /bin/bash tests/run_tests.sh
 
-      - name: Diff-scoped gitleaks
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          if [ "$EVENT_NAME" = pull_request ]; then
-            base=$PR_BASE_SHA
-          else
-            base=$PUSH_BEFORE_SHA
-          fi
-          case "$base" in
-            ""|0000000000000000000000000000000000000000)
-              git fetch origin main
-              base=$(git merge-base origin/main HEAD)
-              ;;
-          esac
-          /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks git \
-            --no-banner \
-            --redact \
-            --log-opts="$base..HEAD" \
-            .
+      # PR-range gitleaks moved to the reusable caller
+      # .github/workflows/gitleaks.yml (family-dev-handbook@ci-v1); the
+      # in-repo copy was removed so scan logic lives in exactly one place.
 
       - name: Diff whitespace
         run: |

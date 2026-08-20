@@ -1,0 +1,26 @@
+name: Risk Review Gate
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+permissions: {contents: read}
+concurrency: {group: 'risk-review-${{ github.event.pull_request.number }}', cancel-in-progress: true}
+jobs:
+  risk-review-gate:
+    uses: caty-ai/family-dev-handbook/.github/workflows/reusable-review-labels.yml@ci-v1
+    permissions: {contents: read, issues: read, pull-requests: write}
+    with:
+      risk_paths_billing: 'none'
+      risk_paths_outbound: |
+        guard/publisher.sh
+        guard/publisher-lib.sh
+        guard/publisher-askpass.sh
+        guard/broker.sh
+        guard/gateway.sh
+      risk_paths_gates: |
+        Makefile
+        tests/**
+        tools/check_publication_gate.py
+        .publication-denylist
+        .github/workflows/**
+      risk_paths_auth: |
+        guard/**
