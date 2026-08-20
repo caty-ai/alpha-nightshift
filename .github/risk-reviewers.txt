@@ -1,0 +1,6 @@
+# .github/risk-reviewers.txt — 高リスク確認者名簿 (1行 = 1 GitHub ID)
+#
+# Risk Review Gate は名簿を base (main) 側から読む。PR 側で名簿を書き換えても効かない
+# (「PR が名簿に自分を足して自分で通す」循環の封じ)。名簿の変更自体が高リスクパスとして
+# 人間確認の対象になる。非秘密の設定はコミットされたファイルへ (handbook docs/09 R-3②)。
+shojikumaru
