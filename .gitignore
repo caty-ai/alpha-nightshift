@@ -3,3 +3,5 @@ config/nightshift.conf
 *.log
 .DS_Store
 .omx/
+.omc/
+.readme-work/

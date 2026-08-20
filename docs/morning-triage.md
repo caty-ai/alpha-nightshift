@@ -1,7 +1,7 @@
 # morning-triage 設計書 v1.1.1 — 朝の裁定自動化 (#37) + 夜またぎ重複検知 (#38)
 
-- 起点: shojikumaru/alpha-nightshift #37 / #38（設計は合同1本・Issue は分離のまま）
-- 作成: Alpha 2026-08-18 / 翔さん決裁: 自動化 GO・Hands-off（push まで自走・事後確認）
+- 起点: caty-ai/alpha-nightshift #37 / #38（設計は合同1本・Issue は分離のまま）
+- 作成: Alpha 2026-08-18 / オーナー決裁: 自動化 GO・Hands-off（push まで自走・事後確認）
 - サイズ: **L**（loom-seats 決定論判定・席= Kimi K3 + Opus 5 + GLM 5.3・writer= codex-sol）
 - 上位設計: `DESIGN.md` §2 原則4「precision 優先」・原則7「反射=機械/熟考=LLM」・§8（dedup 3段）・§9（朝ダイジェスト）
 - v1.1: L1-9 設計レビュー3席（全席 GO-with-changes・NO-GO なし）の findings 反映。主変更= ①自動 dup 却下は**確定 verdict 済み canonical 限定**（open×open はクラスタ提示）②observed_at=投影スナップショット時刻固定+**Phase A〜B2 で nightshift.lock 保持** ③ALREADY_FIXED 証拠ゲート強化（不在証明+履歴ゲート）と config 段階運用 ④canonical 参照パーサの列挙仕様化 ⑤予算の Stage 分離（新規 dedup 必須+検証は再検証スキップ付き）⑥リプレイ受入のクラスタ粒度再定義+G0
@@ -68,7 +68,7 @@
 | CONFIRMED_CURRENT | 現存証拠添付 | 書かない→「採用候補・推奨つき」欄 | 同左 |
 | NOT_REPRODUCIBLE / UNCLEAR / 出力不正 / タイムアウト | — | 書かない→「要人裁定」「残差」欄 | 同左 |
 
-`TRIAGE_ALREADY_FIXED_MODE=suggest|reject`（既定 suggest）。初期運用で false-fix 率ゼロを実測してから reject へ昇格（翔さん事後確認 D-6）。リプレイは reject モードで走らせ、ゲートと G5 を検証する。
+`TRIAGE_ALREADY_FIXED_MODE=suggest|reject`（既定 suggest）。初期運用で false-fix 率ゼロを実測してから reject へ昇格（オーナー事後確認 D-6）。リプレイは reject モードで走らせ、ゲートと G5 を検証する。
 
 ### 4.2 Stage D（重複照合）の結果 × 根 canonical 状態
 
@@ -227,11 +227,11 @@ bin/morning-triage [--dry-run] [--force] [--state-dir <abs>] [--repo-pin <repo>=
 | D-3 | source_ref | 検証済みコメント URL 必須・不達なら書込み中止 | 公開記録なき機械裁定を作らない |
 | D-4 | dedup 実行点 | 朝 triage 時 | 夜のロック保持中に LLM を入れない・証跡が台帳に残る |
 | D-5 | 定時 | 06:35+実行窓ガード | digest 後・morning-report 前・スリープ復帰対策 |
-| D-6 | ALREADY_FIXED 段階運用 | suggest 既定→実測後 reject 昇格。**昇格基準（数値）**: fixed 推奨の人検分 累計 ≥15件・false-fix 0件・suggest 運用 14 日経過の3条件成立で reject 昇格を翔さんに提案。**退場トリガー（LC-1）**: 2026-09-15 までに昇格可否の判断を仰ぐ（suggest 恒久化=自動化の実効値ほぼゼロを防ぐ） | 証拠ゲートは物理裏付けまで・意味論の残存リスクは実測ゼロを見てから自動化（席 C2/C3/N4 反映）。suggest 期間中の自動却下は dup（確定 canonical）のみで、v1 出荷時の実効値が限定的であることは既知・意図的 |
+| D-6 | ALREADY_FIXED 段階運用 | suggest 既定→実測後 reject 昇格。**昇格基準（数値）**: fixed 推奨の人検分 累計 ≥15件・false-fix 0件・suggest 運用 14 日経過の3条件成立で reject 昇格をオーナーに提案。**退場トリガー（LC-1）**: 2026-09-15 までに昇格可否の判断を仰ぐ（suggest 恒久化=自動化の実効値ほぼゼロを防ぐ） | 証拠ゲートは物理裏付けまで・意味論の残存リスクは実測ゼロを見てから自動化（席 C2/C3/N4 反映）。suggest 期間中の自動却下は dup（確定 canonical）のみで、v1 出荷時の実効値が限定的であることは既知・意図的 |
 | D-7 | 競合安全の主防御 | Phase A〜B2 ロック保持+observed_at ウォーターマーク | 運用規律でなく既存コードの検証を防壁化（席3席収束） |
 | D-8 | open canonical への自動却下 | しない（クラスタ提示のみ） | 「自動却下の根拠は必ず確定 verdict 済み」の不変条件で矛盾書込みを構造的に排除（席 C1 反映） |
 
-**翔さん事後確認ポイント: D-1 / D-3 / D-6**（D-6 の reject 昇格は実測レポート添付で改めて確認する）
+**オーナー事後確認ポイント: D-1 / D-3 / D-6**（D-6 の reject 昇格は実測レポート添付で改めて確認する）
 
 ## 14. 設計レビュー記録（L1-9・2026-08-18）
 

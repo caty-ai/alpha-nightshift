@@ -1,0 +1,22 @@
+name: Test + Lint
+on:
+  pull_request:
+permissions: {contents: read}
+concurrency: {group: 'test-lint-${{ github.event.pull_request.number }}', cancel-in-progress: true}
+jobs:
+  test-lint:
+    uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
+    permissions: {contents: read}
+    with:
+      run_macos: true
+      require_suite_reconciliation: true
+      # Honest accounting (seat-reviewed on PR #47): most of this suite is
+      # Darwin-native (BSD date -v / stat -f, sandbox-exec, launchd, the
+      # pinned gitleaks/git contract paths). On ubuntu 22 of 29 suites skip
+      # with printed per-suite reasons; the ubuntu lane's job is the portable
+      # subset + lint + the reconciliation arithmetic itself. Hosted macOS
+      # executes ~24/29; the self-hosted full-contract lane (ci.yml) runs
+      # 29/29 and asserts skipped=0. Cap is tight at today's skip count:
+      # 22*100=2200 <= 29*76=2204 passes, a 23rd skip (2300) fails.
+      # Ratchet DOWN as suites are ported to Linux (follow-up issue #49).
+      max_skip_percent: '76'

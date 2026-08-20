@@ -73,6 +73,12 @@ jobs:
           test -x /usr/bin/jq
           /usr/bin/jq --version
 
+      - name: Verify sandbox-exec contract
+        # The sandbox measurement suite silently skips wherever sandbox-exec
+        # is absent; this lane is the one place that must fail instead
+        # (deprecated Apple tool — detect its disappearance loudly).
+        run: command -v sandbox-exec
+
       - name: Verify brew git contract
         # Several test suites invoke /opt/homebrew/bin/git directly; hosted
         # macos-15 ships it via brew, the self-hosted runner provides it via
@@ -82,11 +88,18 @@ jobs:
           /opt/homebrew/bin/git --version
 
       - name: Bash syntax
-        run: bash -n guard/*.sh tests/*.sh
+        # One bash -n per file: `bash -n a.sh b.sh` only checks the first
+        # file and treats the rest as script arguments.
+        run: |
+          for f in guard/*.sh tests/*.sh; do
+            bash -n "$f"
+          done
 
       - name: ShellCheck changed publisher surface
+        # -e SC2015 mirrors the Makefile lint exclusion (pre-existing style
+        # debt in guard/*.sh) so the two lint lanes stay semantically aligned.
         run: |
-          shellcheck \
+          shellcheck -e SC2015 \
             guard/common.sh \
             guard/broker.sh \
             guard/gateway.sh \
@@ -97,33 +110,29 @@ jobs:
             guard/remote-preflight.sh \
             tests/test_guard_publisher.sh \
             tests/test_guard_drift_monitor.sh \
-            tests/test_guard_revocation_runbook.sh
+            tests/test_guard_revocation_runbook.sh \
+            tests/test_publication_gate_selftest.sh \
+            tests/test_publication_gate_repo.sh \
+            tests/run_tests.sh
 
       - name: Tests
-        run: /bin/bash tests/run_tests.sh
+        # shell: bash gives bash -eo pipefail (GitHub's default `bash -e {0}`
+        # has NO pipefail, so `| tee` would swallow the suite's exit code —
+        # seat finding D1 on PR #47).
+        shell: bash
+        run: /bin/bash tests/run_tests.sh 2>&1 | tee /tmp/full-contract-test.log
 
-      - name: Diff-scoped gitleaks
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
+      - name: Assert zero skips (full-contract lane)
+        # This runner installs every suite contract above, so any skip here
+        # means a contract silently broke — fail instead of shrinking coverage
+        # (seat finding M2 on PR #47: skip accounting existed only on ubuntu).
         run: |
-          if [ "$EVENT_NAME" = pull_request ]; then
-            base=$PR_BASE_SHA
-          else
-            base=$PUSH_BEFORE_SHA
-          fi
-          case "$base" in
-            ""|0000000000000000000000000000000000000000)
-              git fetch origin main
-              base=$(git merge-base origin/main HEAD)
-              ;;
-          esac
-          /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks git \
-            --no-banner \
-            --redact \
-            --log-opts="$base..HEAD" \
-            .
+          grep -E 'suites: declared=[0-9]+ executed=[0-9]+ skipped=0$' \
+            /tmp/full-contract-test.log
+
+      # PR-range gitleaks moved to the reusable caller
+      # .github/workflows/gitleaks.yml (family-dev-handbook@ci-v1); the
+      # in-repo copy was removed so scan logic lives in exactly one place.
 
       - name: Diff whitespace
         run: |

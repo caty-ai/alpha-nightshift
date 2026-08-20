@@ -186,6 +186,11 @@ export TRIAGE_FAKE_GH_LOG="$gh_log"
 export TRIAGE_STUB_QUEUE_FILE="$queue"
 export TRIAGE_STUB_LOG_FILE="$adapter_log"
 export NIGHTSHIFT_CONFIG="$config"
+# Pin the report-issue repo instead of letting morning-triage derive it from
+# this checkout's ambient `git remote.origin.url` (lib/triage.sh
+# triage_current_repo_full_name), which varies by machine/clone and made this
+# assertion pass or fail depending on where the repo was checked out from.
+export TRIAGE_REPORT_REPO_FULL_NAME="caty-ai/alpha-nightshift"
 
 mkdir -p "$state/triage/state"
 printf '%s\n' '2026-08-01T00:00:00Z' > "$state/triage/last-run-watermark"
@@ -269,7 +274,7 @@ final_decisions="$state/triage/decisions.jsonl"
 [ -f "$final_decisions" ] || fail "full run did not write decisions.jsonl"
 [ "$(wc -l < "$final_decisions" | tr -d ' ')" -eq 2 ] ||
   fail "full run did not preserve the rejected decision count"
-jq -e -s 'all(.[]; .source_ref == "https://github.com/shojikumaru/alpha-nightshift/issues/201#issuecomment-1")' \
+jq -e -s 'all(.[]; .source_ref == "https://github.com/caty-ai/alpha-nightshift/issues/201#issuecomment-1")' \
   "$final_decisions" >/dev/null ||
   fail "final decisions did not backfill the verified report comment URL"
 report_post_body=$(jq -r \
@@ -323,7 +328,7 @@ triage_write_config \
   "$carry_state" \
   "$TEST_DIR/fixtures/triage/fake-gh.sh" \
   "$carry_extra"
-triage_seed_report_issue "$carry_gh" shojikumaru/alpha-nightshift 201
+triage_seed_report_issue "$carry_gh" caty-ai/alpha-nightshift 201
 triage_seed_finding \
   "$carry_state" carry-canonical demo app/render.sh:5 \
   'canonical comparison finding' Bug 2026-08-10

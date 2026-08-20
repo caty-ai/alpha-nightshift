@@ -190,7 +190,7 @@ TRIAGE_LLM_TIMEOUT_SEC=900
 TRIAGE_PHASE_A_DEADLINE_SEC=7200
 TRIAGE_HARD_WALL=23:59
 TRIAGE_DEDUP_POOL_MAX=1000
-TRIAGE_TARGET_REPOS='caty-agent-harness=shojikumaru/caty-agent-harness'
+TRIAGE_TARGET_REPOS='caty-agent-harness=caty-ai/caty-agent-harness'
 TRIAGE_REPORT_ISSUE=37
 CONFIG
   printf 'TRIAGE_ALREADY_FIXED_MODE=%s\n' "$replay_already_fixed_mode" >> \
@@ -224,7 +224,7 @@ build_settled_ledger() {
   replay_state=$1
   mkdir -p "$replay_state/ledger"
   jq -c --slurpfile truth "$GROUND_TRUTH" \
-    --arg issue_ref 'https://github.com/shojikumaru/alpha-nightshift/issues/36' '
+    --arg issue_ref 'https://github.com/caty-ai/alpha-nightshift/issues/36' '
       ([
         $truth[] |
         select(.human_canonical != null) |
@@ -445,7 +445,7 @@ sync_g6_decisions() {
   replay_sync_output=$4
   replay_projection=$5
   jq -c '. + {
-    source_ref: "https://github.com/shojikumaru/alpha-nightshift/issues/37#replay-36"
+    source_ref: "https://github.com/caty-ai/alpha-nightshift/issues/37#replay-36"
   }' "$replay_draft" > "$replay_decisions"
 
   if ! NIGHTSHIFT_CONFIG=/dev/null NIGHTSHIFT_STATE_DIR="$replay_state" \
@@ -476,7 +476,7 @@ sync_g6_decisions() {
         .latest_verdict.actor == "auto-triage" and
         .latest_verdict.source == "manual-comment" and
         .latest_verdict.source_ref ==
-          "https://github.com/shojikumaru/alpha-nightshift/issues/37#replay-36"
+          "https://github.com/caty-ai/alpha-nightshift/issues/37#replay-36"
       ) |
       .id
     ] | sort) == ($expected | sort)

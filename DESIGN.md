@@ -1,13 +1,13 @@
 # alpha-nightshift（夜番）設計書 v0.1
 
-- status: **council-reviewed draft**（5席レビュー反映済み・repo 新設と起票は翔さん判断待ち）
-- date: 2026-07-29（v0 同日 council: Kimi/Opus/GLM=全体, Grok/Fable=§10 敵対。採否= `reviews/2026-07-29-design-v0/DISPOSITION.md`）
-- owner: Alpha（翔さんとの壁打ち 2026-07-28〜29 の決定を統合）
+- status: **council-reviewed draft**（5席レビュー反映済み・repo 新設と起票はオーナー判断待ち）
+- date: 2026-07-29（v0 同日 council: Kimi/Opus/GLM=全体, Grok/Fable=§10 敵対。採否= `reviews/2026-07-29-design-v0/DISPOSITION.md`（公開ツリーからは除去済み・git 履歴にのみ残存））
+- owner: Alpha（オーナーとの壁打ち 2026-07-28〜29 の決定を統合）
 - scope: v0 = 保守2レーン（UX目付＋バックヤード）。v0.1 = 生成レーン追加（persona-engine）
 
 ## 0. 一言で
 
-完成後（または開発中）のシステムに対し、夜間に git worktree 隔離で「観測 → 合議 → Issue → 実装 → 検証 → パケット化」を**必ず完走**させ、人間（翔さん）は朝の確認予算内で PR 単位のチェリーピックだけを行う、証拠駆動の夜間保守ループ。
+完成後（または開発中）のシステムに対し、夜間に git worktree 隔離で「観測 → 合議 → Issue → 実装 → 検証 → パケット化」を**必ず完走**させ、人間（オーナー）は朝の確認予算内で PR 単位のチェリーピックだけを行う、証拠駆動の夜間保守ループ。
 
 ## 1. 目的と非目標
 
@@ -60,7 +60,7 @@
 |---|---|---|
 | 目付の実走（sim/ブラウザ/CLI 操作・スクショ・中身観測） | codex | サンドボックス内（§10.3） |
 | ペルソナ/シナリオ設計・観点選定・合議の裁定・最終検品・朝ダイジェスト肉付け | Fable（Alpha） | digest はテンプレ生成が正・Fable は肉付け（§11） |
-| バックヤード技術調査の設計と深掘り | Fable（観点広め）。再現実験の実走は codex | 翔さん指定 |
+| バックヤード技術調査の設計と深掘り | Fable（観点広め）。再現実験の実走は codex | オーナー指定 |
 | 実装 writer | codex（Sol/high 既定） | — |
 | クロスレビュー | council（S/M = Kimi+GLM。guard 変更 = 5席） | OSS 利用者は BYO reviewer |
 | 反射層 | 機械（gitleaks・lint・テストスイート・dedup・予算メータ） | テスト実行も§10.3の隔離下 |
@@ -76,7 +76,7 @@
 ## 5. ゴール先出し（GOALS）
 
 - **初夜の成果物**（実装はしない）: ①GOALS 案（UX ゴール＋技術ゴール）②機能マップ ③可動域マップ（シミュ確認可能/実機必須の実測仕分け）
-- Phase 0 では GOALS 案は**夜番 state dir に生成**し、昼に Alpha が通常レーンで `docs/NIGHTSHIFT-GOALS.md` の PR にして翔さん承認（Phase 0 の GitHub 書き込みゼロを崩さない）。Phase 1 以降も夜番は bot branch 作成までとし、PR は昼の owner 操作とする
+- Phase 0 では GOALS 案は**夜番 state dir に生成**し、昼に Alpha が通常レーンで `docs/NIGHTSHIFT-GOALS.md` の PR にしてオーナー承認（Phase 0 の GitHub 書き込みゼロを崩さない）。Phase 1 以降も夜番は bot branch 作成までとし、PR は昼の owner 操作とする
 - **GOALS のライフサイクル**: 版番号を持ち、変更は必ず PR（=人間承認）。夜番は現行版との差分だけを見る。未承認 repo は観測のみ
 - リファクタのゴール定義（固定）: **機能を一切削がず、最小モジュール形式へ**（§6）
 
@@ -111,10 +111,10 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
  → retro（失敗分析 → config/playbook への変更提案 PR。guard パスは §10.6 特別扱い）
  → 繰越 bot branch の再利用・自動更新は行わず、衝突または stale は HOLD 化
 06:30 朝ダイジェスト確定（テンプレは必ず生成・Fable 肉付けは予算内のみ）
-朝   翔さん確認（§9 予算内）→ PR 単位チェリーピック → main 適用（翔さんのみ）→ verdict-sync が裁定を台帳へ書き戻し
+朝   オーナー確認（§9 予算内）→ PR 単位チェリーピック → main 適用（オーナーのみ）→ verdict-sync が裁定を台帳へ書き戻し
 ```
 
-- focus 選定基準: ①直近 git 変更が多い領域 ②前回 findings が濃かった領域 ③翔さん指定（最優先）
+- focus 選定基準: ①直近 git 変更が多い領域 ②前回 findings が濃かった領域 ③オーナー指定（最優先）
 - **深夜の人間作業との衝突**: WIP 照会は「昼/夜」でなく「現在時刻に有効な WIP 宣言の有無」で判定
 - **起床失敗・蓋閉じ**: その夜は skip として null digest に記録（catch-up はしない）。代替ホスト（Mac mini 等）での dispatcher 稼働は v1 検討
 - **crash 回収**: 次回起床時に orphan worktree/branch を検出し、台帳と突合して 再開（HOLD 継続）/廃棄 を判定。夜番系 worktree の合計サイズ上限あり（超過で新規レーン停止・GC 実行）
@@ -135,7 +135,7 @@ v0 の運転モード（LP=研磨 L1・CatyPhone=UX 100%）ではこの機構は
 
 **朝ダイジェスト**:
 - 1件1行「どの機能が体感でどう良くなるか」＋詳細リンク＋確認所要時間
-- 上限: **≤10件/日・確認時間合計 ≤30分**（LP 等の即断級前提）。**CatyPhone は別枠 cap**（実機必須 packet は sim 録画で夜番が証拠を出し、実機は spot-check のみ。1日あたりの実機 packet 数を別途制限。初期値は Phase 2 開始時に翔さんが決める）
+- 上限: **≤10件/日・確認時間合計 ≤30分**（LP 等の即断級前提）。**CatyPhone は別枠 cap**（実機必須 packet は sim 録画で夜番が証拠を出し、実機は spot-check のみ。1日あたりの実機 packet 数を別途制限。初期値は Phase 2 開始時にオーナーが決める）
 - マージ儀式の軽量化: 夜番 PR は squash 一発マージ前提・L1-7 記録は verdict-sync が下書き
 - **バックプレッシャー**: 未確認バックログが K 件を超えたら dispatcher がレーン数を自動削減（K 初期値 = 15。Phase 0 で較正）
 - 繰越 PR は夜ごと自動 rebase・N 夜（初期値 7）経過で close 提案をダイジェストに出す
@@ -186,7 +186,7 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 - スキャナ実行不能・エラー = 公開系操作全停止
 - visibility flip（private→public）の前提条件: 夜番 commit 全履歴の再スキャン PASS（適格条件に記載）
 
-### 10.5 データ境界（v0 = 前提で縛る方式・翔さん裁定 2026-07-29）
+### 10.5 データ境界（v0 = 前提で縛る方式・オーナー裁定 2026-07-29）
 - **v0 の第一防壁は信頼境界の前提条件**（§12 適格条件6）: 対象は「書き込み者が家族に限られる private repo」のみ。外部由来テキストの流入経路を前提から排除し、注入対策の作り込みは v0 ではしない（キリがない領域はスコープで縛る、が owner 裁定）
 - 前提が変わる時——外部 Issue 受け入れ（v1）・public 化後の外部 PR/Issue——には、構造化組み立て（prompt はハーネスが構造化フィールドから組み立て、自由テキストは引用フェンスのみ）等の注入対策が**開始の前提条件**になる。v1 設計に委譲
 - v0 でも維持されるもの（追加コストゼロ・事故対策として元々存在）: 騙され/暴走の別なく、被害上限は L1（鍵独占）・L4（公開ゲート）・main=人間 が規定する
@@ -225,10 +225,10 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 3. 現在時刻に有効な WIP 宣言と非衝突
 4. 公開 repo は secrets ゲート整備済み＋PII 辞書 or 明示 opt-out
 5. テストが外部副作用を持たない（or 隔離実行できる）
-6. **信頼境界（v0 前提・翔さん裁定 2026-07-29）**: 書き込み者が家族（翔さん＋AI ファミリー）に限られる private repo であること。外部の書き込み（外部 Issue/PR・ユーザー生成コンテンツ）が流入する repo は v0 対象外——外部入力の受け入れは v1 で注入対策とセットで設計する
+6. **信頼境界（v0 前提・オーナー裁定 2026-07-29）**: 書き込み者が家族（オーナー＋AI ファミリー）に限られる private repo であること。外部の書き込み（外部 Issue/PR・ユーザー生成コンテンツ）が流入する repo は v0 対象外——外部入力の受け入れは v1 で注入対策とセットで設計する
 - **検証スイートが無い repo の bootstrap 経路**: 夜番の最初の提案を「検証スイート追加」（L1 扱い）にできる。承認・整備されるまで観測のみ
 
-**repo 選定は人間指定制**（指定 = 承認済み repo 集合への追加。夜ごとの focus ローテーションはその集合の内側でのみ行う）。停滞 repo は「どの機能が体感でどう良くなるか」1-2行で提案 → 翔さん承認。
+**repo 選定は人間指定制**（指定 = 承認済み repo 集合への追加。夜ごとの focus ローテーションはその集合の内側でのみ行う）。停滞 repo は「どの機能が体感でどう良くなるか」1-2行で提案 → オーナー承認。
 
 **初期3 repo の運転モード**:
 | repo | 位置づけ | モード |
@@ -249,7 +249,7 @@ lane 失敗かつ当夜の後続 lane 停止とする。`survivors` は inspecto
 |---|---|---|---|
 | 0 | LP | **GitHub 書き込み完全ゼロ＝credential 不在で仕組み保証**（レーンのプロセス環境に GitHub credential を注入しない。照会が必要な情報はハーネスが取得してファイルで渡す。観測・台帳・null digest・ダイジェスト。GOALS 案は state dir 生成→昼に Alpha が PR 化）・7夜 | 設計承認・レーン環境に書き込み credential が存在しないことのテスト実証・予算メータ稼働 |
 | 1 | LP | L1 解禁・1-2 レーン | **enforcement build 完了**: dedicated GitHub App＋branch protection＋gateway/broker＋公開ゲート稼働、**5席の攻撃経路を test case 化したバイパス E2E が全 deny を実証** |
-| 2 | CatyPhone | UX 100% モードで L2-L3・focus ローテーション | Phase 1 KPI 閾値内・CatyPhone 朝予算 cap の翔さん決定 |
+| 2 | CatyPhone | UX 100% モードで L2-L3・focus ローテーション | Phase 1 KPI 閾値内・CatyPhone 朝予算 cap のオーナー決定 |
 | v0.1 | persona-engine | 生成レーン追加 | 様式ゲート（SFW lint）稼働 |
 | v1 | — | 外部 Issue triage 実行・代替ホスト・container 隔離・repo 追加拡大 | 別途設計 |
 
@@ -335,7 +335,7 @@ App suspend or uninstall/key revoke/readback/re-enable gate の直列手順と�
 
 ## 15. OSS 化ロードマップ
 
-- repo: `shojikumaru/alpha-nightshift` を PRIVATE で新設 → 公開同等整備（LICENSE=MIT・EN README 正本＋README.ja・COC/SECURITY・gitleaks クリーン）→ 翔さん flip（handbook 実証済みコース）
+- repo: `caty-ai/alpha-nightshift` を PRIVATE で新設 → 公開同等整備（LICENSE=MIT・EN README 正本＋README.ja・COC/SECURITY・gitleaks クリーン）→ オーナー flip（handbook 実証済みコース）
 - **OSS flip の技術ゲート**: core 単独で安全が成立していること——G1 相当が core 内で完結（gateway＋hooksPath 注入）・reviewer/PII 不在時の degraded モード定義済み・sandbox 要件文書化（council GLM M1/M2/M3 の解消）
 - 推奨依存（public / public 予定）: fable-loop-harness・sitter
 - AMC はアダプタ接続のみ（コード移植なし）
@@ -344,17 +344,17 @@ App suspend or uninstall/key revoke/readback/re-enable gate の直列手順と�
 
 1. embedding dedup の実装方式（recall 局所層 vs 軽量索引）→ Phase 0 で決定
 2. 目付ペルソナ既定値の妥当性 → Phase 0 実測で調整
-3. CatyPhone 機能マップ初期値・朝予算 cap 値 → Phase 2 開始時（cap は翔さん専決）
+3. CatyPhone 機能マップ初期値・朝予算 cap 値 → Phase 2 開始時（cap はオーナー専決）
 4. dispatcher 常駐の具体（launchd plist・電源設定）・sandbox-exec profile の実装可能範囲 → Phase 1 実装 Issue
 5. KPI 閾値・バックプレッシャー K・繰越 close N の本数値 → Phase 0-1 実測から
 6. 外部 Issue triage の実行設計 → v1
-7. night-bot broker identity の作成と GitHub App private key 封印 → **翔さん玉**（Phase 1 前）
+7. night-bot broker identity の作成と GitHub App private key 封印 → **オーナー玉**（Phase 1 前）
 
 ## 17. 決定ログ
 
-- 2026-07-28: 構想開始。最小部品＋既存流用・「精度は客観検証可能性で決まる」原則（翔さん×Alpha）
-- 2026-07-28: ゴール先出し・リファクタゴール=機能非削減×最小モジュール・粒度4層・repo 人間指定制（翔さん）
-- 2026-07-29: 役割分担（目付実走=codex/設計・裁定=Fable）・完走原則・チェリーピック方式・朝30分/≤10件・Fable 予算・レンズカタログ・embedding dedup 方針（翔さん）
-- 2026-07-29: 初期3 repo（LP/CatyPhone/persona-engine）・名前=alpha-nightshift・OSS 前提コア/アダプタ分離・AMC 非依存化（翔さん）
-- 2026-07-29: 設計書 v0 → council GO・persona-engine は v0.1 後発（翔さん）
-- 2026-07-29: **council 5席実施**（Kimi/Opus/GLM=全体 GO-with-changes・Grok/Fable=§10 敵対 NO-GO）→ 統合裁定・v0.1 改訂: §10 を4層強制に全面改稿・verdict-sync 新設・予算/朝運用/OSS 成立性の修正。採否記録 = `reviews/2026-07-29-design-v0/DISPOSITION.md`（Alpha 裁定）
+- 2026-07-28: 構想開始。最小部品＋既存流用・「精度は客観検証可能性で決まる」原則（オーナー×Alpha）
+- 2026-07-28: ゴール先出し・リファクタゴール=機能非削減×最小モジュール・粒度4層・repo 人間指定制（オーナー）
+- 2026-07-29: 役割分担（目付実走=codex/設計・裁定=Fable）・完走原則・チェリーピック方式・朝30分/≤10件・Fable 予算・レンズカタログ・embedding dedup 方針（オーナー）
+- 2026-07-29: 初期3 repo（LP/CatyPhone/persona-engine）・名前=alpha-nightshift・OSS 前提コア/アダプタ分離・AMC 非依存化（オーナー）
+- 2026-07-29: 設計書 v0 → council GO・persona-engine は v0.1 後発（オーナー）
+- 2026-07-29: **council 5席実施**（Kimi/Opus/GLM=全体 GO-with-changes・Grok/Fable=§10 敵対 NO-GO）→ 統合裁定・v0.1 改訂: §10 を4層強制に全面改稿・verdict-sync 新設・予算/朝運用/OSS 成立性の修正。採否記録 = `reviews/2026-07-29-design-v0/DISPOSITION.md`（公開ツリーからは除去済み・git 履歴にのみ残存、Alpha 裁定）
