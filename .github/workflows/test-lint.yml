@@ -10,9 +10,13 @@ jobs:
     with:
       run_macos: true
       require_suite_reconciliation: true
-      # Ubuntu runners lack the macOS-only suite contracts (sandbox-exec,
-      # the pinned gitleaks path, brew git): 6 of 28 suites skip there with
-      # printed reasons (~21%), so the default 20% cap would fail an honest
-      # run. The self-hosted full-contract lane in ci.yml executes those
-      # suites with zero skips.
-      max_skip_percent: '25'
+      # Honest accounting (seat-reviewed on PR #47): most of this suite is
+      # Darwin-native (BSD date -v / stat -f, sandbox-exec, launchd, the
+      # pinned gitleaks/git contract paths). On ubuntu 22 of 29 suites skip
+      # with printed per-suite reasons; the ubuntu lane's job is the portable
+      # subset + lint + the reconciliation arithmetic itself. Hosted macOS
+      # executes ~24/29; the self-hosted full-contract lane (ci.yml) runs
+      # 29/29 and asserts skipped=0. Cap is tight at today's skip count:
+      # 22*100=2200 <= 29*76=2204 passes, a 23rd skip (2300) fails.
+      # Ratchet DOWN as suites are ported to Linux (follow-up issue #49).
+      max_skip_percent: '76'

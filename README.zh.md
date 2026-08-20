@@ -111,14 +111,16 @@ cd alpha-nightshift
 make test
 ```
 
-`make test` 会运行所有测试套件，并以一行核对信息（reconciliation line）结束——`suites: declared=N executed=M skipped=K`——这样一来，如果某个套件悄悄消失了，整个运行会直接失败，而不是被悄悄隐藏。那些在你机器上缺少环境契约（environment contract）的套件（例如在 Linux 上运行 macOS 专属的 `sandbox-exec`）会被跳过，并打印出跳过的原因，绝不会悄无声息地略过。
+`make test` 会将发现到的测试套件数量与 `tests/expected_suite_count` 进行核对，运行所有环境契约（environment contract）齐备的套件，并以一行核对信息（reconciliation line）结束——`suites: declared=N executed=M skipped=K`。如果某个套件悄悄消失了，它不会被隐藏，而是会让这项数量核对检查失败；那些在你机器上缺少环境契约的套件（例如在 Linux 上运行 macOS 专属的 `sandbox-exec`）会被跳过，并打印出跳过的原因，绝不会悄无声息地略过。
 
 <details>
 <summary>如果 <code>make test</code> 报告缺少工具</summary>
 
 - `jq` — `brew install jq`（macOS）/ `apt-get install jq`（Linux）
 - `shellcheck`（用于 `make lint`）— `brew install shellcheck` / `apt-get install shellcheck`
-- 守卫扫描（guard-scan）相关套件需要在契约路径（contract path）上有版本锁定（pinned）的 gitleaks 二进制文件；该套件会打印出它期望的确切路径与版本，如果缺失则会跳过并给出原因。
+- `python3`（3.9 及以上）— 发布门禁（publication-gate）相关套件依赖它运行
+- `node` — 有一个 metsuke 套件会用到它
+- 守卫扫描（guard-scan）相关套件需要在契约路径（contract path）上有版本锁定（pinned）的 gitleaks 二进制文件；如果缺失，运行器（runner）会跳过这些套件，并打印出 `SKIP <suite>: missing contract pinned_gitleaks` 这一行。
 
 </details>
 
@@ -132,7 +134,7 @@ make test
 
 - **默认拒绝（Deny by default）**——每一个涉及远程写入（remote-write）的决策都从“不行”开始；只有经过测试证明的、明确授权的情况才会放行，无法证明的情况则始终保持拒绝状态（`UNSUPPORTED` 是硬性禁用，而不是一条警告）
 - **隔离的工作空间**——夜间通道（lane）运行在一次性的 git 工作树（worktree）上，各自拥有独立分支；你的主分支绝不会成为工作台
-- **用证据说话，而不是承诺**——测试套件把守卫（guard）的行为锁定下来，并且 CI 会在每一次 pull request 中，在 Ubuntu 和 macOS 上重新验证一遍
+- **用证据说话，而不是承诺**——测试套件把守卫（guard）的行为锁定下来，CI 会在每一次 pull request 中重新验证一遍：在 Ubuntu 上运行可移植的子集，在托管（hosted）macOS 上运行几乎完整的套件，并在自托管（self-hosted）的 macOS 运行器上执行满足全部契约的完整运行——只要有一个套件被跳过，就会判定失败
 - **诚实地标注局限**——凡是缺少真实凭证（live-credential）证明的能力，都会在本 README 和设计记录中被明确标注为“尚未证实（unproven）”，而不是当作已完成的功能来宣传
 
 同样的诚实态度也适用于这个循环产出的结果：没有证据支撑的发现，是不会通过早间分类整理（morning triage）的。
@@ -149,7 +151,7 @@ make test
 |---|---|---|
 | [docs/engineering.md](docs/engineering.md) | 工程师 | 架构、模块地图、守卫边界（guard boundary）、CI 通道 |
 | [docs/reference.md](docs/reference.md) | 实现者 / 运维人员 | 守卫接口、模式词汇表、发布器（publisher）策略、测试契约 |
-| [DESIGN.md](DESIGN.md) | 好奇的人 | 附带完整评审历史的原始设计文档 |
+| [DESIGN.md](DESIGN.md) | 好奇的人 | 原始设计文档（其中的评审席位记录已从公开的文件树中移除，只保留在仓库历史中） |
 
 ---
 

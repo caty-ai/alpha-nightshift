@@ -19,7 +19,7 @@ alpha-nightshiftは、リポジトリメンテナンスのためのmacOS向け�
 | drift-monitor | `guard/drift-monitor.sh` | GitHub Appの権限、Webhook設定、インストールIDを検証し、MATCH／DRIFT_DENY／MONITOR_UNVERIFIEDのいずれかの判定のみを出力する、読み取り専用のコントロールプレーンドリフトチェック |
 | tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | lintとmake test用のGitHubホスト型再利用可能ゲート（ubuntu＋macos）に加え、バージョン固定ツール検証を伴うセルフホストmac-mini完全契約スイート |
 | docs | `docs/*.md` | morning-triage仕様書、night-bot失効ランブック、およびこのエンジニアリングガイドを含む設計ドキュメント |
-| i18n | `README.ja.md`, `README.zh.md`, `README.th.md` | 玄関口となるREADMEの非コード翻訳（docsはフェーズ0では英語のみ） |
+| i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | 非コード翻訳: 4言語版の玄関口README、およびengineering・referenceドキュメントの日本語ミラー |
 
 ---
 
@@ -59,7 +59,13 @@ macOSの夜間観察ハーネスは23:30に認証情報を持たない観察レ�
 uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 ```
 
-このゲートはubuntuとmacOS上で`make test`と`make lint`を実行します（macOSでの実行は`run_macos: true`で制御されます）。スイートの整合性確認は強制されます（`require_suite_reconciliation: true`）。
+このゲートはubuntuとmacOS上で`make test`と`make lint`を実行します（macOSでの実行は`run_macos: true`で制御されます）。スイートの整合性確認はubuntuジョブで強制されます（`require_suite_reconciliation: true`）。再利用可能ゲートのmacOSジョブでは整合性確認を行いません。
+
+3つのテストレーンは、意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです:
+
+- **ubuntu** — 移植可能な部分（Darwin依存のスイートは、呼び出し元が宣言したスキップ上限の範囲内で、スキップ理由をスイートごとに出力しつつスキップします）、`make lint`、そして整合性確認の算出処理そのもの
+- **hosted macOS** — セルフホストランナーだけがインストールしている、バージョン固定gitleaks／gitの契約パスに紐づくスイートを除くすべて
+- **self-hosted mac-mini**（`ci.yml`） — 29スイートすべてを含む完全契約スイート。1つでもスイートがスキップされたら失敗するステップつき
 
 ### セルフホストmac-mini完全契約スイート
 
@@ -75,8 +81,8 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 - すべてのシェルスクリプトのBash構文チェック
 - パブリッシャー表面とテストに対するShellCheckのlint
-- `tests/run_tests.sh`によるフルテストスイートの実行
-- ベースコミットからHEADまでの差分範囲に限定したgitleaks
+- `tests/run_tests.sh`によるフルテストスイートの実行、続けてゼロスキップ・アサーション（このランナーにはすべての契約がインストール済みのため、1つでもスキップがあれば契約がサイレントに壊れたことを意味します）
+- PR範囲のgitleaksスキャンは、この`ci.yml`ワークフローではなく再利用可能な呼び出し元`.github/workflows/gitleaks.yml`側に存在します
 
 フォールバック: セルフホストランナーが利用できない場合、ワークフローを編集して`runs-on: macos-15`（GitHubホスト型、消費分数10倍レート）を使うこともできます。
 
@@ -88,27 +94,25 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 ### テストの検出と整合性確認
 
-このスクリプトは、`tests/`配下のファイル内で`test_*`というパターンに一致するBash関数を列挙することでテスト関数を検出します。そして整合性確認の行を出力します:
+1つのスイートは1つの`tests/test_*.sh`ファイルに対応します。ランナーはそれらのファイルをglobで検出したうえで、検出件数を`tests/expected_suite_count`という台帳（census）ファイルと突き合わせ、不一致があればフェイルクローズドで停止します。これにより、台帳ファイルの更新を伴わずにスイートが消えたり（あるいは新たに現れたり）した場合に、カバレッジがサイレントに縮小するのではなく、実行そのものが赤くなります。最終サマリーとして整合性確認の行を出力します:
 
 ```
 suites: declared=N executed=M skipped=K
 ```
 
-内訳:
-- `N`は宣言されたテスト関数の総数
-- `M`は実際に実行された数
-- `K`はスキップされた数（例: プラットフォームが利用できない場合やCI環境チェックによるもの）
+`N`は検出された（台帳と突き合わせ済みの）スイートファイル数、`M`は実行された数、`K`はスキップされた数です。ubuntuのCIジョブはこれに加えて、`declared = executed + skipped`であること、実行数がゼロでないこと、呼び出し元が宣言したスキップ上限の範囲内であることを強制します。
 
 ### 環境契約によるスキップ
 
-テストのスキップは、その理由とともに出力されます。よくある理由には次のようなものがあります:
+スイートを実行する前に、ランナーはそのスイートが宣言する環境契約を確認し、契約が1つでも欠けていれば`SKIP <suite>: missing contract <name>`という行を出力してそのスイートをスキップします。契約の語彙はクローズドセットです:
 
-- 任意の依存関係が不足している場合（例: オプションのレビュアー席）
-- プラットフォームの制約（例: 特定のmacOSバージョンを要求するテスト）
-- CI環境の制限（例: GitHubランナー固有のテスト）
-- サンドボックスの可用性（例: サンドボックスツールが利用できない場合のmacOS sandbox.sbレンダリングテスト）
+- `darwin_userland` — BSDユーザーランドのセマンティクス（`date -v`、`stat -f`、macOSのプロセス挙動）
+- `sandbox_exec` — macOSの`sandbox-exec`ツール
+- `pinned_gitleaks` — 契約パスに配置された、ハッシュ固定済みのgitleaksバイナリ
+- `cellar_git_shim` / `brew_git` — ガードスイートが確認する、バージョン固定gitおよびbrew版gitのパス
+- `system_jq` — `/usr/bin/jq`
 
-宣言されたテストが「実行済み＋スキップ」の合計で説明できない場合、このスクリプトは失敗ステータスで終了します。
+契約がすべて揃っているスイートがスキップされることはありません。実行されたスイートが失敗すれば、その実行は必ず非ゼロで終了します。macOS依存の契約を持たないスイート（公開ゲートのセルフテストや、リポジトリに対する公開ゲートの実スキャンを含む）はどの環境でも実行されます。
 
 ---
 

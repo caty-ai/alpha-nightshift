@@ -190,7 +190,7 @@ TRIAGE_LLM_TIMEOUT_SEC=900
 TRIAGE_PHASE_A_DEADLINE_SEC=7200
 TRIAGE_HARD_WALL=23:59
 TRIAGE_DEDUP_POOL_MAX=1000
-TRIAGE_TARGET_REPOS='caty-agent-harness=shojikumaru/caty-agent-harness'
+TRIAGE_TARGET_REPOS='caty-agent-harness=caty-ai/caty-agent-harness'
 TRIAGE_REPORT_ISSUE=37
 CONFIG
   printf 'TRIAGE_ALREADY_FIXED_MODE=%s\n' "$replay_already_fixed_mode" >> \

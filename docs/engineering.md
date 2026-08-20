@@ -19,7 +19,7 @@ The system comprises eight core components working within isolation boundaries t
 | drift-monitor | `guard/drift-monitor.sh` | Read-only control-plane drift check that verifies GitHub App permissions, webhook configuration, installation identity, and publishes only MATCH / DRIFT_DENY / MONITOR_UNVERIFIED verdicts |
 | tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | GitHub-hosted reusable gates (ubuntu + macos) for lint and make test, plus self-hosted mac-mini full-contract suite with pinned tool verification |
 | docs | `docs/*.md` | Design documentation including morning-triage specification, night-bot revocation runbook, and this engineering guide |
-| i18n | `README.ja.md`, `README.zh.md`, `README.th.md` | Non-code translations of the front-door README (docs are English-only in Phase 0) |
+| i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | Non-code translations: the front-door README in four languages, plus Japanese mirrors of the engineering and reference docs |
 
 ---
 
@@ -59,7 +59,13 @@ The workflow `.github/workflows/test-lint.yml` uses a reusable gate from the fam
 uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 ```
 
-This gate runs `make test` and `make lint` on ubuntu and macOS (macOS run controlled by `run_macos: true`). Suite reconciliation is enforced (`require_suite_reconciliation: true`).
+This gate runs `make test` and `make lint` on ubuntu and macOS (macOS run controlled by `run_macos: true`). Suite reconciliation is enforced on the ubuntu job (`require_suite_reconciliation: true`); the reusable does not reconcile on its macOS job.
+
+The three test lanes deliberately cover different depths, because most of this suite is Darwin-native:
+
+- **ubuntu** — the portable subset (Darwin-bound suites skip with printed per-suite reasons under a caller-declared skip cap), `make lint`, and the reconciliation arithmetic itself
+- **hosted macOS** — everything except the suites bound to the pinned gitleaks/git contract paths that only the self-hosted runner installs
+- **self-hosted mac-mini** (`ci.yml`) — the full 29-suite contract, with a step that fails if even one suite skipped
 
 ### Self-hosted mac-mini full-contract suite
 
@@ -75,8 +81,8 @@ Execution and analysis:
 
 - Bash syntax for all shell scripts
 - ShellCheck linting of publisher surface and tests
-- Full test suite via `tests/run_tests.sh`
-- Diff-scoped gitleaks from base commit to HEAD
+- Full test suite via `tests/run_tests.sh`, followed by a zero-skip assertion (every contract is installed on this runner, so any skip means a contract silently broke)
+- PR-range gitleaks scanning lives in the reusable caller `.github/workflows/gitleaks.yml`, not in this workflow
 
 Fallback: if the self-hosted runner is unavailable, the workflow can be edited to use `runs-on: macos-15` (GitHub-hosted, 10x minute rate).
 
@@ -88,27 +94,25 @@ The test suite is discovered and executed by `tests/run_tests.sh`.
 
 ### Test discovery and reconciliation
 
-The script discovers test functions by enumerating Bash functions matching the pattern `test_*` in files under `tests/`. It outputs a reconciliation line:
+One suite is one `tests/test_*.sh` file. The runner globs those files, then checks the discovered count against `tests/expected_suite_count` and fails closed on any mismatch — so a suite that vanishes (or appears) without the census file being updated turns the run red instead of shrinking coverage silently. It prints a reconciliation line as its final summary:
 
 ```
 suites: declared=N executed=M skipped=K
 ```
 
-Where:
-- `N` is the total number of declared test functions
-- `M` is the number actually executed
-- `K` is the number skipped (e.g., due to platform unavailability or CI environment checks)
+Where `N` is the discovered (census-checked) suite-file count, `M` were executed, and `K` were skipped. The ubuntu CI job additionally enforces `declared = executed + skipped`, a nonzero executed count, and a caller-declared skip cap.
 
 ### Environment contract skips
 
-Test skips are printed with their reasons. Common reasons include:
+Before running a suite, the runner checks that suite's declared environment contracts and skips it with a printed `SKIP <suite>: missing contract <name>` line when one is absent. The contract vocabulary is closed:
 
-- Missing optional dependencies (e.g., optional reviewer seats)
-- Platform constraints (e.g., tests requiring specific macOS version)
-- CI environment limitations (e.g., GitHub runner-specific tests)
-- Sandbox availability (e.g., macOS sandbox.sb rendering tests when sandbox tooling is unavailable)
+- `darwin_userland` — BSD userland semantics (`date -v`, `stat -f`, macOS process behavior)
+- `sandbox_exec` — the macOS `sandbox-exec` tool
+- `pinned_gitleaks` — the hash-pinned gitleaks binary at its contract path
+- `cellar_git_shim` / `brew_git` — the pinned and brew git paths the guard suites probe
+- `system_jq` — `/usr/bin/jq`
 
-The script exits with failure status if declared tests cannot be accounted for in the executed + skipped totals.
+A suite never skips while all of its contracts are present; a failing executed suite always exits the run nonzero. Suites with no macOS-bound contract (including the publication-gate selftest and the live publication-gate scan of the repo) run everywhere.
 
 ---
 
