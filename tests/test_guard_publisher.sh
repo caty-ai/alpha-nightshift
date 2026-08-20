@@ -32,7 +32,7 @@ EXAMPLE_POLICY_SHA=$(/usr/bin/jq -cS . "$EXAMPLE_POLICY" | /usr/bin/shasum -a 25
 EXAMPLE_REQUEST=$TEST_TMP/inactive-request.json
 /usr/bin/jq -n \
   --arg request_id 'REQ-20260730-0001-0123456789abcdef' \
-  --arg repo_id 'shojikumaru/alpha-nightshift' \
+  --arg repo_id 'caty-ai/alpha-nightshift' \
   --arg base_sha "$BASE_SHA" \
   --arg candidate_sha "$CANDIDATE_SHA" \
   --arg policy_sha256 "$EXAMPLE_POLICY_SHA" '
@@ -104,7 +104,7 @@ if "$ROOT/guard/publisher.sh" publish_branch \
 fi
 
 /usr/bin/printf '%s\n' \
-  '{"schema":"alpha-nightshift/publish-request/v1","operation":"publish_branch","request_id":"REQ-20260730-0001-0123456789abcdef","repo_id":"shojikumaru/alpha-nightshift","repository_id":123,"base_sha":"'"$BASE_SHA"'","candidate_sha":"'"$CANDIDATE_SHA"'","policy_sha256":"'"$EXAMPLE_POLICY_SHA"'","destination_ref":"refs/heads/main"}' \
+  '{"schema":"alpha-nightshift/publish-request/v1","operation":"publish_branch","request_id":"REQ-20260730-0001-0123456789abcdef","repo_id":"caty-ai/alpha-nightshift","repository_id":123,"base_sha":"'"$BASE_SHA"'","candidate_sha":"'"$CANDIDATE_SHA"'","policy_sha256":"'"$EXAMPLE_POLICY_SHA"'","destination_ref":"refs/heads/main"}' \
   > "$TEST_TMP/extra-field.json"
 if "$ROOT/guard/publisher.sh" publish_branch \
   --policy "$EXAMPLE_POLICY" \

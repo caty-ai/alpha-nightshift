@@ -220,7 +220,7 @@ write_config() {
     "TRIAGE_ALREADY_FIXED_MODE='reject'" \
     "TRIAGE_ADAPTER='$STUB_ADAPTER'" \
     "TRIAGE_REPORT_ISSUE='123'" \
-    "TRIAGE_REPORT_REPO_FULL_NAME='shojikumaru/alpha-nightshift'" \
+    "TRIAGE_REPORT_REPO_FULL_NAME='caty-ai/alpha-nightshift'" \
     "TRIAGE_TARGET_REPOS='demo=owner/demo'" \
     "TRIAGE_MAX_NEW_FOR_DEDUP=0" \
     "TRIAGE_MAX_VERIFY_PER_RUN=20" \
@@ -329,7 +329,7 @@ self_actor_config="$TEST_TMP/self-actor.conf"
 seed_finding "$self_actor_state" "rv-self-actor" "src/good.sh:2" \
   "prior automatic decision"
 printf '%s\n' \
-  '{"type":"verdict","verdict_id":"prior-owned-auto-triage","ts":"2026-08-17T01:00:00Z","finding_id":"rv-self-actor","status":"rejected","actor":"auto-triage","source":"manual-comment","source_ref":"https://github.com/shojikumaru/alpha-nightshift/issues/123#issuecomment-1","observed_at":"2026-08-17T01:00:00Z","rejection_reason":"prior owned identity"}' \
+  '{"type":"verdict","verdict_id":"prior-owned-auto-triage","ts":"2026-08-17T01:00:00Z","finding_id":"rv-self-actor","status":"rejected","actor":"auto-triage","source":"manual-comment","source_ref":"https://github.com/caty-ai/alpha-nightshift/issues/123#issuecomment-1","observed_at":"2026-08-17T01:00:00Z","rejection_reason":"prior owned identity"}' \
   >> "$self_actor_state/ledger/ledger.jsonl"
 write_config "$self_actor_config" "$self_actor_state"
 run_triage "$self_actor_config" --dry-run --force \
