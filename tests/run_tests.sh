@@ -31,7 +31,7 @@ suite_contracts() {
       printf '%s\n' 'system_jq'
       ;;
     test_guard_preflight.sh)
-      printf '%s\n' 'darwin_userland cellar_git_shim pinned_gitleaks system_jq'
+      printf '%s\n' 'darwin_userland pinned_gitleaks system_jq'
       ;;
     test_guard_sandbox.sh)
       printf '%s\n' 'sandbox_exec system_jq'
@@ -40,7 +40,7 @@ suite_contracts() {
       printf '%s\n' 'darwin_userland cellar_git_shim brew_git system_jq'
       ;;
     test_guard_text_policy.sh)
-      printf '%s\n' 'cellar_git_shim brew_git pinned_gitleaks system_jq'
+      printf '%s\n' 'brew_git pinned_gitleaks system_jq'
       ;;
     *)
       printf '\n'

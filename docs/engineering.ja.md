@@ -69,12 +69,13 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 ### セルフホストmac-mini完全契約スイート
 
-`.github/workflows/ci.yml`ワークフローは、ガード契約がシステムの`/usr/bin/jq`に依存しているため、セルフホストのARM64 macOSランナー上で実行されます。ツール検証の手順:
+`.github/workflows/ci.yml`ワークフローは、全スイート契約（特に hosted ランナーには存在しない Cellar 固定パスの git / gitleaks）をインストール・検証する唯一のレーンであるため、セルフホストのARM64 macOSランナー上で実行されます。ツール検証の手順:
 
 - ShellCheckをインストールし、ガードスクリプトに対して実行
 - バージョン固定gitleaks 8.30.1バイナリを、インストール時だけでなく実行のたびにSHA-256で検証
 - 実際のランナーバージョンを検証するGit互換パスのシム
 - `/usr/bin/jq`にあるシステムjqの可用性確認
+- `sandbox-exec`の可用性確認（他レーンではサンドボックススイートがスキップになるため、このレーンだけは大声で失敗させる）
 - `/opt/homebrew/bin/git`にあるBrew版gitの可用性確認
 
 実行と分析:

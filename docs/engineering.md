@@ -69,12 +69,13 @@ The three test lanes deliberately cover different depths, because most of this s
 
 ### Self-hosted mac-mini full-contract suite
 
-The `.github/workflows/ci.yml` workflow runs on a self-hosted ARM64 macOS runner because the guard contract depends on system `/usr/bin/jq`. Tool verification steps:
+The `.github/workflows/ci.yml` workflow runs on a self-hosted ARM64 macOS runner because it is the one lane that installs and verifies every suite contract — most importantly the Cellar-pinned git and gitleaks paths that hosted runners do not ship. Tool verification steps:
 
 - ShellCheck installed and invoked on guard scripts
 - Pinned gitleaks 8.30.1 binary with SHA-256 verification on every run (not only on install)
 - Git compatibility path shim validating actual runner version
 - System jq at `/usr/bin/jq` availability
+- `sandbox-exec` availability (the sandbox suite would skip elsewhere; this lane fails loudly instead)
 - Brew git at `/opt/homebrew/bin/git` availability
 
 Execution and analysis:

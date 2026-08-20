@@ -110,9 +110,16 @@ jobs:
             guard/remote-preflight.sh \
             tests/test_guard_publisher.sh \
             tests/test_guard_drift_monitor.sh \
-            tests/test_guard_revocation_runbook.sh
+            tests/test_guard_revocation_runbook.sh \
+            tests/test_publication_gate_selftest.sh \
+            tests/test_publication_gate_repo.sh \
+            tests/run_tests.sh
 
       - name: Tests
+        # shell: bash gives bash -eo pipefail (GitHub's default `bash -e {0}`
+        # has NO pipefail, so `| tee` would swallow the suite's exit code —
+        # seat finding D1 on PR #47).
+        shell: bash
         run: /bin/bash tests/run_tests.sh 2>&1 | tee /tmp/full-contract-test.log
 
       - name: Assert zero skips (full-contract lane)
