@@ -17,7 +17,7 @@ alpha-nightshiftは、リポジトリメンテナンスのためのmacOS向け�
 | triage | `bin/morning-triage`, `lib/triage-*.sh`, `templates/` | 現在のmainに対する日中の読み取り専用検証、台帳履歴全体にわたる自動重複排除、GitHub連携によるエビデンス駆動の候補ランキング |
 | metsuke | `lanes/review/run.sh`, `lib/evidence.sh` | 決定論的なDESIGN観点の割り当て、ローテーションするレビュアー席、ペルソナ再構成付きJSONLパース、レーンHOMEによる認証情報の限定を備えたマルチモデルレビュー観察レーン |
 | drift-monitor | `guard/drift-monitor.sh` | GitHub Appの権限、Webhook設定、インストールIDを検証し、MATCH／DRIFT_DENY／MONITOR_UNVERIFIEDのいずれかの判定のみを出力する、読み取り専用のコントロールプレーンドリフトチェック |
-| tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | lintとmake test用のGitHubホスト型再利用可能ゲート（ubuntu＋macos）に加え、バージョン固定ツール検証を伴うセルフホストmac-mini完全契約スイート |
+| tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | lintとmake test用のGitHubホスト型再利用可能ゲート（ubuntu＋macos）に加え、バージョン固定ツール検証を伴う完全契約スイート（プルリクエストは hosted、`main`への push はセルフホストmac-mini） |
 | docs | `docs/*.md` | morning-triage仕様書、night-bot失効ランブック、およびこのエンジニアリングガイドを含む設計ドキュメント |
 | i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | 非コード翻訳: 4言語版の玄関口README、およびengineering・referenceドキュメントの日本語ミラー |
 
@@ -61,15 +61,16 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 このゲートはubuntuとmacOS上で`make test`と`make lint`を実行します（macOSでの実行は`run_macos: true`で制御されます）。スイートの整合性確認はubuntuジョブで強制されます（`require_suite_reconciliation: true`）。再利用可能ゲートのmacOSジョブでは整合性確認を行いません。
 
-3つのテストレーンは、意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです:
+テストレーンは意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです。件数は実測値です（run 32474196361・いずれも`declared=30`）:
 
 - **ubuntu** — 移植可能な部分（Darwin依存のスイートは、呼び出し元が宣言したスキップ上限の範囲内で、スキップ理由をスイートごとに出力しつつスキップします）、`make lint`、そして整合性確認の算出処理そのもの
-- **hosted macOS** — セルフホストランナーだけがインストールしている、バージョン固定gitleaks／gitの契約パスに紐づくスイートを除くすべて
-- **self-hosted mac-mini**（`ci.yml`） — 29スイートすべてを含む完全契約スイート。1つでもスイートがスキップされたら失敗するステップつき
+- **hosted macOS・共通ワークフロー側**（`test-lint.yml` の `test-macos`） — 30中25。固定版 gitleaks / git の契約パスに紐づくスイートは、このレーンがそれらを導入しないためスキップする
+- **hosted macOS・完全契約**（`ci.yml` の `pull_request`） — 30すべて。固定版ツールの契約パスはランナー任せにせずジョブ自身が導入する。1つでもスイートがスキップされたら失敗するステップつき
+- **self-hosted mac-mini**（`ci.yml` の `main` への `push`） — 同じ完全契約を、マージ後に常駐ランナーで再実行
 
-### セルフホストmac-mini完全契約スイート
+### 完全契約スイート（hosted / セルフホスト共通）
 
-`.github/workflows/ci.yml`ワークフローは、全スイート契約（特に hosted ランナーには存在しない Cellar 固定パスの git / gitleaks）をインストール・検証する唯一のレーンであるため、セルフホストのARM64 macOSランナー上で実行されます。ツール検証の手順:
+`.github/workflows/ci.yml`ワークフローは、実行前に全スイート契約を自分でインストール・検証するため、どちらのランナーでも同じレーンが成立します。ランナーはイベントで選ばれます: プルリクエストは hosted の`macos-15`、`main`への`push`はセルフホストのARM64 mac-mini。プルリクエストをセルフホストランナーから外しているのは意図的です — プルリクエストはこのジョブの手順自体を書き換えられ、手順はソフトウェアを導入し、ランナーは常駐だからです（issue #58）。ツール検証の手順:
 
 - ShellCheckをインストールし、ガードスクリプトに対して実行
 - バージョン固定gitleaks 8.30.1バイナリを、インストール時だけでなく実行のたびにSHA-256で検証
@@ -85,7 +86,7 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 - `tests/run_tests.sh`によるフルテストスイートの実行、続けてゼロスキップ・アサーション（このランナーにはすべての契約がインストール済みのため、1つでもスキップがあれば契約がサイレントに壊れたことを意味します）
 - PR範囲のgitleaksスキャンは、この`ci.yml`ワークフローではなく再利用可能な呼び出し元`.github/workflows/gitleaks.yml`側に存在します
 
-フォールバック: セルフホストランナーが利用できない場合、ワークフローを編集して`runs-on: macos-15`（GitHubホスト型、消費分数10倍レート）を使うこともできます。
+ランナー選択は自動で、編集は不要になりました: 式は`push`を正マッチで判定し、それ以外はすべて hosted に落とすため、想定外のトリガーが増えても mini ではなく hosted に載ります。ただし`pull_request`では GitHub が PR ブランチ側のワークフローファイルを実行するため、この振り分けは既定の露出を無くすだけで、それ自体は境界ではありません — mini のランナーグループを`refs/heads/main`に限定することが本来の境界です。
 
 ---
 

@@ -1,0 +1,72 @@
+# gitleaks configuration.
+#
+# Replaces the previous `.gitleaksignore` (issue #58). That file adjudicated the
+# same false positive with `<commit-sha>:<path>:<rule>:<line>` fingerprints, which
+# are destroyed by any history rewrite: the publication lane (#55) rewrites every
+# SHA, so all fingerprints stop matching and the full-history sweep goes red for a
+# reason that has nothing to do with secrets. Verified against filter-repo's own
+# commit-map — the resurfaced findings were the same two fixtures at the same
+# file, line and rule, remapped 1:1 to their new SHAs.
+
+[extend]
+useDefault = true
+
+# The metsuke-readiness suite plants a fake secret on purpose, so the guard has
+# something to catch. Adjudicated as a false positive in publication lane #46;
+# this rule carries that adjudication forward in a form a rewrite cannot break.
+#
+# THE ANCHORS ARE LOAD-BEARING. gitleaks matches allowlist regexes against the
+# extracted secret; unanchored, `PLANTED_...` is a substring test, so any real
+# credential that merely embeds the marker is suppressed along with the fixture —
+# and the marker is published in tests/test_metsuke_readiness.sh, so anyone could
+# construct one. Measured across five embedding positions (prefix, suffix, middle,
+# separator, unrelated): unanchored suppressed four of them; anchored suppresses
+# only the exact fixture and still catches all five. Two review seats found this
+# class independently. One seat observed full-match semantics on a different
+# invocation path — the documented behaviour promises no anchoring either way, so
+# the anchored form is the one that is correct under both readings and across
+# version changes.
+#
+# The invariant this depends on: the marker is the WHOLE secret, never a prefix of
+# one. If the fixture value ever changes, this rule stops matching and the gate
+# goes red — fail-closed, which is the direction we want.
+# Path scope is ANDed with the regex, so this allowlist describes exactly one
+# thing: that value, in that file, under that rule. Measured against the four
+# combinations (fixture/real key x fixture-file/other-file): without `paths` the
+# marker is allowed anywhere, so the same string pasted into production code
+# would pass silently; with `condition = "AND"` it is allowed only where the
+# fixture actually lives, and both real keys stay caught either way.
+#
+# `paths` ALONE would be the dangerous form — a whole-file exemption that
+# swallows every future finding in the test file. It is the conjunction that
+# makes this narrow, which is why `condition` is set explicitly rather than
+# relying on the default.
+#
+# If the fixture is renamed or moved, this stops matching and the gate goes red.
+# That is the correct direction.
+#
+# BOTH ends of the path are anchored, and which anchor matters depends on how
+# gitleaks reports paths — measured, because two seats wanted `^` added and a
+# third warned it would break a mode:
+#
+#   gitleaks git / detect --log-opts  -> repo-relative  tests/test_...sh
+#   detect --no-git --source <abs>    -> ABSOLUTE       /abs/.../tests/test_...sh
+#   detect --no-git --source .        -> repo-relative  tests/test_...sh
+#
+# Everything that runs in CI is the first form: the reusable caller runs
+# `gitleaks git --log-opts=BASE..HEAD`, and the guard never uses this file at
+# all (it generates its own config). So `^` is safe here and makes the scope
+# claim literally true — without it, `eviltests/test_metsuke_readiness.sh`
+# would also be allowlisted, which is not "that value, in that file".
+#
+# Consequence to know before "fixing" this: a local `--no-git` scan given an
+# ABSOLUTE source path will report the fixture as a finding, because the
+# absolute path cannot match `^tests/`. That is noise in a hand-run command,
+# not a gate failure, and it errs red rather than green. Use a relative
+# --source (or git mode, which is what CI does) to reproduce CI behaviour.
+[[allowlists]]
+description = "planted metsuke test fixture (not a credential)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^tests/test_metsuke_readiness\.sh$''']
+regexes = ['''^PLANTED_METSUKE_SECRET_9f1d$''']

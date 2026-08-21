@@ -134,7 +134,7 @@ make test
 
 - **默认拒绝（Deny by default）**——每一个涉及远程写入（remote-write）的决策都从“不行”开始；只有经过测试证明的、明确授权的情况才会放行，无法证明的情况则始终保持拒绝状态（`UNSUPPORTED` 是硬性禁用，而不是一条警告）
 - **隔离的工作空间**——夜间通道（lane）运行在一次性的 git 工作树（worktree）上，各自拥有独立分支；你的主分支绝不会成为工作台
-- **用证据说话，而不是承诺**——测试套件把守卫（guard）的行为锁定下来，CI 会在每一次 pull request 中重新验证一遍：在 Ubuntu 上运行可移植的子集，在托管（hosted）macOS 上运行几乎完整的套件，并在自托管（self-hosted）的 macOS 运行器上执行满足全部契约的完整运行——只要有一个套件被跳过，就会判定失败
+- **用证据说话，而不是承诺**——测试套件把守卫（guard）的行为锁定下来，CI 会在每一次 pull request 中重新验证一遍：在 Ubuntu 上运行可移植的子集，并在托管（hosted）macOS 运行器上安装全部锁定版本的工具契约后执行完整运行——只要有一个套件被跳过，就会判定失败；合并之后，同样的完整契约会在自托管（self-hosted）的 macOS 运行器上再跑一次
 - **诚实地标注局限**——凡是缺少真实凭证（live-credential）证明的能力，都会在本 README 和设计记录中被明确标注为“尚未证实（unproven）”，而不是当作已完成的功能来宣传
 
 同样的诚实态度也适用于这个循环产出的结果：没有证据支撑的发现，是不会通过早间分类整理（morning triage）的。
@@ -151,7 +151,7 @@ make test
 |---|---|---|
 | [docs/engineering.md](docs/engineering.md) | 工程师 | 架构、模块地图、守卫边界（guard boundary）、CI 通道 |
 | [docs/reference.md](docs/reference.md) | 实现者 / 运维人员 | 守卫接口、模式词汇表、发布器（publisher）策略、测试契约 |
-| [DESIGN.md](DESIGN.md) | 好奇的人 | 原始设计文档（其中的评审席位记录已从公开的文件树中移除，只保留在仓库历史中） |
+| [DESIGN.md](DESIGN.md) | 好奇的人 | 原始设计文档（其中的评审席位记录属于内部资料，并未包含在本仓库中） |
 
 ---
 

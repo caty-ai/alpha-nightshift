@@ -10,13 +10,62 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# No step here needs a token beyond reading the repository (checkout, brew and
+# curl installs, and `git fetch origin main` in the whitespace step). Declared
+# explicitly rather than inherited: fork pull requests already get a read-only
+# token, but same-repository pull requests do not, and every reusable caller in
+# this repo already scopes itself this way.
+permissions:
+  contents: read
+
 jobs:
   guard:
-    # Self-hosted Mac mini runner (Issue #32): arm64 macOS providing the
-    # contract's fixed system jq location at /usr/bin/jq.
-    # Outage fallback: revert this line to `runs-on: macos-15`
-    # (GitHub-hosted, 10x minute rate) until the runner is back online.
-    runs-on: [self-hosted, macOS, ARM64, mac-mini]
+    # Runner is chosen by event, not by preference (issue #58).
+    #
+    #   pull_request -> GitHub-hosted macos-15
+    #   push to main -> self-hosted Mac mini (Issue #32): arm64 macOS
+    #                   providing the contract's fixed /usr/bin/jq.
+    #
+    # A pull request can rewrite the very steps this job runs, so once this
+    # repository is public an unqualified `pull_request` on a self-hosted
+    # runner is arbitrary code execution on the owner's machine — with write
+    # access, since the steps below install software, and with persistence,
+    # since the runner is not ephemeral. Hosted runners give fork pull
+    # requests a read-only token and no secrets, which is the property we
+    # actually want here.
+    #
+    # LIMIT OF THIS FILE, stated plainly because an earlier draft of this
+    # comment overclaimed: for `pull_request`, GitHub runs the workflow file
+    # from the PR's own branch, so a fork PR can edit these very lines back to
+    # the self-hosted labels. This routing removes the default exposure; it is
+    # not a boundary a determined fork PR cannot cross. The actual boundary is
+    # runner-group policy on the mini — restrict it to `refs/heads/main` and
+    # require approval for outside collaborators. That is configured on the
+    # runner, not here, and it is a prerequisite for going public.
+    #
+    # This is not a downgrade: macos-15 was already the documented outage
+    # fallback, the git-contract step below states hosted supplies it via
+    # brew, and the pinned-gitleaks step installs the binary when absent
+    # instead of assuming the mini provides it. "Assert zero skips" still
+    # governs both lanes, so any real loss of coverage fails the job rather
+    # than shrinking it silently.
+    #
+    # Kept as ONE job on purpose: the job name is what branch protection
+    # requires, and splitting it into two would change the check names.
+    # Both branches of the expression yield an array so the type is stable.
+    #
+    # The condition matches `push` POSITIVELY rather than testing for
+    # `pull_request`, so the self-hosted runner is the narrow case and hosted
+    # is the default. Written the other way round, any trigger added later
+    # (`workflow_dispatch`, `pull_request_target`, `merge_group`) would fall
+    # through onto the mini by default — silently, and in the dangerous
+    # direction. This way an unrecognised event lands on hosted.
+    # The ref is checked as well as the event. `on.push.branches` already
+    # limits this to main, so today the event test alone would do — but then
+    # the safety property lives in the `on:` block and silently weakens if a
+    # branch is ever added there. Checking both keeps the guarantee inside the
+    # expression that depends on it.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') || fromJSON('["macos-15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
