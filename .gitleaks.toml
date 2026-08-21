@@ -30,7 +30,23 @@ useDefault = true
 # The invariant this depends on: the marker is the WHOLE secret, never a prefix of
 # one. If the fixture value ever changes, this rule stops matching and the gate
 # goes red — fail-closed, which is the direction we want.
+# Path scope is ANDed with the regex, so this allowlist describes exactly one
+# thing: that value, in that file, under that rule. Measured against the four
+# combinations (fixture/real key x fixture-file/other-file): without `paths` the
+# marker is allowed anywhere, so the same string pasted into production code
+# would pass silently; with `condition = "AND"` it is allowed only where the
+# fixture actually lives, and both real keys stay caught either way.
+#
+# `paths` ALONE would be the dangerous form — a whole-file exemption that
+# swallows every future finding in the test file. It is the conjunction that
+# makes this narrow, which is why `condition` is set explicitly rather than
+# relying on the default.
+#
+# If the fixture is renamed or moved, this stops matching and the gate goes red.
+# That is the correct direction.
 [[allowlists]]
 description = "planted metsuke test fixture (not a credential)"
+condition = "AND"
 targetRules = ["generic-api-key"]
+paths = ['''tests/test_metsuke_readiness\.sh$''']
 regexes = ['''^PLANTED_METSUKE_SECRET_9f1d$''']

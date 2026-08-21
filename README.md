@@ -134,7 +134,7 @@ The design assumes the night worker will eventually misbehave — and makes the 
 
 - **Deny by default** — every remote-write decision starts at "no"; only explicit, test-proven allowances open, and unprovable cases stay denied (`UNSUPPORTED` is a hard disable, not a warning)
 - **Isolated workspaces** — night lanes live in disposable git worktrees on their own branches; your main branch is never the workbench
-- **Proof over promise** — the test suite pins the guard's behavior, and CI re-proves it on every pull request: the portable subset on Ubuntu, nearly the full suite on hosted macOS, and the full-contract run on a self-hosted macOS runner that fails if even one suite skips
+- **Proof over promise** — the test suite pins the guard's behavior, and CI re-proves it on every pull request: the portable subset on Ubuntu, and the full-contract run on a hosted macOS runner that installs every pinned tool contract and fails if even one suite skips; the same full contract re-runs on a self-hosted macOS runner after merge
 - **Honest limits** — capabilities that lack live-credential proof are labeled unproven in this README and in the design records, not marketed as done
 
 The same honesty applies to the loop's output: findings without evidence do not survive morning triage.
@@ -151,7 +151,7 @@ Three doors, by depth.
 |---|---|---|
 | [docs/engineering.md](docs/engineering.md) | engineers | Architecture, module map, guard boundary, CI lanes |
 | [docs/reference.md](docs/reference.md) | implementers / operators | Guard interface, mode vocabulary, publisher policy, test contracts |
-| [DESIGN.md](DESIGN.md) | the curious | The original design document (its seat-review records were removed from the published tree and live only in repository history) |
+| [DESIGN.md](DESIGN.md) | the curious | The original design document (its seat-review records are internal and are not part of this repository at all) |
 
 ---
 

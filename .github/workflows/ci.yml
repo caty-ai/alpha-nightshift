@@ -10,6 +10,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# No step here needs a token beyond reading the repository (checkout, brew and
+# curl installs, and `git fetch origin main` in the whitespace step). Declared
+# explicitly rather than inherited: fork pull requests already get a read-only
+# token, but same-repository pull requests do not, and every reusable caller in
+# this repo already scopes itself this way.
+permissions:
+  contents: read
+
 jobs:
   guard:
     # Runner is chosen by event, not by preference (issue #58).
@@ -24,8 +32,16 @@ jobs:
     # access, since the steps below install software, and with persistence,
     # since the runner is not ephemeral. Hosted runners give fork pull
     # requests a read-only token and no secrets, which is the property we
-    # actually want here. The mini therefore only ever executes code that is
-    # already merged.
+    # actually want here.
+    #
+    # LIMIT OF THIS FILE, stated plainly because an earlier draft of this
+    # comment overclaimed: for `pull_request`, GitHub runs the workflow file
+    # from the PR's own branch, so a fork PR can edit these very lines back to
+    # the self-hosted labels. This routing removes the default exposure; it is
+    # not a boundary a determined fork PR cannot cross. The actual boundary is
+    # runner-group policy on the mini — restrict it to `refs/heads/main` and
+    # require approval for outside collaborators. That is configured on the
+    # runner, not here, and it is a prerequisite for going public.
     #
     # This is not a downgrade: macos-15 was already the documented outage
     # fallback, the git-contract step below states hosted supplies it via
@@ -37,7 +53,14 @@ jobs:
     # Kept as ONE job on purpose: the job name is what branch protection
     # requires, and splitting it into two would change the check names.
     # Both branches of the expression yield an array so the type is stable.
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["macos-15"]') || fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') }}
+    #
+    # The condition matches `push` POSITIVELY rather than testing for
+    # `pull_request`, so the self-hosted runner is the narrow case and hosted
+    # is the default. Written the other way round, any trigger added later
+    # (`workflow_dispatch`, `pull_request_target`, `merge_group`) would fall
+    # through onto the mini by default — silently, and in the dangerous
+    # direction. This way an unrecognised event lands on hosted.
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') || fromJSON('["macos-15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
