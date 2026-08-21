@@ -209,4 +209,3 @@ if python3 -B -c "$liveness" "$dup_copy"; then
 fi
 
 printf 'PASS (denylist self-scan incl. decoded views + per-rule liveness; all mutation-proven)\n'
-
