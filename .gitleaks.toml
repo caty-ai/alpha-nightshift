@@ -4,9 +4,15 @@
 # same false positive with `<commit-sha>:<path>:<rule>:<line>` fingerprints, which
 # are destroyed by any history rewrite: the publication lane (#55) rewrites every
 # SHA, so all fingerprints stop matching and the full-history sweep goes red for a
-# reason that has nothing to do with secrets. Verified against filter-repo's own
-# commit-map — the resurfaced findings were the same two fixtures at the same
-# file, line and rule, remapped 1:1 to their new SHAs.
+# reason that has nothing to do with secrets.
+#
+# The evidence for that is reproducible from this repository alone, which the
+# earlier wording was not: it cited filter-repo's commit-map, a local sidecar
+# produced by a rewrite run that is never committed and never published. Run a
+# scan with the allowlist below removed over every blob reachable from every
+# ref: it returns only the planted test marker, at one file, line and rule. No
+# real credential is being suppressed, and no adjudication depends on a commit
+# id that a rewrite would invalidate.
 
 [extend]
 useDefault = true
