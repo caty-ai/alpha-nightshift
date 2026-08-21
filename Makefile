@@ -26,4 +26,5 @@ lint:
 		tests/test_guard_revocation_runbook.sh \
 		tests/test_publication_gate_selftest.sh \
 		tests/test_publication_gate_repo.sh \
+		tests/test_publication_denylist.sh \
 		tests/run_tests.sh

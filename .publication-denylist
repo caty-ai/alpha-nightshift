@@ -1,17 +1,30 @@
 # .publication-denylist — D8 choice (a): publication-safe pattern notation.
 # Per-repo D8 ruling recorded: https://github.com/caty-ai/alpha-nightshift/issues/46
 # Format: NAME<TAB>REGEX (Python re, IGNORECASE). One rule per line.
-# Patterns are written generically so this committed file exposes no protected literal.
+#
+# D8-(a) notation, following templates/publication-gate/fixtures/sample.publication-denylist
+# (`acme[-_ ]secret`): a character class splits each protected literal, so this
+# committed file does not itself publish the strings it protects, while the regex
+# still matches them. The checker path-excludes this file from its own scan, so it
+# is structurally unable to catch a violation here — tests/test_publication_denylist.sh
+# is what actually enforces it (issue #50).
+#
+# Every rule is split, with no exceptions: "no rule may match this file" is a cheap
+# mechanical invariant, and an exception list would be the thing that rots. (The
+# account slug is separately published in the clear by .github/risk-reviewers.txt,
+# which the Risk Review Gate requires — splitting it here costs nothing either way.)
+#
 # Scope: repo-specific protected literals only — generic secret shapes (tokens,
-# private-key blocks) are gitleaks' job (PR-range caller + full-history sweep),
-# and duplicating them here would flag the guard tests' deliberate fixtures.
+# private-key blocks) are gitleaks' job (PR-range caller + the pre-flip full-history
+# sweep), and duplicating them here would flag the guard tests' deliberate fixtures.
 HOME_ABS_PATH	/Users/[a-z0-9_-]+/
-# Personal-account REPOSITORY references (slug/...), not the account name on its
-# own: the risk-reviewer roster (.github/risk-reviewers.txt) must name the owner's
-# GitHub ID by contract, so a rule forbidding every mention of it can never pass.
-# What the seat review actually found was an owner/repo literal the personal-URL
-# check cannot see — that is what this rule catches. See issue #50.
-PERSONAL_REPO_REF	(?<![A-Za-z0-9-])shojikumaru/
+# Personal-account references in every shape that carries a locator — after an
+# @ or / (handles, scp remotes, social profile paths) or before / . @ (repo refs,
+# blog hosts, email local-parts). The bare ID alone is allowed, because
+# .github/risk-reviewers.txt must name it by contract (issue #50). The checker's
+# own --account-slug backstop only sees github.com / gist / <slug>.github.io, so
+# everything else here is uncovered without this rule (seat findings, PR #51).
+PERSONAL_ACCOUNT_REF	(?:(?<=[@/])shojikumar[u](?![A-Za-z0-9-])|(?<![A-Za-z0-9-])shojikumar[u][/.@])
 FAMILY_VAULT_PATH	SharedHub/famil[y][-_]vault
 ALPHA_WIKI_PATH	claude-workspace/alph[a][-_]wiki
 TAILSCALE_CGNAT_IP	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
