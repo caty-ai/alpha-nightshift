@@ -1,7 +1,7 @@
 # alpha-nightshift（夜番）設計書 v0.1
 
 - status: **council-reviewed draft**（5席レビュー反映済み・repo 新設と起票はオーナー判断待ち）
-- date: 2026-07-29（v0 同日 council: Kimi/Opus/GLM=全体, Grok/Fable=§10 敵対。採否= `reviews/2026-07-29-design-v0/DISPOSITION.md`（公開ツリーからは除去済み・git 履歴にのみ残存））
+- date: 2026-07-29（v0 同日 council: Kimi/Opus/GLM=全体, Grok/Fable=§10 敵対。採否記録は内部資料として非公開・公開リポジトリには履歴にも含まれない）
 - owner: Alpha（オーナーとの壁打ち 2026-07-28〜29 の決定を統合）
 - scope: v0 = 保守2レーン（UX目付＋バックヤード）。v0.1 = 生成レーン追加（persona-engine）
 
@@ -357,4 +357,4 @@ App suspend or uninstall/key revoke/readback/re-enable gate の直列手順と�
 - 2026-07-29: 役割分担（目付実走=codex/設計・裁定=Fable）・完走原則・チェリーピック方式・朝30分/≤10件・Fable 予算・レンズカタログ・embedding dedup 方針（オーナー）
 - 2026-07-29: 初期3 repo（LP/CatyPhone/persona-engine）・名前=alpha-nightshift・OSS 前提コア/アダプタ分離・AMC 非依存化（オーナー）
 - 2026-07-29: 設計書 v0 → council GO・persona-engine は v0.1 後発（オーナー）
-- 2026-07-29: **council 5席実施**（Kimi/Opus/GLM=全体 GO-with-changes・Grok/Fable=§10 敵対 NO-GO）→ 統合裁定・v0.1 改訂: §10 を4層強制に全面改稿・verdict-sync 新設・予算/朝運用/OSS 成立性の修正。採否記録 = `reviews/2026-07-29-design-v0/DISPOSITION.md`（公開ツリーからは除去済み・git 履歴にのみ残存、Alpha 裁定）
+- 2026-07-29: **council 5席実施**（Kimi/Opus/GLM=全体 GO-with-changes・Grok/Fable=§10 敵対 NO-GO）→ 統合裁定・v0.1 改訂: §10 を4層強制に全面改稿・verdict-sync 新設・予算/朝運用/OSS 成立性の修正。採否記録は Alpha 裁定として内部資料に保管（公開リポジトリには履歴にも含まれない）

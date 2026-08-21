@@ -12,11 +12,32 @@ concurrency:
 
 jobs:
   guard:
-    # Self-hosted Mac mini runner (Issue #32): arm64 macOS providing the
-    # contract's fixed system jq location at /usr/bin/jq.
-    # Outage fallback: revert this line to `runs-on: macos-15`
-    # (GitHub-hosted, 10x minute rate) until the runner is back online.
-    runs-on: [self-hosted, macOS, ARM64, mac-mini]
+    # Runner is chosen by event, not by preference (issue #58).
+    #
+    #   pull_request -> GitHub-hosted macos-15
+    #   push to main -> self-hosted Mac mini (Issue #32): arm64 macOS
+    #                   providing the contract's fixed /usr/bin/jq.
+    #
+    # A pull request can rewrite the very steps this job runs, so once this
+    # repository is public an unqualified `pull_request` on a self-hosted
+    # runner is arbitrary code execution on the owner's machine — with write
+    # access, since the steps below install software, and with persistence,
+    # since the runner is not ephemeral. Hosted runners give fork pull
+    # requests a read-only token and no secrets, which is the property we
+    # actually want here. The mini therefore only ever executes code that is
+    # already merged.
+    #
+    # This is not a downgrade: macos-15 was already the documented outage
+    # fallback, the git-contract step below states hosted supplies it via
+    # brew, and the pinned-gitleaks step installs the binary when absent
+    # instead of assuming the mini provides it. "Assert zero skips" still
+    # governs both lanes, so any real loss of coverage fails the job rather
+    # than shrinking it silently.
+    #
+    # Kept as ONE job on purpose: the job name is what branch protection
+    # requires, and splitting it into two would change the check names.
+    # Both branches of the expression yield an array so the type is stable.
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["macos-15"]') || fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
