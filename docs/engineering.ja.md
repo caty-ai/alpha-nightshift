@@ -61,10 +61,11 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 このゲートはubuntuとmacOS上で`make test`と`make lint`を実行します（macOSでの実行は`run_macos: true`で制御されます）。スイートの整合性確認はubuntuジョブで強制されます（`require_suite_reconciliation: true`）。再利用可能ゲートのmacOSジョブでは整合性確認を行いません。
 
-3つのテストレーンは、意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです:
+テストレーンは意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです。件数は実測値です（run 32474196361・いずれも`declared=30`）:
 
 - **ubuntu** — 移植可能な部分（Darwin依存のスイートは、呼び出し元が宣言したスキップ上限の範囲内で、スキップ理由をスイートごとに出力しつつスキップします）、`make lint`、そして整合性確認の算出処理そのもの
-- **hosted macOS**（`ci.yml` の `pull_request`） — 30スイートすべてを含む完全契約スイート。固定版ツールの契約パスはランナー任せにせずジョブ自身が導入する。1つでもスイートがスキップされたら失敗するステップつき
+- **hosted macOS・共通ワークフロー側**（`test-lint.yml` の `test-macos`） — 30中25。固定版 gitleaks / git の契約パスに紐づくスイートは、このレーンがそれらを導入しないためスキップする
+- **hosted macOS・完全契約**（`ci.yml` の `pull_request`） — 30すべて。固定版ツールの契約パスはランナー任せにせずジョブ自身が導入する。1つでもスイートがスキップされたら失敗するステップつき
 - **self-hosted mac-mini**（`ci.yml` の `main` への `push`） — 同じ完全契約を、マージ後に常駐ランナーで再実行
 
 ### 完全契約スイート（hosted / セルフホスト共通）

@@ -44,9 +44,29 @@ useDefault = true
 #
 # If the fixture is renamed or moved, this stops matching and the gate goes red.
 # That is the correct direction.
+#
+# BOTH ends of the path are anchored, and which anchor matters depends on how
+# gitleaks reports paths — measured, because two seats wanted `^` added and a
+# third warned it would break a mode:
+#
+#   gitleaks git / detect --log-opts  -> repo-relative  tests/test_...sh
+#   detect --no-git --source <abs>    -> ABSOLUTE       /abs/.../tests/test_...sh
+#   detect --no-git --source .        -> repo-relative  tests/test_...sh
+#
+# Everything that runs in CI is the first form: the reusable caller runs
+# `gitleaks git --log-opts=BASE..HEAD`, and the guard never uses this file at
+# all (it generates its own config). So `^` is safe here and makes the scope
+# claim literally true — without it, `eviltests/test_metsuke_readiness.sh`
+# would also be allowlisted, which is not "that value, in that file".
+#
+# Consequence to know before "fixing" this: a local `--no-git` scan given an
+# ABSOLUTE source path will report the fixture as a finding, because the
+# absolute path cannot match `^tests/`. That is noise in a hand-run command,
+# not a gate failure, and it errs red rather than green. Use a relative
+# --source (or git mode, which is what CI does) to reproduce CI behaviour.
 [[allowlists]]
 description = "planted metsuke test fixture (not a credential)"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''tests/test_metsuke_readiness\.sh$''']
+paths = ['''^tests/test_metsuke_readiness\.sh$''']
 regexes = ['''^PLANTED_METSUKE_SECRET_9f1d$''']

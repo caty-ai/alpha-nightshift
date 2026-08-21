@@ -61,10 +61,11 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 This gate runs `make test` and `make lint` on ubuntu and macOS (macOS run controlled by `run_macos: true`). Suite reconciliation is enforced on the ubuntu job (`require_suite_reconciliation: true`); the reusable does not reconcile on its macOS job.
 
-The three test lanes deliberately cover different depths, because most of this suite is Darwin-native:
+The test lanes deliberately cover different depths, because most of this suite is Darwin-native. Counts are measured (run 32474196361), all at `declared=30`:
 
 - **ubuntu** — the portable subset (Darwin-bound suites skip with printed per-suite reasons under a caller-declared skip cap), `make lint`, and the reconciliation arithmetic itself
-- **hosted macOS** (`ci.yml` on `pull_request`) — the full 30-suite contract. The job installs the pinned gitleaks and git contract paths itself rather than assuming the runner ships them, and fails if even one suite skipped
+- **hosted macOS, reusable lane** (`test-lint.yml` → `test-macos`) — 25 of 30; the suites bound to the pinned gitleaks/git contract paths skip, because this lane does not install them
+- **hosted macOS, full contract** (`ci.yml` on `pull_request`) — all 30. This job installs the pinned gitleaks and git contract paths itself rather than assuming the runner ships them, and fails if even one suite skipped
 - **self-hosted mac-mini** (`ci.yml` on `push` to `main`) — the same full contract, re-run on the persistent runner after merge
 
 ### Full-contract suite (hosted and self-hosted)

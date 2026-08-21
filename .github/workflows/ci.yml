@@ -60,7 +60,12 @@ jobs:
     # (`workflow_dispatch`, `pull_request_target`, `merge_group`) would fall
     # through onto the mini by default — silently, and in the dangerous
     # direction. This way an unrecognised event lands on hosted.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') || fromJSON('["macos-15"]') }}
+    # The ref is checked as well as the event. `on.push.branches` already
+    # limits this to main, so today the event test alone would do — but then
+    # the safety property lives in the `on:` block and silently weakens if a
+    # branch is ever added there. Checking both keeps the guarantee inside the
+    # expression that depends on it.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') || fromJSON('["macos-15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:

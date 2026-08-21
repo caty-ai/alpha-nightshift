@@ -10,13 +10,20 @@ jobs:
     with:
       run_macos: true
       require_suite_reconciliation: true
-      # Honest accounting (seat-reviewed on PR #47): most of this suite is
-      # Darwin-native (BSD date -v / stat -f, sandbox-exec, launchd, the
-      # pinned gitleaks/git contract paths). On ubuntu 22 of 29 suites skip
-      # with printed per-suite reasons; the ubuntu lane's job is the portable
-      # subset + lint + the reconciliation arithmetic itself. Hosted macOS
-      # executes ~24/29; the self-hosted full-contract lane (ci.yml) runs
-      # 29/29 and asserts skipped=0. Cap is tight at today's skip count:
-      # 22*100=2200 <= 29*76=2204 passes, a 23rd skip (2300) fails.
+      # Honest accounting (seat-reviewed on PR #47, re-measured for #58).
+      # Most of this suite is Darwin-native (BSD date -v / stat -f,
+      # sandbox-exec, launchd, the pinned gitleaks/git contract paths).
+      # Measured on run 32474196361, all three lanes at declared=30:
+      #   ubuntu       executed=8  skipped=22  (portable subset + lint +
+      #                the reconciliation arithmetic itself)
+      #   this lane's  executed=25 skipped=5   (hosted macOS, without the
+      #   test-macos                            pinned contract paths)
+      #   ci.yml       executed=30 skipped=0   (installs every contract
+      #                                         itself, so it runs the full
+      #                                         set on EITHER runner —
+      #                                         hosted on pull_request,
+      #                                         self-hosted on push to main)
+      # Cap is tight at today's skip count: 22*100=2200 <= 30*76=2280
+      # passes, a 23rd skip (2300) fails.
       # Ratchet DOWN as suites are ported to Linux (follow-up issue #49).
       max_skip_percent: '76'
