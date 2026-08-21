@@ -2,29 +2,51 @@
 # Per-repo D8 ruling recorded: https://github.com/caty-ai/alpha-nightshift/issues/46
 # Format: NAME<TAB>REGEX (Python re, IGNORECASE). One rule per line.
 #
-# D8-(a) notation, following templates/publication-gate/fixtures/sample.publication-denylist
-# (`acme[-_ ]secret`): a character class splits each protected literal, so this
-# committed file does not itself publish the strings it protects, while the regex
-# still matches them. The checker path-excludes this file from its own scan, so it
-# is structurally unable to catch a violation here — tests/test_publication_denylist.sh
+# D8-(a) notation, following the checker's own embedded fixture
+# (tools/check_publication_gate.py, SELFTEST_DENYLIST, `acme[-_ ]secret`): where a
+# rule would otherwise contain a protected literal, a character class splits it, so
+# this committed file does not publish the strings it protects while the regex still
+# matches them. The checker path-excludes this file from its own scan, so it is
+# structurally unable to catch a violation here — tests/test_publication_denylist.sh
 # is what actually enforces it (issue #50).
 #
-# Every rule is split, with no exceptions: "no rule may match this file" is a cheap
-# mechanical invariant, and an exception list would be the thing that rots. (The
-# account slug is separately published in the clear by .github/risk-reviewers.txt,
-# which the Risk Review Gate requires — splitting it here costs nothing either way.)
+# The invariant is "no rule may match this file", not "every rule is split":
+# HOME_ABS_PATH and TAILSCALE_CGNAT_IP are generic shape patterns that carry no
+# protected literal, so there is nothing in them to split. Rules that name a
+# specific protected string are all split, with no exceptions — an exception list
+# would be the thing that rots.
+#
+# NOTE ON SCOPE OF THIS FILE'S PROTECTION: splitting a literal defeats a substring
+# search of the published blob. It does not make the value secret from a human
+# reader, and it does nothing about older commits that spelled the value out. Any
+# rule here whose value must genuinely not reach the public must be handled by
+# history treatment before the flip, not by notation (seat finding, PR #51; #55).
 #
 # Scope: repo-specific protected literals only — generic secret shapes (tokens,
 # private-key blocks) are gitleaks' job (PR-range caller + the pre-flip full-history
 # sweep), and duplicating them here would flag the guard tests' deliberate fixtures.
 HOME_ABS_PATH	/Users/[a-z0-9_-]+/
-# Personal-account references in every shape that carries a locator — after an
-# @ or / (handles, scp remotes, social profile paths) or before / . @ (repo refs,
-# blog hosts, email local-parts). The bare ID alone is allowed, because
-# .github/risk-reviewers.txt must name it by contract (issue #50). The checker's
-# own --account-slug backstop only sees github.com / gist / <slug>.github.io, so
-# everything else here is uncovered without this rule (seat findings, PR #51).
-PERSONAL_ACCOUNT_REF	(?:(?<=[@/])shojikumar[u](?![A-Za-z0-9-])|(?<![A-Za-z0-9-])shojikumar[u][/.@])
+# Personal-account references. The rule is adjacency to punctuation: the account ID
+# touching any locator or delimiter character on either side is a reference that
+# carries context (repo, host, mailbox, profile, serialized field, link target). The
+# ID isolated by whitespace is NOT matched, because .github/risk-reviewers.txt must
+# name it on a line of its own by contract — that roster line is the entire reason
+# this rule is not the blunt "any mention" rule (issue #50).
+#
+# Six review seats each demonstrated shapes a narrower version let through; the
+# classes below are the union of everything they found: @handle, owner/repo, https
+# and scp remotes (with and without a path), email (including plus-tagged), pages
+# and blog hosts, social profile paths, query values, KEY=value assignments,
+# serialized/quoted fields, and markdown link text.
+#
+# The checker's own --account-slug backstop only sees github.com / gist /
+# <slug>.github.io, so every other shape is uncovered without this rule.
+#
+# Deliberately over-matches prose that puts punctuation against the ID ("thanks to
+# <slug>." or "<slug>, and others"). That direction is fail-closed: the gate names
+# the rule in its failure, and prose can be rephrased. Under-matching cannot be
+# undone after a flip.
+PERSONAL_ACCOUNT_REF	(?:(?<=[@/:="'\[({,])shojikumar[u](?![A-Za-z0-9-])|(?<![A-Za-z0-9-])shojikumar[u][/.@+"'\])},])
 FAMILY_VAULT_PATH	SharedHub/famil[y][-_]vault
 ALPHA_WIKI_PATH	claude-workspace/alph[a][-_]wiki
 TAILSCALE_CGNAT_IP	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
