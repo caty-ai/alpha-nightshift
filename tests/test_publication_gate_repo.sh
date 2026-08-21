@@ -89,6 +89,11 @@ check_form "KEY=value assignment"   "ACCOUNT=${slug}"
 check_form "scheme-style locator"   "github:${slug}"
 check_form "serialized field"       "{\"login\":\"${slug}\"}"
 check_form "markdown link text"     "[${slug}](https://example.invalid/profile)"
+check_form "HTML anchor text"       "<a href=\"https://example.invalid/p\">${slug}</a>"
+check_form "XML/JSON-ish field"     "<login>${slug}</login>"
+check_form "backticked mention"     "see \`${slug}\` in the roster"
+check_form "emphasis markers"       "credit to *${slug}* for this"
+check_form "semicolon terminated"   "owner=${slug};"
 
 # 3. The account ID on its own must still pass: .github/risk-reviewers.txt is
 #    required by contract to name the owner's GitHub ID, so a rule that forbade
@@ -111,4 +116,4 @@ esac
 rm -f "$probe"
 probe=""
 
-printf 'PASS (publication gate live scan; PERSONAL_ACCOUNT_REF proven on 14 locator forms + the roster shape)\n'
+printf 'PASS (publication gate live scan; PERSONAL_ACCOUNT_REF proven on 19 locator forms + the roster shape)\n'

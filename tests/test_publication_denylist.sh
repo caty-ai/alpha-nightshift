@@ -103,14 +103,26 @@ samples = {
     "HANDOFF_DIR": "_handoff" + "s" + "/note.md",
 }
 
-rules = {}
+# Rows are kept as a list, not folded into a dict keyed by name. A dict lets a
+# duplicate name overwrite an earlier row, so an inert rule followed by a live one
+# of the same name would satisfy "every rule fires" while the inert row is still
+# loaded and applied by the real checker (seat finding, PR #51 delta).
+rows = []
 with open(denylist_path, encoding="utf-8") as handle:
-    for raw in handle:
+    for lineno, raw in enumerate(handle, 1):
         line = raw.lstrip("﻿").rstrip("\n")
         if not line or line.startswith("#"):
             continue
         name, sep, pattern = line.partition("\t")
-        rules[name] = re.compile(pattern, re.IGNORECASE)
+        rows.append((lineno, name, re.compile(pattern, re.IGNORECASE)))
+
+duplicates = sorted({n for _, n, _ in rows if [m for _, m, _ in rows].count(n) > 1})
+if duplicates:
+    print("duplicate rule name(s): %s" % ", ".join(duplicates))
+    print("every row is loaded by the checker, so a duplicate name hides one of them")
+    sys.exit(2)
+
+rules = {name: pattern for _, name, pattern in rows}
 
 missing_sample = sorted(set(rules) - set(samples))
 if missing_sample:
@@ -123,9 +135,13 @@ if stale_sample:
     print("sample without a matching rule (renamed or removed?): %s" % ", ".join(stale_sample))
     sys.exit(2)
 
-dead = [name for name, pattern in rules.items() if not pattern.search(samples[name])]
-for name in sorted(dead):
-    print("%s no longer matches the literal it protects" % name)
+dead = [
+    (lineno, name)
+    for lineno, name, pattern in rows
+    if not pattern.search(samples[name])
+]
+for lineno, name in sorted(dead):
+    print("%s (line %d) no longer matches the literal it protects" % (name, lineno))
 sys.exit(1 if dead else 0)
 PY
 )
@@ -133,7 +149,8 @@ PY
 unsafe=$(mktemp "${TMPDIR:-/tmp}/denylist-unsafe.XXXXXX")
 encoded=$(mktemp "${TMPDIR:-/tmp}/denylist-encoded.XXXXXX")
 dead_copy=$(mktemp "${TMPDIR:-/tmp}/denylist-dead.XXXXXX")
-cleanup() { rm -f "$unsafe" "$encoded" "$dead_copy"; }
+dup_copy=$(mktemp "${TMPDIR:-/tmp}/denylist-dup.XXXXXX")
+cleanup() { rm -f "$unsafe" "$encoded" "$dead_copy" "$dup_copy"; }
 trap cleanup EXIT INT TERM
 
 # 1. The committed denylist must not contain any literal its own rules match,
@@ -152,10 +169,16 @@ if python3 -B -c "$scan" "$unsafe" "$unsafe"; then
   exit 1
 fi
 
-# 3. Mutation proof, decoded view: the same literal percent-encoded must also be
-#    caught, because the checker scans decoded views of every other file.
-printf 'UNSAFE_RULE\t%s%%2Ffamil%s-vault\n' 'SharedHub' 'y' > "$encoded"
-if python3 -B -c "$scan" "$encoded" "$encoded"; then
+# 3. Mutation proof, decoded view: the REAL rules must catch a percent-encoded
+#    protected literal, because the checker scans decoded views of every file.
+#
+#    Rules come from $DENYLIST, not from the fixture. An earlier version used the
+#    fixture as both rule source and target, so its rule matched its own text in
+#    the RAW view and the proof stayed green even with decoding removed — a
+#    mutation proof that could not fail, which is the exact defect class this
+#    suite exists to catch. Two seats found it independently (PR #51 delta).
+printf '%s%%2Ffamil%s-vault\n' 'SharedHub' 'y' > "$encoded"
+if python3 -B -c "$scan" "$DENYLIST" "$encoded"; then
   printf 'FAIL: self-scan missed a percent-encoded protected literal (raw view only)\n' >&2
   exit 1
 fi
@@ -173,4 +196,17 @@ if python3 -B -c "$liveness" "$dead_copy"; then
   exit 1
 fi
 
+# 6. Mutation proof for the duplicate-name guard: an inert row shadowed by a live
+#    row of the same name must be rejected. The checker loads every row, so a
+#    duplicate would otherwise hide a dead rule behind a live one.
+{
+  printf 'FAMILY_VAULT_PATH\tzzz9nevermatch9zzz\n'
+  cat "$DENYLIST"
+} > "$dup_copy"
+if python3 -B -c "$liveness" "$dup_copy"; then
+  printf 'FAIL: liveness check accepted a denylist with a duplicated rule name\n' >&2
+  exit 1
+fi
+
 printf 'PASS (denylist self-scan incl. decoded views + per-rule liveness; all mutation-proven)\n'
+
