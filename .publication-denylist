@@ -6,7 +6,12 @@
 # private-key blocks) are gitleaks' job (PR-range caller + full-history sweep),
 # and duplicating them here would flag the guard tests' deliberate fixtures.
 HOME_ABS_PATH	/Users/[a-z0-9_-]+/
-ACCOUNT_SLUG	(?<![A-Za-z0-9-])shojikumaru(?![A-Za-z0-9-])
+# Personal-account REPOSITORY references (slug/...), not the account name on its
+# own: the risk-reviewer roster (.github/risk-reviewers.txt) must name the owner's
+# GitHub ID by contract, so a rule forbidding every mention of it can never pass.
+# What the seat review actually found was an owner/repo literal the personal-URL
+# check cannot see — that is what this rule catches. See issue #50.
+PERSONAL_REPO_REF	(?<![A-Za-z0-9-])shojikumaru/
 FAMILY_VAULT_PATH	SharedHub/famil[y][-_]vault
 ALPHA_WIKI_PATH	claude-workspace/alph[a][-_]wiki
 TAILSCALE_CGNAT_IP	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
