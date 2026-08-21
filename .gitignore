@@ -5,3 +5,8 @@ config/nightshift.conf
 .omx/
 .omc/
 .readme-work/
+# NOTE: do NOT ignore the gate suites' .gate-probe-* files. The checker enumerates
+# with `git ls-files --cached --others --exclude-standard`, so ignoring them would
+# hide the probes from the very scan they exist to exercise (PR #51: adding this
+# ignore turned the mutation assertion red immediately — fail-closed, but broken).
+# Collisions between concurrent runs are avoided by PID-scoped probe names instead.
