@@ -20,52 +20,25 @@ permissions:
 
 jobs:
   guard:
-    # Runner is chosen by event, not by preference (issue #58).
+    # GitHub-hosted macos-15 for every event. This repository has no
+    # self-hosted runner registered: a pull request can rewrite the very
+    # steps this job runs, so on a public repository a fork PR reaching a
+    # persistent self-hosted runner would be arbitrary code execution on
+    # the owner's machine. Hosted runners give fork pull requests a
+    # read-only token, no secrets, and a throwaway VM — the properties we
+    # actually want here. (A Mac mini runner briefly served push-to-main
+    # while the repo was private, purely to avoid the 10x hosted-macOS
+    # minute rate; public repositories get hosted minutes free, so the
+    # reason for it is gone.)
     #
-    #   pull_request -> GitHub-hosted macos-15
-    #   push to main -> self-hosted Mac mini (Issue #32): arm64 macOS
-    #                   providing the contract's fixed /usr/bin/jq.
-    #
-    # A pull request can rewrite the very steps this job runs, so once this
-    # repository is public an unqualified `pull_request` on a self-hosted
-    # runner is arbitrary code execution on the owner's machine — with write
-    # access, since the steps below install software, and with persistence,
-    # since the runner is not ephemeral. Hosted runners give fork pull
-    # requests a read-only token and no secrets, which is the property we
-    # actually want here.
-    #
-    # LIMIT OF THIS FILE, stated plainly because an earlier draft of this
-    # comment overclaimed: for `pull_request`, GitHub runs the workflow file
-    # from the PR's own branch, so a fork PR can edit these very lines back to
-    # the self-hosted labels. This routing removes the default exposure; it is
-    # not a boundary a determined fork PR cannot cross. The actual boundary is
-    # runner-group policy on the mini — restrict it to `refs/heads/main` and
-    # require approval for outside collaborators. That is configured on the
-    # runner, not here, and it is a prerequisite for going public.
-    #
-    # This is not a downgrade: macos-15 was already the documented outage
-    # fallback, the git-contract step below states hosted supplies it via
-    # brew, and the pinned-gitleaks step installs the binary when absent
-    # instead of assuming the mini provides it. "Assert zero skips" still
-    # governs both lanes, so any real loss of coverage fails the job rather
-    # than shrinking it silently.
+    # Every contract-install step below provisions its own dependency when
+    # absent, and "Assert zero skips" fails the job on any lost coverage,
+    # so the full 30-suite contract runs here with nothing assumed from
+    # the runner image.
     #
     # Kept as ONE job on purpose: the job name is what branch protection
-    # requires, and splitting it into two would change the check names.
-    # Both branches of the expression yield an array so the type is stable.
-    #
-    # The condition matches `push` POSITIVELY rather than testing for
-    # `pull_request`, so the self-hosted runner is the narrow case and hosted
-    # is the default. Written the other way round, any trigger added later
-    # (`workflow_dispatch`, `pull_request_target`, `merge_group`) would fall
-    # through onto the mini by default — silently, and in the dangerous
-    # direction. This way an unrecognised event lands on hosted.
-    # The ref is checked as well as the event. `on.push.branches` already
-    # limits this to main, so today the event test alone would do — but then
-    # the safety property lives in the `on:` block and silently weakens if a
-    # branch is ever added there. Checking both keeps the guarantee inside the
-    # expression that depends on it.
-    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","macOS","ARM64","mac-mini"]') || fromJSON('["macos-15"]') }}
+    # requires, and splitting it would change the check names.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,9 +52,9 @@ jobs:
           shellcheck --version
 
       - name: Install pinned gitleaks path
-        # The binary hash is verified on EVERY run (not only on install) so a
-        # tampered binary on a persistent self-hosted runner fails the job
-        # instead of being trusted by presence alone.
+        # The binary hash is verified on EVERY run (not only on install) so
+        # a tampered or stale binary fails the job instead of being trusted
+        # by presence alone.
         run: |
           gitleaks_bin=/opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
           gitleaks_sha256=ba52fb1bfabbcde42f032afad3d6e0b19dff8ed105229a16e7caa338bbc0e84f
@@ -100,10 +73,10 @@ jobs:
           "$gitleaks_bin" version
 
       - name: Install Git compatibility path shim
-        # Non-sudo first: on the self-hosted runner /opt/homebrew is
-        # user-owned (and brew cleanup can remove the shim dir on git
-        # upgrades, so this also self-heals); sudo -n is the hosted-runner
-        # fallback and fails fast instead of hanging on a password prompt.
+        # Non-sudo first in case /opt/homebrew is user-owned (and brew
+        # cleanup can remove the shim dir on git upgrades, so this also
+        # self-heals); sudo -n is the fallback and fails fast instead of
+        # hanging on a password prompt.
         run: |
           shim=/opt/homebrew/Cellar/git/2.48.1/bin/git
           if [ ! -x "$shim" ]; then
@@ -130,8 +103,8 @@ jobs:
 
       - name: Verify brew git contract
         # Several test suites invoke /opt/homebrew/bin/git directly; hosted
-        # macos-15 ships it via brew, the self-hosted runner provides it via
-        # `brew install git`. Fail fast with a clear message if it is gone.
+        # macos-15 ships it via brew. Fail fast with a clear message if it
+        # is gone.
         run: |
           test -x /opt/homebrew/bin/git
           /opt/homebrew/bin/git --version

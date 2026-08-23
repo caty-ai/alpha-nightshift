@@ -20,9 +20,8 @@ jobs:
       #   test-macos                            pinned contract paths)
       #   ci.yml       executed=30 skipped=0   (installs every contract
       #                                         itself, so it runs the full
-      #                                         set on EITHER runner —
-      #                                         hosted on pull_request,
-      #                                         self-hosted on push to main)
+      #                                         set on hosted macos-15 for
+      #                                         every event)
       # Cap is tight at today's skip count: 22*100=2200 <= 30*76=2280
       # passes, a 23rd skip (2300) fails.
       # Ratchet DOWN as suites are ported to Linux (follow-up issue #49).
