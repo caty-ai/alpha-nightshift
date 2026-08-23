@@ -153,6 +153,8 @@ make test
 | [docs/reference.md](docs/reference.md) | 実装者／運用者 | ガードインターフェース、モード語彙、パブリッシャーポリシー、テスト契約 |
 | [DESIGN.md](DESIGN.md) | 興味のある人向け | オリジナルの設計ドキュメント（座席レビューの記録は内部資料で、このリポジトリには含まれていません） |
 
+このリポジトリは運用一式であり、インストールして使うパッケージではありません（npm/pip での配布はなく、予定もありません）。部品を参考にする場合は clone して必要な箇所を読んでください。morning-triage の verdict 機構（`bin/morning-triage`）・publication gate のテスト群（`tests/`）・guard パッケージ（`guard/`）が参照素材として持ち出しやすい部分です。
+
 <!-- family:generated:family-footer:start -->
 
 ---

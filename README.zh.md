@@ -153,6 +153,8 @@ make test
 | [docs/reference.md](docs/reference.md) | 实现者 / 运维人员 | 守卫接口、模式词汇表、发布器（publisher）策略、测试契约 |
 | [DESIGN.md](DESIGN.md) | 好奇的人 | 原始设计文档（其中的评审席位记录属于内部资料，并未包含在本仓库中） |
 
+本仓库是一整套运维体系，而不是可安装的软件包（没有 npm/pip 发布，也没有相关计划）。如需借鉴其中的部件，请 clone 仓库并阅读所需部分：morning-triage 的 verdict 机制（`bin/morning-triage`）、publication gate 测试套件（`tests/`）和 guard 包（`guard/`）最适合作为参考材料。
+
 <!-- family:generated:family-footer:start -->
 
 ---
