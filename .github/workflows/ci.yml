@@ -31,10 +31,13 @@ jobs:
     # minute rate; public repositories get hosted minutes free, so the
     # reason for it is gone.)
     #
-    # Every contract-install step below provisions its own dependency when
-    # absent, and "Assert zero skips" fails the job on any lost coverage,
-    # so the full 30-suite contract runs here with nothing assumed from
-    # the runner image.
+    # Every contract-install step below either provisions its own
+    # dependency when absent (shellcheck, gitleaks, the git shim) or
+    # verifies an image-supplied one loudly (jq, sandbox-exec, brew git
+    # are asserted, not provisioned — they fail the job if the image
+    # stops shipping them), and "Assert zero skips" fails the job on any
+    # lost coverage, so the full 30-suite contract runs here with no
+    # silent dependency on the runner image.
     #
     # Kept as ONE job on purpose: the job name is what branch protection
     # requires, and splitting it would change the check names.

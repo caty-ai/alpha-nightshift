@@ -13,8 +13,8 @@ safety boundaries.
 - **Optional `shellcheck`.** `make lint` requires it and fails without it
   (a lint that cannot fail is not a lint).
 - **Platforms.** Every pull request runs the suite on Ubuntu and macOS via the
-  family-dev-handbook reusable gates; a self-hosted macOS runner additionally
-  runs the full-contract suite with pinned tool paths.
+  family-dev-handbook reusable gates; ci.yml additionally runs the
+  full-contract suite with pinned tool paths on hosted macOS.
 
 ## Ground rules
 

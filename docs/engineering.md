@@ -17,7 +17,7 @@ The system comprises eight core components working within isolation boundaries t
 | triage | `bin/morning-triage`, `lib/triage-*.sh`, `templates/` | Daytime read-only verification against current main, automatic deduplication across ledger history, and evidence-driven candidate ranking with GitHub integration |
 | metsuke | `lanes/review/run.sh`, `lib/evidence.sh` | Multimodel review observation lane with deterministic DESIGN-lens assignment, rotating reviewer seats, JSONL parsing with persona reconstruction, and lane-HOME credential narrowing |
 | drift-monitor | `guard/drift-monitor.sh` | Read-only control-plane drift check that verifies GitHub App permissions, webhook configuration, installation identity, and publishes only MATCH / DRIFT_DENY / MONITOR_UNVERIFIED verdicts |
-| tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | GitHub-hosted reusable gates (ubuntu + macos) for lint and make test, plus the full-contract suite with pinned tool verification — hosted on pull requests, self-hosted mac-mini on push to main |
+| tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | GitHub-hosted reusable gates (ubuntu + macos) for lint and make test, plus the full-contract suite with pinned tool verification on hosted macos-15 for every event |
 | docs | `docs/*.md` | Design documentation including morning-triage specification, night-bot revocation runbook, and this engineering guide |
 | i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | Non-code translations: the front-door README in four languages, plus Japanese mirrors of the engineering and reference docs |
 
@@ -66,11 +66,11 @@ The test lanes deliberately cover different depths, because most of this suite i
 - **ubuntu** — the portable subset (Darwin-bound suites skip with printed per-suite reasons under a caller-declared skip cap), `make lint`, and the reconciliation arithmetic itself
 - **hosted macOS, reusable lane** (`test-lint.yml` → `test-macos`) — 25 of 30; the suites bound to the pinned gitleaks/git contract paths skip, because this lane does not install them
 - **hosted macOS, full contract** (`ci.yml` on `pull_request`) — all 30. This job installs the pinned gitleaks and git contract paths itself rather than assuming the runner ships them, and fails if even one suite skipped
-- **self-hosted mac-mini** (`ci.yml` on `push` to `main`) — the same full contract, re-run on the persistent runner after merge
+- **hosted macOS, full contract** (`ci.yml` on `push` to `main`) — the same full contract, re-run after merge
 
-### Full-contract suite (hosted and self-hosted)
+### Full-contract suite
 
-The `.github/workflows/ci.yml` workflow installs and verifies every suite contract before running anything, so the same lane holds on either runner. It chooses the runner by event: pull requests on hosted `macos-15`, `push` to `main` on the self-hosted ARM64 mac-mini. Pull requests are kept off the self-hosted runner deliberately — a pull request controls the steps the job runs, the steps install software, and the runner is persistent (issue #58). Tool verification steps:
+The `.github/workflows/ci.yml` workflow installs and verifies every suite contract before running anything. Every event runs on hosted `macos-15`; no self-hosted runner is registered on this repository. That is deliberate — a pull request controls the steps the job runs, the steps install software, and a persistent self-hosted runner would turn a fork pull request into arbitrary code execution on the owner's machine (issue #58). Hosted runners give fork pull requests a read-only token, no secrets, and a throwaway VM. Tool verification steps:
 
 - ShellCheck installed and invoked on guard scripts
 - Pinned gitleaks 8.30.1 binary with SHA-256 verification on every run (not only on install)
