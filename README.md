@@ -153,6 +153,8 @@ Three doors, by depth.
 | [docs/reference.md](docs/reference.md) | implementers / operators | Guard interface, mode vocabulary, publisher policy, test contracts |
 | [DESIGN.md](DESIGN.md) | the curious | The original design document (its seat-review records are internal and are not part of this repository at all) |
 
+This repository is an operations suite, not an installable package — there is no npm/pip distribution, and none is planned. To reuse pieces of it, clone the repository and read the part you need: the morning-triage verdict mechanism (`bin/morning-triage`), the publication-gate test suite (`tests/`), and the guard package (`guard/`) travel best as reference material.
+
 <!-- family:generated:family-footer:start -->
 
 ---
