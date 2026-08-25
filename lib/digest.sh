@@ -128,7 +128,7 @@ digest_org_consistency_freshness() {
   fi
 
   while IFS= read -r -d '' report_file; do
-    report_mtime=$(stat -f '%m' "$report_file")
+    report_mtime=$(stat -f '%m' "$report_file" 2>/dev/null || stat -c '%Y' "$report_file")
     if [ -z "$latest_file" ] || [ "$report_mtime" -gt "$latest_mtime" ]; then
       latest_file=$report_file
       latest_mtime=$report_mtime

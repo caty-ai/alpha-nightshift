@@ -11,7 +11,7 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-digest.XXXXXX")
 trap 'rm -rf "$TEST_TMP"' EXIT
-NIGHT_ID=$(date -v-8H '+%F')
+NIGHT_ID=$(date -v-8H '+%F' 2>/dev/null || date -d '-8 hours' '+%F')
 
 write_digest_config() {
   config_path=$1
@@ -222,7 +222,7 @@ stale_report_dir="$stale_state/org-consistency/report"
 write_digest_config "$stale_config" "$stale_state"
 append_freshness_config "$stale_config" "$stale_report_dir" 1 3
 write_report_fixture "$stale_report_dir" "$NIGHT_ID"
-touch -t "$(date -v-5d '+%Y%m%d0000')" "$stale_report_dir/$NIGHT_ID.json"
+touch -t "$(date -v-5d '+%Y%m%d0000' 2>/dev/null || date -d '-5 days' '+%Y%m%d0000')" "$stale_report_dir/$NIGHT_ID.json"
 run_digest "$stale_config"
 stale_digest="$stale_state/digests/$NIGHT_ID.md"
 assert_contains 'WARNING: org-consistency latest report is 5 days old (max 3)' "$stale_digest"
