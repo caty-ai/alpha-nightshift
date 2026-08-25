@@ -21,11 +21,13 @@ case "$mode" in
     fi
     printf '%s\n' '{"findings":[]}'
     ;;
-  valid|cwd)
+  valid|valid-ja|cwd)
     if printf '%s\n' "$prompt" | grep -q '"launch": "OC-H"'; then
       printf '{"findings":[{"check_id":"OC-H","file":"AGENTS.md","rule_id":"A1","target_token":"commit-check","claim":"handbook procedure drift","evidence":"cwd=%s","confidence":"medium"}]}\n' "$PWD"
     else
-      printf '{"findings":[{"check_id":"OC-E","file":"README.md","pair":"api-readme","claim":"description drift","evidence":"cwd=%s","confidence":"high"}]}\n' "$PWD"
+      e_file=README.md
+      [ "$mode" = valid-ja ] && e_file=README.ja.md
+      printf '{"findings":[{"check_id":"OC-E","file":"%s","pair":"api-readme","claim":"description drift","evidence":"cwd=%s","confidence":"high"}]}\n' "$e_file" "$PWD"
     fi
     ;;
   empty)
@@ -52,6 +54,12 @@ print(json.dumps({"findings": [{
     "confidence": "high",
 }]}))
 PY
+    ;;
+  non-utf8)
+    /usr/bin/python3 -c 'import sys; sys.stdout.buffer.write(b"\xff\xfe not-json")'
+    ;;
+  deep-nest)
+    /usr/bin/python3 -c 'print("[" * 100000)'
     ;;
   timeout)
     sleep 3

@@ -159,6 +159,9 @@ jq -e --arg fp "$first_fp" '.findings[] | select(.fingerprint == $fp) | .last_se
 assert_contains 'dispatcher stops scanning at the first missing LANE_CMD_n' "$ROOT/config/nightshift.conf.example"
 assert_contains '# LANE_CMD_3="OC_STATE_DIR=' "$ROOT/config/nightshift.conf.example"
 assert_contains "OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -'" "$ROOT/config/nightshift.conf.example"
+if grep -Eq '^OC_SEAT_TIMEOUT_SEC=' "$ROOT/config/nightshift.conf.example"; then
+  fail 'OC_SEAT_TIMEOUT_SEC remained as an inert top-level setting outside LANE_CMD_3'
+fi
 lane_cmd_numbers=$(grep -Eo 'LANE_CMD_[0-9]+' "$ROOT/config/nightshift.conf.example" | sed 's/.*_//' | sort -nu)
 lane_cmd_max=$(printf '%s\n' "$lane_cmd_numbers" | tail -n 1)
 expected_lane_cmd_numbers=$(seq 1 "$lane_cmd_max")

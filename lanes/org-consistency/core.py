@@ -50,7 +50,7 @@ FAILED_HEADER = re.compile(r"^FAILED \(\d+\):$", re.IGNORECASE)
 MODULES_SCANNED = re.compile(r"^modules in registry\s*:\s*(?P<count>\d+)\s*$", re.IGNORECASE)
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\((?P<target>[^)]+)\)")
 REFERENCE_LINK = re.compile(
-    r"^\s{0,3}\[[^\]]+\]:\s*(?P<target>\S.*)$",
+    r"^\s{0,3}\[(?!\^)[^\]]+\]:\s*(?P<target>\S.*)$",
     re.MULTILINE,
 )
 GITHUB_REPO_URL = re.compile(
@@ -761,8 +761,9 @@ class Runner:
             f"- STALE-INPUT: {scope['stale_input']}",
             f"- INVALID-OUTPUT: {scope['invalid_output']}",
             f"- deferred: {scope['deferred']}",
-            f"- QUEUED ({scope.get('deferred_repos', 0)} repos deferred)",
         ]
+        if scope.get("deferred_repos", 0) > 0:
+            lines.append(f"- QUEUED ({scope['deferred_repos']} repos deferred)")
         if report.get("complete") is True:
             lines.append("- COMPLETE: yes")
         lines.extend(
@@ -1221,7 +1222,7 @@ class Runner:
         claude_dir = mirror / ".claude"
         if claude_dir.is_dir() and not claude_dir.is_symlink():
             result.update(
-                path for path in claude_dir.rglob("*") if self.safe_mirror_file(mirror, path)
+                path for path in claude_dir.rglob("*.md") if self.safe_mirror_file(mirror, path)
             )
         return sorted(result)
 
@@ -1659,6 +1660,7 @@ class Runner:
             return []
         mirror = pathlib.Path(meta["mirror"])
         entries: list[dict[str, Any]] = []
+        seen_rule_ids: set[str] = set()
         for path in sorted((mirror / "docs").glob("0*.md")):
             if not self.safe_mirror_file(mirror, path):
                 continue
@@ -1670,6 +1672,9 @@ class Runner:
                 if heading_match:
                     heading = heading_match.group("title").strip()
                 for rule_id in HANDBOOK_RULE_ID.findall(line):
+                    if rule_id in seen_rule_ids:
+                        continue
+                    seen_rule_ids.add(rule_id)
                     entries.append(
                         {
                             "file": path.relative_to(mirror).as_posix(),
@@ -1698,8 +1703,19 @@ class Runner:
                 self.handbook_repo
             )
         efg_candidates: list[dict[str, Any]] = []
-        h_priority: list[tuple[int, int, dict[str, Any]]] = []
+        h_candidates: list[dict[str, Any]] = []
+
+        def least_recently_run(repo: dict[str, Any], night_field: str) -> tuple[int, str, int]:
+            layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
+            night = layer2.get(night_field)
+            if not isinstance(night, str) or not night:
+                return (0, "", repo["id"])
+            return (1, night, repo["id"])
+
         for repo in self.targets:
+            # A failed fetch reuses the recorded HEAD. If that HEAD was already
+            # consumed, L2 intentionally stays out of queue; layer 1 exposes the
+            # fetch failure rather than re-inspecting stale mirror contents.
             head = self.current_head(repo) or self.recorded_head(repo)
             layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
             if (
@@ -1716,13 +1732,12 @@ class Runner:
                 and "mirror" in mirror_meta
                 and self.oc_d_files(pathlib.Path(mirror_meta["mirror"]))
             )
-            if repo_changed or (handbook_changed and has_agent_docs):
-                # A handbook reverse trigger is the exceptional coverage path;
-                # place those agent-doc repositories ahead of ordinary
-                # repo-HEAD H work so a busy night cannot starve the trigger.
-                priority = 0 if handbook_changed and has_agent_docs else 1
-                h_priority.append((priority, repo["id"], repo))
-        h_candidates = [item[2] for item in sorted(h_priority)]
+            # Repositories without agent docs cannot produce OC-H findings, so
+            # omit them from the plan instead of spending cap on NO-INPUT cells.
+            if has_agent_docs and (repo_changed or handbook_changed):
+                h_candidates.append(repo)
+        efg_candidates.sort(key=lambda repo: least_recently_run(repo, "efg_night"))
+        h_candidates.sort(key=lambda repo: least_recently_run(repo, "h_night"))
 
         def add_cells(
             candidates: list[dict[str, Any]], cap: int, check_ids: tuple[str, ...], queue_name: str
@@ -1893,6 +1908,8 @@ class Runner:
                 ["/bin/bash", str(self.seat_adapter)],
                 input=prompt,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=self.seat_timeout + 15,
@@ -1901,6 +1918,8 @@ class Runner:
             )
         except subprocess.TimeoutExpired:
             return "timeout", "", "seat adapter exceeded its timeout"
+        except (UnicodeDecodeError, RecursionError, ValueError) as exc:
+            return "failed", "", f"seat adapter output handling failed: {exc}"
         if result.returncode == 124:
             return "timeout", result.stdout, result.stderr[-1000:]
         if result.returncode != 0:
@@ -1917,13 +1936,17 @@ class Runner:
             claim_kind = f"agentproc:{normalize(item['target_token'])}"
         else:
             claim_kind = f"hb:{item['rule_id']}:{normalize(item['target_token'])}"
+        # OC-E's pair already identifies the comparison. Keep the seat-selected
+        # file for display/evidence, but use one canonical file in its identity.
+        identity_file = "README.md" if check_id == "OC-E" else item["file"]
         finding = self.make_finding(
             check_id,
             repo,
-            item["file"],
+            identity_file,
             claim_kind,
             f"[confidence={item['confidence']}] {item['claim']}",
         )
+        finding["file"] = normalize(item["file"])
         finding["confidence"] = item["confidence"]
         finding["evidence"] = self.sanitize_claim(item["evidence"], 1000)
         return finding
@@ -1995,7 +2018,9 @@ class Runner:
             layer2["efg_night"] = self.night_id
         else:
             layer2["h_repo_head"] = head
-            layer2["h_handbook_head"] = self.current_head(self.handbook_repo) if self.handbook_repo else ""
+            handbook_head = self.current_head(self.handbook_repo) if self.handbook_repo else ""
+            if handbook_head:
+                layer2["h_handbook_head"] = handbook_head
             layer2["h_night"] = self.night_id
 
     def run_l2_launch(self, repo: dict[str, Any], launch: str, checks: set[str]) -> None:
@@ -2014,7 +2039,8 @@ class Runner:
                 },
             )
         if not active:
-            self.mark_l2_complete(repo, launch)
+            if self.target_status == "FRESH":
+                self.mark_l2_complete(repo, launch)
             return
         if "OC-H" in active and not self.handbook_index:
             self.set_cell_result(
@@ -2064,7 +2090,7 @@ class Runner:
                 active,
                 self.allowed_l2_files(payload, active),
             )
-        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError, ValueError) as exc:
             if os.environ.get("OC_TEST_MUTATE") == "invalid-output-guard":
                 raw_findings = []
             else:
@@ -2347,11 +2373,12 @@ class Runner:
             if entry["check_id"] == "self-health":
                 new_fp = self.self_health_fingerprint(str(entry["claim_kind"]))
             else:
+                identity_file = "README.md" if entry["check_id"] == "OC-E" else str(entry["file"])
                 new_fp = fingerprint(
                     self.fp_spec_version,
                     str(entry["check_id"]),
                     str(entry["repo_id"]),
-                    str(entry["file"]),
+                    identity_file,
                     str(entry["claim_kind"]),
                 )
             if new_fp in seen:

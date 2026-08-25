@@ -47,6 +47,7 @@ cat >> "$demo/README.md" <<'EOF'
 [missing anchor](#not-there)
 [reference missing]: docs/reference-missing.md
 [reference ghost]: https://github.com/ref-owner/ref-ghost
+[^1]: docs/footnote-definition-is-not-a-link.md
 https://github.com/outside-owner/demo
 https://github.com/no-owner/ghost
 https://github.com/legacy/known-neighbor
@@ -59,6 +60,7 @@ https://github.com/no-owner/fenced-ghost
 EOF
 mkdir -p "$demo/.claude"
 printf '%s\n' '[claude missing](../docs/claude-missing.md)' > "$demo/.claude/notes.md"
+printf '%s\n' '[json missing](../docs/json-missing.md)' > "$demo/.claude/settings.json"
 printf '%s\n' \
   '# Agent notes' \
   'Use scripts/existing and scripts/missing.' \
@@ -113,6 +115,7 @@ jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "xrepo:o
 jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "rel:docs/reference-missing.md")] | length == 1' "$report" >/dev/null || fail 'OC-B did not extract a broken reference-style relative link'
 jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "xrepo:ref-owner/ref-ghost")] | length == 1' "$report" >/dev/null || fail 'OC-B did not route a reference-style GitHub target through xrepo'
 jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "rel:../docs/claude-missing.md")] | length == 1' "$report" >/dev/null || fail 'OC-B did not scan .claude markdown input'
+jq -e '[.findings.new[] | select(.check_id == "OC-B" and (.claim_kind == "rel:docs/footnote-definition-is-not-a-link.md" or .claim_kind == "rel:../docs/json-missing.md"))] | length == 0' "$report" >/dev/null || fail 'OC-B treated a GFM footnote or .claude non-Markdown file as a link input'
 jq -e '[.findings.new[] | select(.check_id == "OC-C" and .claim_kind == "lang-missing:th")] | length == 1' "$report" >/dev/null || fail 'OC-C language absence was not detected'
 jq -e '[.findings.new[] | select(.check_id == "OC-C" and (.claim_kind | startswith("heading-drift:ja:")))] | length > 0' "$report" >/dev/null || fail 'OC-C heading tree drift was not detected'
 jq -e '[.findings.new[] | select(.check_id == "OC-D" and .claim_kind == "ref:scripts/missing")] | length == 1' "$report" >/dev/null || fail 'OC-D extensionless scripts reference was not detected'

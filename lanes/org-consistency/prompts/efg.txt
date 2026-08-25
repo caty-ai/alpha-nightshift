@@ -13,9 +13,11 @@ Allowed finding shapes (no additional fields):
 - OC-G: check_id,file,target_token,claim,evidence,confidence
 
 confidence is high, medium, or low. claim is at most 500 characters and evidence
-at most 1000. file must name a supplied input file. target_token is one bounded
-token with no whitespace. Report only concrete inconsistencies; otherwise return
-{"findings":[]}.
+at most 1000. file must name a deterministic supplied input reference: OC-E may
+use a readmes key, registry/modules.json for registry_entry, or
+.github-api-description for api_description; OC-F may use a readmes key; OC-G may
+use an agent_docs key. target_token is one bounded token with no whitespace.
+Report only concrete inconsistencies; otherwise return {"findings":[]}.
 
 INPUT JSON:
 {{INPUT_JSON}}
