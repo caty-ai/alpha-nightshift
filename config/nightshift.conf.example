@@ -83,3 +83,10 @@ REVIEW_CURL_BIN='/usr/bin/curl'
 GLM_KEY_FILE='/absolute/path/to/glm-api-key'
 REVIEW_GLM_MAX_TOKENS=4096
 # LANE_CMD_2="REVIEW_TARGET_SOURCE='$REVIEW_TARGET_SOURCE' REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/run.sh'"
+
+# Org-wide public consistency lane. LANE_CMD numbers must remain contiguous:
+# the dispatcher stops scanning at the first missing LANE_CMD_n. Its anonymous
+# GitHub API reads share the 60 requests/hour/IP allowance with other tools.
+# All OC_* values are embedded here
+# because lane_exec starts the command under env -i.
+# LANE_CMD_3="OC_STATE_DIR='$REPO_ROOT/state/org-consistency' OC_L2_MAX_REPOS=3 OC_H_MAX_REPOS=2 OC_L3_MAX_REPOS=3 OC_L3_WEEKDAY=7 OC_EXCLUDE_REPOS='' OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -' /bin/bash '$REPO_ROOT/lanes/org-consistency/run.sh'"
