@@ -26,7 +26,7 @@ nightshift_init() {
   # authentication must opt in explicitly.
   LANE_HOME_LINKS=${LANE_HOME_LINKS-}
   LANG=${LANG:-C}
-  NIGHT_ID=$(date -v-8H '+%F')
+  NIGHT_ID=$(date -v-8H '+%F' 2>/dev/null || date -d '-8 hours' '+%F')
 
   case "$LANE_TIMEBOX_MIN" in
     ''|*[!0-9]*) printf '%s\n' "LANE_TIMEBOX_MIN must be a non-negative integer" >&2; return 1 ;;

@@ -61,11 +61,13 @@ if [ "$lock_rc" -ne 0 ]; then
   exit 2
 fi
 child_pid=
-# shellcheck disable=SC2329
+# SC2329/SC2317 are one false positive (trap-only functions): older checker
+# builds on the ubuntu runner emit SC2317 where newer ones emit SC2329.
+# shellcheck disable=SC2329,SC2317
 cleanup() {
   lock_release "$lock_dir" || true
 }
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329,SC2317
 forward_signal() {
   signal_name=$1
   signal_exit=$2

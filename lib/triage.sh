@@ -461,18 +461,32 @@ triage_normalize_key() {
 triage_findings_for_repo() {
   triage_repo=$1
   triage_projection=$(triage_projection_file)
-  jq -c --arg repo "$triage_repo" 'select(.repo == $repo)' "$triage_projection"
+  jq -c --arg repo "$triage_repo" '
+    select(
+      .repo == $repo and
+      ((.kind // "") | startswith("org-consistency/") | not)
+    )
+  ' "$triage_projection"
 }
 
 triage_open_findings_for_repo() {
   triage_repo=$1
   triage_projection=$(triage_projection_file)
-  jq -c --arg repo "$triage_repo" 'select(.repo == $repo and .current_status == "open")' "$triage_projection"
+  jq -c --arg repo "$triage_repo" '
+    select(
+      .repo == $repo and
+      .current_status == "open" and
+      ((.kind // "") | startswith("org-consistency/") | not)
+    )
+  ' "$triage_projection"
 }
 
 triage_target_repos_present() {
   triage_projection=$(triage_projection_file)
-  jq -r '.repo' "$triage_projection" | LC_ALL=C sort -u
+  jq -r '
+    select(((.kind // "") | startswith("org-consistency/") | not))
+    | .repo
+  ' "$triage_projection" | LC_ALL=C sort -u
 }
 
 triage_new_findings_for_repo() {
@@ -518,13 +532,19 @@ triage_prepare_dedup_carryover() {
         .id as $id |
         select(
           .current_status == "open" and
+          ((.kind // "") | startswith("org-consistency/") | not) and
           ($last_run == "" or .ts > $last_run or
             (($carry | index($id)) != null))
         ) |
         $id
       ' "$(triage_projection_file)" | LC_ALL=C sort -u > "$triage_carry_next"
   else
-    jq -c 'select(.current_status == "open") | .id' \
+    jq -c '
+      select(
+        .current_status == "open" and
+        ((.kind // "") | startswith("org-consistency/") | not)
+      ) | .id
+    ' \
       "$(triage_projection_file)" | LC_ALL=C sort -u > "$triage_carry_next"
   fi
 }
@@ -1981,7 +2001,11 @@ triage_run() {
     fi
     if ! triage_target_repo_for "$triage_repo" >/dev/null 2>&1; then
       triage_outside_count=$(jq -s -r --arg repo "$triage_repo" \
-        '[.[] | select(.repo == $repo and .current_status == "open")] | length' \
+        '[.[] | select(
+          .repo == $repo and
+          .current_status == "open" and
+          ((.kind // "") | startswith("org-consistency/") | not)
+        )] | length' \
         "$(triage_projection_file)")
       triage_stats_increment outside_repo_count "$triage_outside_count"
       continue

@@ -523,6 +523,18 @@ digest_command() {
     digest_dead_man=false
   fi
 
+  oc_freshness_enforce=${OC_FRESHNESS_ENFORCE:-0}
+  oc_report_dir=${OC_REPORT_DIR:-"$STATE_DIR/org-consistency/report"}
+  oc_report_max_age_days=${OC_REPORT_MAX_AGE_DAYS:-3}
+  if ! org_consistency_freshness=$(digest_org_consistency_freshness \
+    "$oc_freshness_enforce" \
+    "$oc_report_dir" \
+    "$oc_report_max_age_days" \
+    "$(date '+%s')"); then
+    nightshift_log ERROR "Cannot evaluate org-consistency digest freshness"
+    return 1
+  fi
+
   generated_at=$(nightshift_iso_now)
   digest_file="$STATE_DIR/digests/$NIGHT_ID.md"
   if ! digest_render_template \
@@ -534,7 +546,8 @@ digest_command() {
     "$findings_block" \
     "$budget_block" \
     "$lane_stats" \
-    "$kpi_block"; then
+    "$kpi_block" \
+    "$org_consistency_freshness"; then
     nightshift_log ERROR "Failed to write digest: $digest_file"
     return 1
   fi

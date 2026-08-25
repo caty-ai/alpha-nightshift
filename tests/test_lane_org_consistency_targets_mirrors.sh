@@ -77,7 +77,8 @@ jq -e '(.scope.branch_changed | length) == 1 and .scope.branch_changed[0].from =
 mv "$OC_REMOTES/family-os.git" "$OC_REMOTES/family-os.git.offline"
 oc_run 2026-08-04
 [ "$(oc_status 2026-08-04 600)" = NOT-RUN ] || fail 'fetch failure did not mark the OC-A cell NOT-RUN'
-jq -e '.scope.not_run == 1 and .cells[0].reason == "fetch-failed"' "$OC_STATE/report/2026-08-04.json" >/dev/null || fail 'fetch failure was not visible in the report'
+jq -e '.scope.not_run == 3 and all(.cells[]; .reason == "fetch-failed")' "$OC_STATE/report/2026-08-04.json" >/dev/null || fail 'fetch failure was not visible across the repository cells'
+jq -e '[.findings.self_health[] | select(.claim_kind == "notrun-ratio")] | length == 1' "$OC_STATE/report/2026-08-04.json" >/dev/null || fail 'layer-1 NOT-RUN ratio did not emit self-health'
 
 mv "$OC_REMOTES/family-os.git.offline" "$OC_REMOTES/family-os.git"
 oc_write_checker "$OC_WORK/family-os" pass
@@ -85,7 +86,7 @@ oc_commit "$OC_WORK/family-os" add-checker-before-rename
 git clone -q --bare "$OC_WORK/family-os" "$OC_REMOTES/renamed.git"
 oc_write_single_api 600 renamed trunk renamed
 oc_run 2026-08-05
-jq -e '(.scope.renamed | length) == 1 and .scope.renamed[0].from == "caty-ai/family-os" and .scope.renamed[0].to == "caty-ai/renamed" and (.cells | length) == 1 and .cells[0].repo_id == 600 and .cells[0].repo == "caty-ai/renamed" and .cells[0].status == "RUN" and .cells[0].reason == "checker-complete" and .cells[0].fresh == true' "$OC_STATE/report/2026-08-05.json" >/dev/null || fail 'numeric-ID rename did not keep OC-A on the renamed repository'
+jq -e '(.scope.renamed | length) == 1 and .scope.renamed[0].from == "caty-ai/family-os" and .scope.renamed[0].to == "caty-ai/renamed" and (.cells | length) == 3 and ([.cells[] | select(.check_id == "OC-A" and .repo_id == 600 and .repo == "caty-ai/renamed" and .status == "RUN" and .reason == "checker-complete" and .fresh == true)] | length) == 1' "$OC_STATE/report/2026-08-05.json" >/dev/null || fail 'numeric-ID rename did not keep OC-A on the renamed repository'
 jq -e '.repos["600"].name_history | length == 2' "$OC_STATE/repos.json" >/dev/null || fail 'id-to-name history did not retain the rename'
 [ -d "$OC_STATE/mirrors/600" ] || fail 'rename changed the numeric mirror path'
 
@@ -138,7 +139,7 @@ printf '%s\n' \
   > "$OC_CASE_ROOT/git-shim/git"
 chmod +x "$OC_CASE_ROOT/git-shim/git"
 oc_run 2026-08-01 PATH="$OC_CASE_ROOT/git-shim:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
-jq -e '.complete == true and .cells[0].status == "NOT-RUN" and .cells[0].reason == "mirror-finalize-failed" and .cells[0].fresh == false' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'unexpected Git failure aborted the lane instead of isolating the cell'
+jq -e '.complete == true and (.cells | length) == 3 and all(.cells[]; .status == "NOT-RUN" and .reason == "mirror-finalize-failed" and .fresh == false)' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'unexpected Git failure aborted the lane instead of isolating the repository cells'
 
 # OC-A is still planned when configuration removes family-os from tonight's
 # target set. The explicit non-fresh cell keeps the night from looking green.
