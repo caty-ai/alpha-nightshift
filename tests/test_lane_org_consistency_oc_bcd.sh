@@ -190,6 +190,31 @@ assert "<!--" not in safe and "```" not in safe and "@" not in safe
 assert "#123" not in safe and "oc-fingerprint" not in safe and "useful" in safe
 PY
 
+# A top-level dotted filename in agent docs is a real repo-path candidate; URL
+# and bare-host references remain inert.
+oc_case_init oc-d-top-level-dot
+case_roots+=("$OC_CASE_ROOT")
+oc_make_remote family-os main pass
+mkdir -p "$OC_WORK/family-os/registry"
+printf '%s\n' '{"version":1,"modules":[{"repo":"caty-ai/dot-demo"}]}' > "$OC_WORK/family-os/registry/modules.json"
+oc_commit "$OC_WORK/family-os" add-registry
+oc_push_work family-os main
+oc_make_remote dot-demo main none
+printf '%s\n' \
+  '# Agent notes' \
+  'Read contributing.md before opening a PR.' \
+  'See the handbook at https://github.com/caty-ai/family-dev-handbook/blob/main/AGENTS.md.' \
+  'Bare host stays inert: github.com/caty-ai/family-dev-handbook' \
+  > "$OC_WORK/dot-demo/AGENTS.md"
+oc_commit "$OC_WORK/dot-demo" add-agent-dot-file
+oc_push_work dot-demo main
+oc_write_two_api 941 family-os 942 dot-demo
+oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=99
+jq -e '[.cells[] | select(.check_id == "OC-D" and .repo_id == 942 and .metrics.flagged == 1)] | length == 1' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'OC-D did not flag the missing top-level dotted filename'
+jq -e '[.findings.new[] | select(.check_id == "OC-D")] | length == 1' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'OC-D reported extra findings alongside the dotted filename control'
+jq -e '[.findings.new[] | select(.check_id == "OC-D" and .claim_kind == "ref:contributing.md")] | length == 1' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'OC-D did not preserve the top-level dotted filename claim kind'
+jq -e '[.findings.new[] | select(.check_id == "OC-D" and (.claim_kind | contains("github.com")))] | length == 0' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'OC-D treated URL or bare-host text as a missing repository path'
+
 # A handbook URL is not a repository path token for OC-D.
 oc_case_init oc-d-url
 case_roots+=("$OC_CASE_ROOT")
@@ -202,6 +227,7 @@ oc_make_remote url-demo main none
 printf '%s\n' \
   '# Agent notes' \
   'See the handbook at https://github.com/caty-ai/family-dev-handbook/blob/main/AGENTS.md.' \
+  'Bare host stays inert: github.com/caty-ai/family-dev-handbook' \
   > "$OC_WORK/url-demo/AGENTS.md"
 oc_commit "$OC_WORK/url-demo" add-agent-url
 oc_push_work url-demo main
@@ -250,7 +276,8 @@ printf '%s  %s\n' \
   8ebf151c40d58003c081e23663818e36bd49da4c8f1c26332f8ac5e59f58ded7 "$family_corpus/README.zh.md" \
   81437cf26a8aa47ea3330af35b904ee25f94ea6339a7a9145e2907cf18ec1982 "$family_corpus/README.th.md" \
   452b374cf909a5c9fd26749790ce8ac1c02b3263b8c2bd3f9bb887bb3926c31d "$meetmate_corpus/README.md" \
-  2312239562d12b899682dfe6c7d682698fea5e1890289a34c08ed1784131121b "$meetmate_corpus/AGENTS.md" \
+  bd074374a616d7812e4517cfafe7f0eee56aa02140806d9e9e7699a769d3d6a4 "$meetmate_corpus/AGENTS.md" \
+  34911274374734bf556bd70a0156b8f75ea10b69823e2d63996d95ba05540575 "$meetmate_corpus/package.json" \
   34e4167f6815f1225ef99ce1e1b73b6dcff390c992c2670b31af802a3ef459a5 "$handbook_corpus/README.md" \
   3b98c310db52c4cf2024006f216aadc049f25e6cd8e00de6166ac4cb13885149 "$handbook_corpus/README.ja.md" \
   | shasum -a 256 -c >/dev/null || fail 'pinned B/C/D corpus drifted'
@@ -269,7 +296,7 @@ oc_commit "$OC_WORK/family-os" pinned-family-os
 git clone -q --bare "$OC_WORK/family-os" "$OC_REMOTES/family-os.git"
 
 oc_git_init_work meetmate main
-cp "$meetmate_corpus/README.md" "$meetmate_corpus/AGENTS.md" "$OC_WORK/meetmate/"
+cp "$meetmate_corpus/README.md" "$meetmate_corpus/AGENTS.md" "$meetmate_corpus/package.json" "$OC_WORK/meetmate/"
 cp -R "$meetmate_corpus/bin" "$meetmate_corpus/docs" "$meetmate_corpus/src" "$OC_WORK/meetmate/"
 oc_commit "$OC_WORK/meetmate" pinned-meetmate
 git clone -q --bare "$OC_WORK/meetmate" "$OC_REMOTES/meetmate.git"
@@ -295,12 +322,13 @@ jq -e '
   ([.cells[] | select(.check_id == "OC-C" and .repo_id == 951 and .metrics.scanned == 4)] | length) == 1 and
   .check_metrics["OC-B"].flagged == 64 and
   .check_metrics["OC-C"].flagged == 5 and
-  .check_metrics["OC-D"].flagged == 0
+  .check_metrics["OC-D"].flagged == 1
 ' "$real_report" >/dev/null || {
   jq -c '.check_metrics | {"OC-B": .["OC-B"].flagged, "OC-C": .["OC-C"].flagged, "OC-D": .["OC-D"].flagged}' "$real_report" >&2
   fail 'pinned real corpus drifted from the fixed OC-B/C/D finding counts'
 }
-jq -e '[.findings.new[] | select(.check_id == "OC-D")] | length == 0' "$real_report" >/dev/null || fail 'truncated vendored paths masqueraded as real OC-D drift'
+jq -e '[.findings.new[] | select(.check_id == "OC-D")] | length == 1' "$real_report" >/dev/null || fail 'real corpus did not keep the fixed non-zero OC-D count'
+jq -e '[.findings.new[] | select(.check_id == "OC-D" and .claim_kind == "ref:contributing.md")] | length == 1' "$real_report" >/dev/null || fail 'real corpus OC-D drift did not stay pinned to the top-level dotted file reference'
 [ ! -s "$OC_CASE_ROOT/lanes/2026-08-10/findings.jsonl" ] || fail 'real-corpus baseline leaked proposals'
 
 printf 'test_lane_org_consistency_oc_bcd: PASS\n'

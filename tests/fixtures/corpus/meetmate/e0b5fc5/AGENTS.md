@@ -14,10 +14,10 @@ Ground truth for AI tools (and humans) working on this repository. The generated
 
 | Path | What lives there |
 |---|---|
-| `bin/ai-meet.js` | CLI: `init` wizard (writes `config.json` / `.env` / `AGENTS.md` into the resolved home), `start`, `mcp`, preflight |
+| `bin/ai-meet.js` | CLI: `init` wizard (writes the generated user config file / `.env` / `AGENTS.md` into the resolved home), `start`, `mcp`, preflight |
 | `src/server.js` | HTTP server, settings UI, `/health`; prints the settings-UI URL once, post-bind |
 | `src/paths.js` | Home resolution — `AI_MEET_HOME` pinned pre-dotenv, cwd default; bundled-vs-user asset split |
-| `src/config.js` | `config.json` loading (lazy path resolution) |
+| `src/config.js` | generated user config loading (lazy path resolution) |
 | `src/llm*.js`, `src/stt*.js`, `src/tts-*.js` | LLM / speech-to-text / text-to-speech providers |
 | `src/transport-meet/`, `src/mcp/` | Meeting transport; MCP control plane (tools: `join_meeting`, `leave_meeting`, `get_active_session`, `health`) |
 | `src/agents-template.md` | Static template for the user-side generated `AGENTS.md` (ships in the tarball) |
@@ -28,7 +28,8 @@ Ground truth for AI tools (and humans) working on this repository. The generated
 ## Contribution constraints
 
 - **Issue-first**: repo code changes start from a GitHub Issue; Conventional Commits; PRs carry a completion record.
+- Keep the contributor workflow summary in `contributing.md` aligned with any process changes.
 - **`docs/cli-contract.md` is frozen** — CLI surface, wizard prompt sequence, path-resolution order, tarball contents, and the generated-file rules are contract-level. Do not change behavior it pins without an owner-approved contract amendment.
 - The npm tarball is allowlist-packed via `package.json` `files` (plus npm's forced README/LICENSE/NOTICE class); `test/`, `docs/`, `scripts/`, `tools/` never ship.
-- Never commit `.env` or `config.json`; never interpolate user or config values into `src/agents-template.md` (key **names** only — enforced by tests).
+- Never commit `.env` or the generated user config file; never interpolate user or config values into `src/agents-template.md` (key **names** only — enforced by tests).
 - Secrets policy for assistants: never print, log, or commit values from `.env`.

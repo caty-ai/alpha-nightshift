@@ -428,41 +428,143 @@ wait "$b1_watcher_pid"
   fail 'B1 full-run wiring retained a decision after its canonical settled'
 assert_contains 'decision_drops_canonical: 1' "$b1_state/triage/report.md"
 
-org_excluded_state="$TEST_TMP/org-excluded-state"
-org_excluded_gh="$TEST_TMP/org-excluded-gh"
-org_excluded_config="$TEST_TMP/org-excluded.conf"
-org_excluded_adapter_log="$TEST_TMP/org-excluded-adapter.log"
-mkdir -p "$org_excluded_state" "$org_excluded_gh"
+(
+  org_filter_valid_state="$TEST_TMP/org-filter-valid-state"
+  org_filter_valid_work="$TEST_TMP/org-filter-valid-work"
+  mkdir -p "$org_filter_valid_state/ledger" \
+    "$org_filter_valid_state/triage/state" \
+    "$org_filter_valid_work"
+  STATE_DIR="$org_filter_valid_state"
+  TRIAGE_WORK_DIR="$org_filter_valid_work"
+  triage_init_state_file
+  triage_seed_finding \
+    "$org_filter_valid_state" \
+    org-filter-demo \
+    demo \
+    app/render.sh:5 \
+    'target-repo org consistency finding' \
+    org-consistency/self-health \
+    2026-08-12
+  triage_seed_finding \
+    "$org_filter_valid_state" \
+    org-filter-outside \
+    outside-org-only \
+    app/render.sh:6 \
+    'outside-repo org consistency finding' \
+    org-consistency/self-health \
+    2026-08-12
+  ledger_project_findings > "$(triage_projection_file)"
+  [ -z "$(triage_findings_for_repo demo)" ] ||
+    fail 'triage_findings_for_repo leaked an org-consistency finding'
+  [ -z "$(triage_open_findings_for_repo demo)" ] ||
+    fail 'triage_open_findings_for_repo leaked an org-consistency finding'
+  [ -z "$(triage_target_repos_present)" ] ||
+    fail 'triage_target_repos_present leaked an org-consistency repo'
+  printf '%s\n' '"org-filter-demo"' > "$(triage_dedup_carryover_state_file)"
+  triage_prepare_dedup_carryover
+  [ "$(cat "$TRIAGE_WORK_DIR/dedup-carryover.previous.jsonl")" = '"org-filter-demo"' ] ||
+    fail 'triage_prepare_dedup_carryover valid state did not preserve the carry input'
+  [ ! -s "$(triage_dedup_carryover_next_file)" ] ||
+    fail 'triage_prepare_dedup_carryover valid state leaked org-consistency carryover ids'
+)
+
+(
+  org_filter_invalid_state="$TEST_TMP/org-filter-invalid-state"
+  org_filter_invalid_work="$TEST_TMP/org-filter-invalid-work"
+  mkdir -p "$org_filter_invalid_state/ledger" \
+    "$org_filter_invalid_state/triage/state" \
+    "$org_filter_invalid_work"
+  STATE_DIR="$org_filter_invalid_state"
+  TRIAGE_WORK_DIR="$org_filter_invalid_work"
+  triage_init_state_file
+  triage_seed_finding \
+    "$org_filter_invalid_state" \
+    org-filter-invalid-demo \
+    demo \
+    app/render.sh:5 \
+    'invalid carry-state org consistency finding' \
+    org-consistency/self-health \
+    2026-08-12
+  ledger_project_findings > "$(triage_projection_file)"
+  printf '%s\n' '{"bad":"state"}' > "$(triage_dedup_carryover_state_file)"
+  triage_prepare_dedup_carryover
+  [ ! -s "$TRIAGE_WORK_DIR/dedup-carryover.previous.jsonl" ] ||
+    fail 'triage_prepare_dedup_carryover invalid state did not clear the carry input'
+  [ ! -s "$(triage_dedup_carryover_next_file)" ] ||
+    fail 'triage_prepare_dedup_carryover invalid state leaked org-consistency carryover ids'
+)
+
+org_target_excluded_state="$TEST_TMP/org-target-excluded-state"
+org_target_excluded_gh="$TEST_TMP/org-target-excluded-gh"
+org_target_excluded_config="$TEST_TMP/org-target-excluded.conf"
+org_target_excluded_adapter_log="$TEST_TMP/org-target-excluded-adapter.log"
+mkdir -p "$org_target_excluded_state" "$org_target_excluded_gh"
 triage_write_config \
-  "$org_excluded_config" \
-  "$org_excluded_state" \
+  "$org_target_excluded_config" \
+  "$org_target_excluded_state" \
   "$TEST_DIR/fixtures/triage/fake-gh.sh"
-triage_seed_report_issue "$org_excluded_gh" demo/repo 201
+triage_seed_report_issue "$org_target_excluded_gh" demo/repo 201
 triage_seed_finding \
-  "$org_excluded_state" \
-  org-consistency-observation \
-  outside-org-only \
+  "$org_target_excluded_state" \
+  org-consistency-target-repo \
+  demo \
   app/render.sh:5 \
   'org consistency observation should stay triage-inert' \
   org-consistency/self-health \
   2026-08-12
 env -u TRIAGE_STUB_QUEUE_FILE -u TRIAGE_STUB_RESPONSE_TABLE \
-  TRIAGE_FAKE_GH_DIR="$org_excluded_gh" \
-  TRIAGE_STUB_LOG_FILE="$org_excluded_adapter_log" \
-  NIGHTSHIFT_CONFIG="$org_excluded_config" \
+  TRIAGE_FAKE_GH_DIR="$org_target_excluded_gh" \
+  TRIAGE_STUB_LOG_FILE="$org_target_excluded_adapter_log" \
+  NIGHTSHIFT_CONFIG="$org_target_excluded_config" \
   /bin/bash "$ROOT/bin/morning-triage" \
   --dry-run \
   --force \
   --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
-[ ! -s "$org_excluded_state/triage/decisions.draft.jsonl" ] ||
-  fail 'org-consistency findings unexpectedly entered triage decisions'
-assert_contains 'new_findings_total: 0' "$org_excluded_state/triage/report.md"
-assert_contains 'verify_total: 0' "$org_excluded_state/triage/report.md"
-assert_contains 'outside_repo_count: 0' "$org_excluded_state/triage/report.md"
-[ ! -s "$org_excluded_state/triage/verify-results.jsonl" ] ||
-  fail 'org-consistency findings unexpectedly entered verify processing'
-[ ! -s "$org_excluded_adapter_log" ] ||
-  fail 'org-consistency findings unexpectedly invoked the triage adapter'
+[ ! -s "$org_target_excluded_state/triage/decisions.draft.jsonl" ] ||
+  fail 'target-repo org-consistency findings unexpectedly entered triage decisions'
+assert_contains 'new_findings_total: 0' "$org_target_excluded_state/triage/report.md"
+assert_contains 'verify_total: 0' "$org_target_excluded_state/triage/report.md"
+assert_contains 'outside_repo_count: 0' "$org_target_excluded_state/triage/report.md"
+[ ! -s "$org_target_excluded_state/triage/verify-results.jsonl" ] ||
+  fail 'target-repo org-consistency findings unexpectedly entered verify processing'
+[ ! -s "$org_target_excluded_adapter_log" ] ||
+  fail 'target-repo org-consistency findings unexpectedly invoked the triage adapter'
+
+org_outside_excluded_state="$TEST_TMP/org-outside-excluded-state"
+org_outside_excluded_gh="$TEST_TMP/org-outside-excluded-gh"
+org_outside_excluded_config="$TEST_TMP/org-outside-excluded.conf"
+org_outside_excluded_adapter_log="$TEST_TMP/org-outside-excluded-adapter.log"
+mkdir -p "$org_outside_excluded_state" "$org_outside_excluded_gh"
+triage_write_config \
+  "$org_outside_excluded_config" \
+  "$org_outside_excluded_state" \
+  "$TEST_DIR/fixtures/triage/fake-gh.sh"
+triage_seed_report_issue "$org_outside_excluded_gh" demo/repo 201
+triage_seed_finding \
+  "$org_outside_excluded_state" \
+  org-consistency-outside-repo \
+  outside-org-only \
+  app/render.sh:5 \
+  'outside-org-only org consistency observation should stay triage-inert' \
+  org-consistency/self-health \
+  2026-08-12
+env -u TRIAGE_STUB_QUEUE_FILE -u TRIAGE_STUB_RESPONSE_TABLE \
+  TRIAGE_FAKE_GH_DIR="$org_outside_excluded_gh" \
+  TRIAGE_STUB_LOG_FILE="$org_outside_excluded_adapter_log" \
+  NIGHTSHIFT_CONFIG="$org_outside_excluded_config" \
+  /bin/bash "$ROOT/bin/morning-triage" \
+  --dry-run \
+  --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+[ ! -s "$org_outside_excluded_state/triage/decisions.draft.jsonl" ] ||
+  fail 'outside-repo org-consistency findings unexpectedly entered triage decisions'
+assert_contains 'new_findings_total: 0' "$org_outside_excluded_state/triage/report.md"
+assert_contains 'verify_total: 0' "$org_outside_excluded_state/triage/report.md"
+assert_contains 'outside_repo_count: 0' "$org_outside_excluded_state/triage/report.md"
+[ ! -s "$org_outside_excluded_state/triage/verify-results.jsonl" ] ||
+  fail 'outside-repo org-consistency findings unexpectedly entered verify processing'
+[ ! -s "$org_outside_excluded_adapter_log" ] ||
+  fail 'outside-repo org-consistency findings unexpectedly invoked the triage adapter'
 
 org_included_state="$TEST_TMP/org-included-state"
 org_included_gh="$TEST_TMP/org-included-gh"

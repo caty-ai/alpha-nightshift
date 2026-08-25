@@ -1406,7 +1406,7 @@ class Runner:
             path = pathlib.PurePosixPath(normalized_token.rstrip("/"))
             suffix_allowed = path.suffix.lower() in ALLOWED_AGENT_EXTENSIONS
             first = path.parts[0] if path.parts else ""
-            if "." in first and first not in top_segments:
+            if len(path.parts) >= 2 and "." in first and first not in top_segments:
                 continue
             extensionless_command = len(path.parts) >= 2 and first in {"bin", "scripts"}
             rooted = len(path.parts) >= 2 and first in top_segments
