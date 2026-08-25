@@ -44,9 +44,45 @@ PY
 ) || fail 'fingerprint did not use byte length-prefix concatenation'
 : "${expected_fp:=}"
 
+# Free-form checker text never becomes an unbounded claim_kind component.
+# The parsed path is preferred, with a fixed unknown fallback when no path exists.
+/usr/bin/env OC_TEST_MUTATE= /usr/bin/python3 - "$OC_CORE" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("org_consistency_core", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+runner = module.Runner.__new__(module.Runner)
+runner.fp_spec_version = "2"
+repo = {"id": 77, "full_name": "caty-ai/family-os"}
+with_path = runner.finding_from_failure(repo, "unstructured README.md failure detail")
+without_path = runner.finding_from_failure(repo, "unstructured failure detail")
+assert with_path["claim_kind"].startswith("regcheck:unknown:readme.md:")
+assert without_path["claim_kind"].startswith("regcheck:unknown:unknown:")
+assert with_path["claim"] == "unstructured README.md failure detail"
+assert without_path["claim"] == "unstructured failure detail"
+assert runner.parse_checker_failures("FAILED (2):\n  - first\n\nOK\n  - ghost") == ["first"]
+PY
+
 oc_case_init core
 case_root=$OC_CASE_ROOT
 trap 'rm -rf "$TEST_TMP" "$case_root"' EXIT
+
+# Test-only inputs are refused on the production-shaped entry unless the
+# fixture harness explicitly opts in.
+test_mode_lane="$OC_CASE_ROOT/test-mode-lane"
+mkdir -p "$test_mode_lane/tmp" "$test_mode_lane/home"
+test_mode_rc=0
+/usr/bin/env -i \
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin \
+  HOME="$test_mode_lane/home" TMPDIR="$test_mode_lane/tmp" LANG=C TERM=dumb \
+  NIGHT_ID=2026-08-01 LANE_DIR="$test_mode_lane" OC_STATE_DIR="$OC_STATE" \
+  OC_API_FIXTURE="$OC_API" \
+  /bin/bash "$OC_RUN_SH" > "$OC_CASE_ROOT/test-mode.out" 2>&1 || test_mode_rc=$?
+[ "$test_mode_rc" -ne 0 ] || fail 'test-only environment was accepted without OC_TEST_MODE=1'
+assert_contains 'OC_API_FIXTURE requires OC_TEST_MODE=1' "$OC_CASE_ROOT/test-mode.out"
+
 oc_make_remote family-os main fail
 oc_make_remote other main none
 oc_write_two_api 101 family-os 202 other
@@ -59,18 +95,21 @@ assert_file_exists "$report_one"
 assert_file_exists "$OC_STATE/report/2026-08-02.md"
 assert_file_exists "$plan_one"
 assert_file_exists "$journal_one"
-jq -e '.complete == true and .scope.target_repos == 2 and .scope.no_input == 1 and .scope.not_run == 0' "$report_one" >/dev/null || fail 'scope summary did not expose all S1 cells'
+jq -e '.complete == true and .scope.target_repos == 2 and .scope.no_input == 0 and .scope.not_run == 0' "$report_one" >/dev/null || fail 'scope summary did not expose the OC-A plan'
 jq -e '.check_metrics["OC-A"] == {extracted:2,flagged:2,scanned:1}' "$report_one" >/dev/null || fail 'OC-A coverage counters are wrong'
-jq -e '.cells | length == 2 and all(.[]; .status == "RUN" or .status == "NO-INPUT")' "$report_one" >/dev/null || fail 'plan/results did not cover every target cell'
-jq -e '.cells | length == 2 and all(.[]; has("result"))' "$plan_one" >/dev/null || fail 'final plan did not retain every cell result'
+jq -e '.cells[] | select(.repo_id == 101) | .status == "RUN" and .fresh == true' "$report_one" >/dev/null || fail 'FAILED claim text containing skipped incorrectly degraded OC-A'
+jq -e '(.cells | length) == 1 and .cells[0].repo_id == 101 and .cells[0].status == "RUN"' "$report_one" >/dev/null || fail 'OC-A planned a non-family-os cell'
+jq -e '(.cells | length) == 1 and .cells[0].repo_id == 101 and all(.cells[]; has("result"))' "$plan_one" >/dev/null || fail 'final plan did not retain the family-os result'
+[ ! -e "$OC_STATE/mirrors/202" ] || fail 'OC-A fetched a non-family-os target'
 jq -e '.findings | length == 2 and all(.[]; .baseline == true and .status == "open")' "$OC_STATE/findings.json" >/dev/null || fail 'baseline findings were not added to the open set'
 jq -e '(.findings.new | length) == 2 and (.findings.baseline | length) == 2' "$report_one" >/dev/null || fail 'baseline inventory section is incomplete'
-jq -e '.effective_settings.OC_API_MODE == "fixture" and .effective_settings.OC_FP_SPEC_VERSION == "2"' "$report_one" >/dev/null || fail 'effective settings were not echoed'
+jq -e '.effective_settings.OC_API_MODE == "fixture" and .effective_settings.OC_GIT_TRANSPORT == "fixture" and .effective_settings.OC_FP_SPEC_VERSION == "2"' "$report_one" >/dev/null || fail 'effective settings were not echoed'
 assert_contains 'OC-A: scanned=1 extracted=2 flagged=2' "$OC_STATE/report/2026-08-02.md"
 
 first_count=$(jq '.findings | length' "$OC_STATE/findings.json")
 first_fp=$(jq -r '.findings[0].fingerprint' "$OC_STATE/findings.json")
 [ "$first_count" -ge 1 ] || fail 'dedup precondition: first night produced no OC-A finding'
+[ "$first_count" -eq 2 ] || fail 'same-check same-file defects collapsed to one fingerprint'
 oc_run 2026-08-03
 jq -e '.findings.new | length == 0' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'second identical night re-added findings'
 [ "$(jq '.findings | length' "$OC_STATE/findings.json")" -eq "$first_count" ] || fail 'dedup changed the open-set size'
@@ -80,5 +119,9 @@ jq -e --arg fp "$first_fp" '.findings[] | select(.fingerprint == $fp) | .last_se
 assert_contains 'dispatcher stops scanning at the first missing LANE_CMD_n' "$ROOT/config/nightshift.conf.example"
 assert_contains '# LANE_CMD_3="OC_STATE_DIR=' "$ROOT/config/nightshift.conf.example"
 assert_contains "OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -'" "$ROOT/config/nightshift.conf.example"
+lane_cmd_numbers=$(grep -Eo 'LANE_CMD_[0-9]+' "$ROOT/config/nightshift.conf.example" | sed 's/.*_//' | sort -nu)
+lane_cmd_max=$(printf '%s\n' "$lane_cmd_numbers" | tail -n 1)
+expected_lane_cmd_numbers=$(seq 1 "$lane_cmd_max")
+[ "$lane_cmd_numbers" = "$expected_lane_cmd_numbers" ] || fail 'conf.example LANE_CMD numbers are not the contiguous set 1..N'
 
 printf 'test_lane_org_consistency_core: PASS\n'

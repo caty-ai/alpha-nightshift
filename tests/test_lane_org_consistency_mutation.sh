@@ -21,5 +21,8 @@ assert_mutation_red() {
 assert_mutation_red fp-normalize test_lane_org_consistency_core.sh
 assert_mutation_red target-selection test_lane_org_consistency_targets_mirrors.sh
 assert_mutation_red notrun test_lane_org_consistency_timebox.sh
+assert_mutation_red failure-identity test_lane_org_consistency_core.sh
+assert_mutation_red degraded-whole-stdout test_lane_org_consistency_core.sh
+assert_mutation_red rc0-contract test_lane_org_consistency_lifecycle.sh
 
 printf 'test_lane_org_consistency_mutation: PASS\n'

@@ -45,9 +45,22 @@ oc_write_checker() {
         'print("pin freshness check : skipped")' \
         'print("ci existence check  : skipped")' \
         'print("FAILED (2):")' \
-        'print("  - retired: README.md: stale https://github.com/old-owner/one")' \
-        'print("  - retired: README.md: stale https://github.com/old-owner/two")' \
+        'print("  - status-text: README.md:12 says '\''skipped alpha'\'' next to https://github.com/old-owner/one")' \
+        'print("  - status-text: README.md:47 says '\''removed beta'\'' next to https://github.com/old-owner/one")' \
         'raise SystemExit(1)' \
+        > "$work/tools/check_registry.py"
+      ;;
+    exit-zero-fail)
+      printf '%s\n' \
+        '#!/usr/bin/env python3' \
+        'import sys' \
+        'assert sys.argv[1:] == ["--offline"]' \
+        'print("reality check       : skipped")' \
+        'print("orphan check        : skipped")' \
+        'print("pin freshness check : skipped")' \
+        'print("ci existence check  : skipped")' \
+        'print("FAILED (1):")' \
+        'print("  - status-text: README.md:99 says '\''still broken'\'' next to https://github.com/old-owner/one")' \
         > "$work/tools/check_registry.py"
       ;;
     pass)
@@ -68,7 +81,7 @@ oc_write_checker() {
         'import sys' \
         'import time' \
         'assert sys.argv[1:] == ["--offline"]' \
-        'time.sleep(1)' \
+        'time.sleep(2)' \
         'print("reality check       : skipped")' \
         'print("orphan check        : skipped")' \
         'print("pin freshness check : skipped")' \
@@ -81,7 +94,7 @@ oc_write_checker() {
         '#!/usr/bin/env python3' \
         'import sys' \
         'assert sys.argv[1:] == ["--offline"]' \
-        'print("degraded: an offline input was skipped unexpectedly")' \
+        'print("reality check       : degraded")' \
         'print("OK")' \
         > "$work/tools/check_registry.py"
       ;;
@@ -176,6 +189,7 @@ oc_run() {
     GIT_CEILING_DIRECTORIES="$lane" \
     OC_STATE_DIR="$OC_STATE" \
     OC_API_FIXTURE="$OC_API" \
+    OC_TEST_MODE=1 \
     OC_TEST_FIXTURE_GIT_ROOT="$OC_REMOTES" \
     OC_TEST_MUTATE="${OC_TEST_MUTATE:-}" \
     "$@" \

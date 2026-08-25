@@ -16,6 +16,18 @@ OC_STATE_DIR=${OC_STATE_DIR:?OC_STATE_DIR is required}
 LANE_DIR=${LANE_DIR:?LANE_DIR is required}
 NIGHT_ID=${NIGHT_ID:?NIGHT_ID is required}
 
+if [ "${OC_TEST_MODE:-}" != 1 ]; then
+  test_hook_name=$(
+    /usr/bin/env |
+      /usr/bin/sed -En '/^OC_TEST_MODE=/d; s/^(OC_TEST_[^=]*|OC_API_FIXTURE)=.*/\1/p' |
+      /usr/bin/head -n 1
+  )
+  if [ -n "$test_hook_name" ]; then
+    log "$test_hook_name requires OC_TEST_MODE=1"
+    exit 2
+  fi
+fi
+
 case "$OC_STATE_DIR" in
   /*) ;;
   *) log 'OC_STATE_DIR must be absolute'; exit 2 ;;

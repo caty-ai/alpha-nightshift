@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,12 @@ EXPECTED_OFFLINE_SKIP = re.compile(
     r"^(?:reality|orphan|pin freshness|ci existence) check\s*:\s*skipped$",
     re.IGNORECASE,
 )
+SUMMARY_CHECK_STATUS = re.compile(
+    r"^[a-z ]+check\s*:\s*(?P<status>skipped|degraded)\b",
+    re.IGNORECASE,
+)
+FAILED_HEADER = re.compile(r"^FAILED \(\d+\):$", re.IGNORECASE)
+MODULES_SCANNED = re.compile(r"^modules in registry\s*:\s*(?P<count>\d+)\s*$", re.IGNORECASE)
 
 
 class LaneError(RuntimeError):
@@ -195,6 +202,7 @@ class Runner:
             "OC_STALE_ESCALATE_NIGHTS": self.positive_int("OC_STALE_ESCALATE_NIGHTS", 3),
             "OC_ZERO_STREAK_NIGHTS": self.positive_int("OC_ZERO_STREAK_NIGHTS", 5),
             "OC_API_MODE": "fixture" if self.api_fixture else "anonymous-github",
+            "OC_GIT_TRANSPORT": "fixture" if self.fixture_git_root else "origin",
         }
 
     @staticmethod
@@ -351,9 +359,7 @@ class Runner:
         self.targets.sort(key=lambda item: item["id"])
 
     def update_repo_identity_state(self) -> None:
-        prior = read_json(self.repos_path, {"repos": {}})
-        if not isinstance(prior, dict) or not isinstance(prior.get("repos"), dict):
-            raise LaneError("repos.json has an invalid schema")
+        prior = self.load_repo_identity_state()
         self.repo_state = prior
         current_ids = {str(repo["id"]) for repo in self.targets}
         for old_id, old in prior["repos"].items():
@@ -394,6 +400,16 @@ class Runner:
                 "default_branch_history": branch_history,
             }
 
+    def load_repo_identity_state(self) -> dict[str, Any]:
+        prior = read_json(self.repos_path, {"repos": {}})
+        if not isinstance(prior, dict) or not isinstance(prior.get("repos"), dict):
+            raise LaneError("repos.json has an invalid schema")
+        return prior
+
+    def planned_targets(self) -> list[dict[str, Any]]:
+        family_os = f"{self.org}/family-os".lower()
+        return [repo for repo in self.targets if repo["full_name"].lower() == family_os]
+
     def write_initial_plan(self) -> None:
         self.plan = {
             "night_id": self.night_id,
@@ -401,7 +417,7 @@ class Runner:
             "checks": [CHECK_ID],
             "cells": [
                 {"check_id": CHECK_ID, "repo_id": repo["id"], "repo": repo["full_name"]}
-                for repo in self.targets
+                for repo in self.planned_targets()
             ],
         }
         atomic_write_json(self.plan_path, self.plan)
@@ -488,7 +504,18 @@ class Runner:
         ]
         if report.get("complete") is True:
             lines.append("- COMPLETE: yes")
-        lines.extend(["", "## Effective settings", ""])
+        lines.extend(
+            [
+                "",
+                "## Digest vocabulary mapping",
+                "",
+                f"- many NOT-RUN cells: {report['digest_mapping']['not_run_many']}",
+                f"- all RUN with zero findings: {report['digest_mapping']['all_run_zero_findings']}",
+                "",
+                "## Effective settings",
+                "",
+            ]
+        )
         for key, value in sorted(report["effective_settings"].items()):
             lines.append(f"- {key}={value}")
         metrics = report["check_metrics"][CHECK_ID]
@@ -512,6 +539,11 @@ class Runner:
             prefix = "baseline" if item.get("baseline") else "new"
             lines.append(f"- [{prefix}] `{item['fingerprint']}` {item['claim']}")
         if not report["findings"]["new"]:
+            lines.append("- none")
+        lines.extend(["", "## Resolved candidates", ""])
+        for item in report["findings"]["resolved_candidates"]:
+            lines.append(f"- `{item['fingerprint']}` {item['claim']}")
+        if not report["findings"]["resolved_candidates"]:
             lines.append("- none")
         return "\n".join(lines) + "\n"
 
@@ -567,7 +599,7 @@ class Runner:
         if (mirror / ".git").is_symlink():
             return False, {"reason": "unsafe-mirror-gitdir"}
         if not (mirror / ".git").is_dir():
-            init = subprocess.run(["git", "init", str(mirror)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+            init = self.git_command(mirror, "init", check=False)
             if init.returncode != 0:
                 return False, {"reason": "mirror-init-failed", "detail": init.stdout[-500:]}
         origin = self.git_command(mirror, "remote", "get-url", "origin", check=False)
@@ -608,15 +640,21 @@ class Runner:
         )
         if fetched.returncode != 0:
             return False, {"reason": "fetch-failed", "detail": fetched.stdout[-500:], "old_head": old_head}
-        new_head = self.git_command(mirror, "rev-parse", "FETCH_HEAD").stdout.strip()
+        try:
+            new_head = self.git_command(mirror, "rev-parse", "FETCH_HEAD").stdout.strip()
+        except LaneError as exc:
+            return False, {"reason": "mirror-finalize-failed", "detail": str(exc)[-500:], "old_head": old_head}
         if old_head:
             diff = self.git_command(mirror, "diff", "--stat", "HEAD", "FETCH_HEAD", check=False).stdout
         else:
             diff = "(bootstrap)\n"
         diff_path = self.state_dir / "diffs" / self.night_id / f"{repo['id']}.stat"
         atomic_write_text(diff_path, diff)
-        self.git_command(mirror, "update-ref", f"refs/heads/{repo['default_branch']}", "FETCH_HEAD")
-        self.git_command(mirror, "symbolic-ref", "HEAD", f"refs/heads/{repo['default_branch']}")
+        try:
+            self.git_command(mirror, "update-ref", f"refs/heads/{repo['default_branch']}", "FETCH_HEAD")
+            self.git_command(mirror, "symbolic-ref", "HEAD", f"refs/heads/{repo['default_branch']}")
+        except LaneError as exc:
+            return False, {"reason": "mirror-finalize-failed", "detail": str(exc)[-500:], "old_head": old_head, "new_head": new_head}
         reset = self.git_command(mirror, "reset", "--hard", "FETCH_HEAD", check=False)
         if reset.returncode != 0:
             return False, {"reason": "reset-failed", "detail": reset.stdout[-500:], "old_head": old_head, "new_head": new_head}
@@ -630,10 +668,21 @@ class Runner:
     def checker_degraded(stdout: str) -> bool:
         for line in stdout.splitlines():
             stripped = line.strip()
-            lowered = stripped.lower()
-            if "degraded" in lowered:
+            if os.environ.get("OC_TEST_MUTATE") == "degraded-whole-stdout":
+                lowered = stripped.lower()
+                if "degraded" in lowered:
+                    return True
+                if "skipped" in lowered and not EXPECTED_OFFLINE_SKIP.match(stripped):
+                    return True
+                continue
+            if FAILED_HEADER.match(stripped):
+                break
+            summary = SUMMARY_CHECK_STATUS.match(stripped)
+            if not summary:
+                continue
+            if summary.group("status").lower() == "degraded":
                 return True
-            if "skipped" in lowered and not EXPECTED_OFFLINE_SKIP.match(stripped):
+            if not EXPECTED_OFFLINE_SKIP.match(stripped):
                 return True
         return False
 
@@ -642,24 +691,53 @@ class Runner:
         failures: list[str] = []
         in_failures = False
         for line in stdout.splitlines():
-            if re.match(r"^FAILED \(\d+\):$", line.strip()):
+            stripped = line.strip()
+            if FAILED_HEADER.match(stripped):
                 in_failures = True
                 continue
-            if in_failures and line.strip().startswith("- "):
-                failures.append(line.strip()[2:].strip())
+            if in_failures and stripped.startswith("- "):
+                failures.append(stripped[2:].strip())
+                continue
+            if in_failures and stripped:
+                break
         return failures
+
+    @staticmethod
+    def parse_checker_scanned(stdout: str) -> int:
+        for line in stdout.splitlines():
+            match = MODULES_SCANNED.match(line.strip())
+            if match:
+                return int(match.group("count"))
+        return 1
+
+    @staticmethod
+    def failure_discriminator(failure: str) -> str:
+        normalized = unicodedata.normalize("NFC", failure).lower()
+        normalized = re.sub(r"\d+", "#", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
     def finding_from_failure(self, repo: dict[str, Any], failure: str) -> dict[str, Any]:
         pieces = [piece.strip() for piece in failure.split(":", 2)]
-        check_name = normalize(pieces[0]) if pieces and pieces[0] else "unknown"
+        structured = len(pieces) > 1
+        check_name = normalize(pieces[0]) if structured and pieces[0] else "unknown"
+        path_match = PATH_TOKEN.search(failure)
+        file_name = path_match.group("path") if path_match else "registry/modules.json"
         github_target = GITHUB_TARGET.search(failure)
         if github_target:
             target_token = normalize(github_target.group("repo").replace("\\/", "/"))
         else:
-            target_token = normalize(pieces[1]) if len(pieces) > 1 and pieces[1] else normalize(failure)
-        claim_kind = f"regcheck:{check_name}:{target_token}"
-        path_match = PATH_TOKEN.search(failure)
-        file_name = path_match.group("path") if path_match else "registry/modules.json"
+            if structured and pieces[1]:
+                target_token = normalize(pieces[1])
+            elif path_match:
+                target_token = normalize(file_name)
+            else:
+                target_token = "unknown"
+        discriminator = self.failure_discriminator(failure)
+        # S1 has never run in production, so enriching v2 IDs needs no version bump or migration.
+        claim_kind = f"regcheck:{check_name}:{target_token}:{discriminator}"
+        if os.environ.get("OC_TEST_MUTATE") == "failure-identity":
+            claim_kind = f"regcheck:{check_name}:{target_token}"
         fp = fingerprint(self.fp_spec_version, CHECK_ID, str(repo["id"]), file_name, claim_kind)
         return {
             "fingerprint": fp,
@@ -686,7 +764,7 @@ class Runner:
             return {"status": "NO-INPUT", "reason": "checker-missing", "fresh": False, "metrics": {"scanned": 0, "extracted": 0, "flagged": 0}, **mirror_meta}
         try:
             result = subprocess.run(
-                ["python3", "-B", "tools/check_registry.py", "--offline"],
+                ["/usr/bin/python3", "-B", "tools/check_registry.py", "--offline"],
                 cwd=mirror,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -696,9 +774,28 @@ class Runner:
             )
         except subprocess.TimeoutExpired:
             return {"status": "NOT-RUN", "reason": "checker-timeout", "fresh": False, "metrics": {"scanned": 1, "extracted": 0, "flagged": 0}, **mirror_meta}
-        failures = self.parse_checker_failures(result.stdout) if result.returncode != 0 else []
+        scanned = self.parse_checker_scanned(result.stdout)
+        failures = self.parse_checker_failures(result.stdout)
+        failed_block = any(FAILED_HEADER.match(line.strip()) for line in result.stdout.splitlines())
+        if (
+            result.returncode == 0
+            and failed_block
+            and os.environ.get("OC_TEST_MUTATE") != "rc0-contract"
+        ):
+            return {
+                "status": "NOT-RUN",
+                "reason": "checker-contract-violation",
+                "fresh": False,
+                "checker_exit": result.returncode,
+                "checker_stdout": result.stdout[-4000:],
+                "checker_stderr": result.stderr[-1000:],
+                "metrics": {"scanned": scanned, "extracted": len(failures), "flagged": 0},
+                **mirror_meta,
+            }
+        if result.returncode == 0:
+            failures = []
         if result.returncode != 0 and not result.stdout.strip():
-            return {"status": "NOT-RUN", "reason": "checker-nonzero-without-stdout", "fresh": False, "checker_exit": result.returncode, "metrics": {"scanned": 1, "extracted": 0, "flagged": 0}, **mirror_meta}
+            return {"status": "NOT-RUN", "reason": "checker-nonzero-without-stdout", "fresh": False, "checker_exit": result.returncode, "metrics": {"scanned": scanned, "extracted": 0, "flagged": 0}, **mirror_meta}
         if result.returncode != 0 and not failures:
             first_line = next(
                 (line.strip() for line in result.stdout.splitlines() if line.strip()),
@@ -718,7 +815,7 @@ class Runner:
             "checker_exit": result.returncode,
             "checker_stdout": result.stdout[-4000:],
             "checker_stderr": result.stderr[-1000:],
-            "metrics": {"scanned": 1, "extracted": len(failures), "flagged": len(observations)},
+            "metrics": {"scanned": scanned, "extracted": len(failures), "flagged": len(observations)},
             **mirror_meta,
         }
 
@@ -731,7 +828,7 @@ class Runner:
         raise LaneError(f"result does not match write-ahead plan: {CHECK_ID}/{repo_id}")
 
     def run_cells(self) -> None:
-        for repo in self.targets:
+        for repo in self.planned_targets():
             synced, mirror_meta = self.sync_mirror(repo)
             if not synced:
                 result = {"status": "NOT-RUN", "fresh": False, "metrics": {"scanned": 0, "extracted": 0, "flagged": 0}, **mirror_meta}
@@ -813,15 +910,27 @@ class Runner:
         atomic_write_json(self.journal_path, journal)
 
     def prune(self) -> None:
-        for pattern, directory in (("plan-*.json", self.state_dir), ("*.json", self.state_dir / "journal")):
+        collections = (
+            ("plan-*.json", self.state_dir),
+            ("*.json", self.state_dir / "journal"),
+            ("repos-*.json", self.state_dir / "snapshots"),
+            ("*", self.state_dir / "diffs"),
+        )
+        for pattern, directory in collections:
             paths = sorted(directory.glob(pattern))
             for path in paths[:-self.retention]:
-                path.unlink()
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
 
     def run(self) -> int:
         self.prepare_dirs()
         self.determine_targets()
-        self.update_repo_identity_state()
+        if self.target_status == "UNAVAILABLE":
+            self.repo_state = self.load_repo_identity_state()
+        else:
+            self.update_repo_identity_state()
         self.write_initial_plan()
         self.publish_report(complete=False)
         if self.pause_after_plan:

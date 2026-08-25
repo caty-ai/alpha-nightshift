@@ -36,8 +36,7 @@ oc_write_single_api 701 family-os main
 oc_run 2026-08-01
 real_report="$OC_STATE/report/2026-08-01.json"
 [ "$(oc_status 2026-08-01 701)" = RUN ] || fail 'expected offline summary lines incorrectly degraded the real OC-A cell'
-jq -e '.cells[0].checker_exit != 0 and .check_metrics["OC-A"].flagged > 0 and (.findings.new | length) > 0' "$real_report" >/dev/null || fail 'pinned real corpus did not prove a non-zero OC-A inventory'
-assert_contains 'python' "$CORPUS/tools/check_registry.py"
+jq -e '.cells[0].checker_exit != 0 and .check_metrics["OC-A"].scanned > 1 and .check_metrics["OC-A"].flagged > 0 and (.findings.new | length) > 0 and .effective_settings.OC_GIT_TRANSPORT == "fixture"' "$real_report" >/dev/null || fail 'pinned real corpus did not prove a non-zero OC-A inventory'
 
 # The checker path is trusted only when the configured mirror remote is the
 # first-party github.com/caty-ai/family-os URL.
@@ -45,9 +44,9 @@ oc_case_init untrusted
 case_roots="$case_roots $OC_CASE_ROOT"
 oc_make_remote family-os main fail
 jq -n --arg remote "file://$OC_REMOTES/family-os.git" '[{id:702,name:"family-os",full_name:"caty-ai/family-os",default_branch:"main",clone_url:$remote,archived:false,private:false}]' > "$OC_API"
-oc_run 2026-08-01
+oc_run 2026-08-01 OC_TEST_FIXTURE_GIT_ROOT=
 [ "$(oc_status 2026-08-01 702)" = NOT-RUN ] || fail 'untrusted family-os remote executed public HEAD code'
-jq -e '.cells[0].reason == "family-os-remote-untrusted" and .check_metrics["OC-A"].scanned == 0' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'untrusted remote failure was not visible'
+jq -e '.cells[0].reason == "family-os-remote-untrusted" and .check_metrics["OC-A"].scanned == 0 and .effective_settings.OC_GIT_TRANSPORT == "origin"' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'untrusted remote failure was not visible'
 
 # The old test cleared OC_TEST_FIXTURE_GIT_ROOT and depended on real github.com reachability.
 # Ambient Git configuration must not rewrite the hermetic fixture transport.

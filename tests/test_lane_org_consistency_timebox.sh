@@ -20,6 +20,7 @@ mkdir -p "$lane/tmp" "$lane/home"
   HOME="$lane/home" TMPDIR="$lane/tmp" LANG=C TERM=dumb \
   NIGHT_ID=2026-08-01 LANE_DIR="$lane" GIT_CEILING_DIRECTORIES="$lane" \
   OC_STATE_DIR="$OC_STATE" OC_API_FIXTURE="$OC_API" \
+  OC_TEST_MODE=1 \
   OC_TEST_FIXTURE_GIT_ROOT="$OC_REMOTES" \
   OC_TEST_MUTATE="${OC_TEST_MUTATE:-}" \
   OC_TEST_PAUSE_AFTER_PLAN_SEC=20 \
@@ -68,5 +69,13 @@ done
 wait "$atomic_pid" || fail 'atomic-reader fixture lane failed'
 [ "$reader_iterations" -gt 1 ] || fail 'atomic-reader probe did not overlap report publication'
 jq -e '.complete == true' "$atomic_report" >/dev/null || fail 'atomic-reader run did not reach its final stage'
+
+# The checker deadline is a cell-local NOT-RUN, not a fresh zero-finding RUN.
+oc_case_init checker-timeout
+case_roots="$case_roots $OC_CASE_ROOT"
+oc_make_remote family-os main slow-pass
+oc_write_single_api 803 family-os main
+oc_run 2026-08-03 OC_CHECK_TIMEOUT_SEC=1
+jq -e '.complete == true and .cells[0].status == "NOT-RUN" and .cells[0].reason == "checker-timeout" and .cells[0].fresh == false' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'checker timeout was not a completed NOT-RUN cell'
 
 printf 'test_lane_org_consistency_timebox: PASS\n'

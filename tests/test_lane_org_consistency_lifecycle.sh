@@ -35,6 +35,10 @@ oc_push_work family-os main
 oc_run 2026-08-03
 jq -e '.findings | length == 2 and all(.[]; .status == "resolved-candidate" and .resolved_candidate_night == "2026-08-03")' "$resolved_state/findings.json" >/dev/null || fail 'fresh RUN did not produce resolved-candidates'
 jq -e '.findings.resolved_candidates | length == 2' "$resolved_state/report/2026-08-03.json" >/dev/null || fail 'resolved-candidates were absent from the report'
+assert_contains '## Digest vocabulary mapping' "$resolved_state/report/2026-08-03.md"
+assert_contains 'ABORTED-equivalent' "$resolved_state/report/2026-08-03.md"
+assert_contains 'ZERO-equivalent' "$resolved_state/report/2026-08-03.md"
+assert_contains '## Resolved candidates' "$resolved_state/report/2026-08-03.md"
 oc_write_checker "$resolved_work/family-os" fail
 oc_commit "$resolved_work/family-os" regress-after-resolution
 oc_push_work family-os main
@@ -64,6 +68,17 @@ mv "$OC_REMOTES/family-os.git" "$OC_REMOTES/family-os.git.offline"
 oc_run 2026-08-03
 [ "$(oc_status 2026-08-03 501)" = NOT-RUN ] || fail 'fetch failure was not NOT-RUN'
 jq -e '.findings | all(.[]; .status == "open")' "$notrun_state/findings.json" >/dev/null || fail 'NOT-RUN resolved an open finding'
+
+# A checker that prints a FAILED block while exiting zero violated the checker
+# contract. It is NOT-RUN and cannot resolve the existing open findings.
+make_nonbaseline_open zero-exit-failed
+zero_exit_state=$OC_STATE
+oc_write_checker "$OC_WORK/family-os" exit-zero-fail
+oc_commit "$OC_WORK/family-os" zero-exit-with-failed-block
+oc_push_work family-os main
+oc_run 2026-08-03
+jq -e '.cells[0].status == "NOT-RUN" and .cells[0].reason == "checker-contract-violation" and .cells[0].fresh == false' "$zero_exit_state/report/2026-08-03.json" >/dev/null || fail 'exit-zero FAILED block was accepted as a fresh RUN'
+jq -e '.findings | all(.[]; .status == "open")' "$zero_exit_state/findings.json" >/dev/null || fail 'checker contract violation resolved an open finding'
 
 # A missing checker is NO-INPUT and cannot resolve existing findings.
 make_nonbaseline_open noinput
