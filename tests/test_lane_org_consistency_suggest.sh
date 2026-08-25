@@ -200,6 +200,11 @@ OC_SUGGEST_FAKE_GH_DIR="$fake_gh_dir/data" \
 [ "$self_file_rc" -ne 0 ] || fail 'oc-suggest filed an informational self-health finding'
 assert_contains 'self-health findings are informational and cannot be filed' "$TEST_TMP/self-file.out"
 
+self_promote_rc=0
+/bin/bash "$ROOT/bin/oc-suggest" --state-dir "$STATE_DIR" --promote "$FP_SELF" >"$TEST_TMP/self-promote.out" 2>&1 || self_promote_rc=$?
+[ "$self_promote_rc" -ne 0 ] || fail 'oc-suggest promoted an informational self-health finding'
+assert_contains 'self-health findings are informational and cannot be promoted' "$TEST_TMP/self-promote.out"
+
 findings_tmp="$STATE_DIR/findings.tmp"
 jq --arg fp "$FP_OPEN" '
   .findings |= map(

@@ -158,7 +158,7 @@ digest_org_consistency_freshness() {
   fi
 
   if [ "$threshold_exceeded" = true ]; then
-    printf 'WARNING: org-consistency latest report is %s days old (max %s)\n' \
+    printf 'WARNING: org-consistency latest report is %s days old (>%s days)\n' \
       "$age_days" "$max_age_days"
     return 0
   fi

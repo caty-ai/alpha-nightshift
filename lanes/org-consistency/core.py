@@ -25,7 +25,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-CHECK_IDS = ("OC-A", "OC-B", "OC-C", "OC-D")
+LAYER_ONE_CHECK_IDS = ("OC-A", "OC-B", "OC-C", "OC-D")
+LAYER_TWO_CHECK_IDS = ("OC-E", "OC-F", "OC-G", "OC-H")
+CHECK_IDS = LAYER_ONE_CHECK_IDS + LAYER_TWO_CHECK_IDS
 DEFAULT_ORG = "caty-ai"
 DEFAULT_FP_SPEC_VERSION = "2"
 LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
@@ -47,11 +49,29 @@ SUMMARY_CHECK_STATUS = re.compile(
 FAILED_HEADER = re.compile(r"^FAILED \(\d+\):$", re.IGNORECASE)
 MODULES_SCANNED = re.compile(r"^modules in registry\s*:\s*(?P<count>\d+)\s*$", re.IGNORECASE)
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\((?P<target>[^)]+)\)")
+REFERENCE_LINK = re.compile(
+    r"^\s{0,3}\[[^\]]+\]:\s*(?P<target>\S.*)$",
+    re.MULTILINE,
+)
 GITHUB_REPO_URL = re.compile(
     r"https?://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)",
     re.IGNORECASE,
 )
 HEADING = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
+HANDBOOK_RULE_ID = re.compile(
+    r"\b(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z]\d+(?:[.-]\d+)*)\b"
+)
+PROMPT_PLACEHOLDER = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
+L2_COMMON_FIELDS = {"check_id", "file", "claim", "evidence", "confidence"}
+L2_FIELDS_BY_CHECK = {
+    "OC-E": L2_COMMON_FIELDS | {"pair"},
+    "OC-F": L2_COMMON_FIELDS | {"claim_type", "target_token"},
+    "OC-G": L2_COMMON_FIELDS | {"target_token"},
+    "OC-H": L2_COMMON_FIELDS | {"rule_id", "target_token"},
+}
+L2_CONFIDENCE = {"high", "medium", "low"}
+L2_DESC_PAIRS = {"api-registry", "registry-readme", "api-readme"}
+L2_CLAIM_TYPES = {"command", "path", "make-target", "environment", "numeric-claim"}
 ALLOWED_AGENT_EXTENSIONS = {
     ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".go", ".h", ".html",
     ".ini", ".java", ".js", ".json", ".jsx", ".kt", ".lock", ".md", ".mjs",
@@ -157,6 +177,7 @@ def repo_record(raw: Any) -> dict[str, Any]:
         "clone_url": clone_url,
         "archived": raw.get("archived") is True,
         "private": raw.get("private") is True,
+        "description": raw.get("description") if isinstance(raw.get("description"), str) else "",
     }
 
 
@@ -174,6 +195,9 @@ class Runner:
         self.fp_spec_version = os.environ.get("OC_FP_SPEC_VERSION", DEFAULT_FP_SPEC_VERSION)
         self.retention = self.positive_int("OC_RETENTION_NIGHTS", 400)
         self.check_timeout = self.positive_int("OC_CHECK_TIMEOUT_SEC", 300)
+        self.seat_timeout = self.positive_int("OC_SEAT_TIMEOUT_SEC", 900)
+        self.l2_max_repos = self.positive_int("OC_L2_MAX_REPOS", 3)
+        self.h_max_repos = self.positive_int("OC_H_MAX_REPOS", 2)
         self.left_scope_window = self.positive_int("OC_LEFT_SCOPE_WINDOW_NIGHTS", 30)
         self.zero_streak_nights = self.positive_int("OC_ZERO_STREAK_NIGHTS", 5)
         self.stale_escalate_nights = self.positive_int("OC_STALE_ESCALATE_NIGHTS", 3)
@@ -191,6 +215,13 @@ class Runner:
         if self.fixture_git_root and not self.api_fixture:
             raise LaneError("OC_TEST_FIXTURE_GIT_ROOT requires OC_API_FIXTURE")
         self.pause_after_plan = self.nonnegative_int("OC_TEST_PAUSE_AFTER_PLAN_SEC", 0)
+        self.seat_cmd = os.environ.get("OC_SEAT_CMD", "").strip()
+        self.l2_enabled = not (
+            os.environ.get("OC_TEST_MODE") == "1"
+            and os.environ.get("OC_TEST_DISABLE_L2") == "1"
+        )
+        self.prompt_dir = pathlib.Path(__file__).resolve().parent / "prompts"
+        self.seat_adapter = pathlib.Path(__file__).resolve().parent / "seat.sh"
         self.plan_path = self.state_dir / f"plan-{self.night_id}.json"
         self.report_json = self.state_dir / "report" / f"{self.night_id}.json"
         self.report_md = self.state_dir / "report" / f"{self.night_id}.md"
@@ -222,6 +253,8 @@ class Runner:
         self.registry: dict[str, Any] = {}
         self.registry_signature: dict[str, Any] | None = None
         self.registry_available = False
+        self.handbook_repo: dict[str, Any] | None = None
+        self.handbook_index: list[dict[str, Any]] = []
         self.repo_state: dict[str, Any] = {"repos": {}}
         self.plan: dict[str, Any] = {}
         self.settings = {
@@ -234,12 +267,14 @@ class Runner:
             "OC_LANG_POLICY": self.lang_policy,
             "OC_AGENT_DOC_GLOBS": ",".join(self.agent_doc_globs),
             "OC_SUGGEST_REPO": self.suggest_repo,
-            "OC_L2_MAX_REPOS": self.positive_int("OC_L2_MAX_REPOS", 3),
-            "OC_H_MAX_REPOS": self.positive_int("OC_H_MAX_REPOS", 2),
+            "OC_L2_MAX_REPOS": self.l2_max_repos,
+            "OC_H_MAX_REPOS": self.h_max_repos,
             "OC_L3_MAX_REPOS": self.positive_int("OC_L3_MAX_REPOS", 3),
             "OC_L3_WEEKDAY": self.positive_int("OC_L3_WEEKDAY", 7),
             "OC_STALE_ESCALATE_NIGHTS": self.stale_escalate_nights,
             "OC_ZERO_STREAK_NIGHTS": self.zero_streak_nights,
+            "OC_SEAT_TIMEOUT_SEC": self.seat_timeout,
+            "OC_SEAT_CMD": "configured" if self.seat_cmd else "missing",
             "OC_API_MODE": "fixture" if self.api_fixture else "anonymous-github",
             "OC_GIT_TRANSPORT": "fixture" if self.fixture_git_root else "origin",
         }
@@ -462,6 +497,7 @@ class Runner:
                 name_history = []
                 branch_history = []
                 first_seen = self.night_id
+            l2_state = dict(old.get("layer2", {})) if isinstance(old, dict) and isinstance(old.get("layer2"), dict) else {}
             if not name_history or name_history[-1].get("full_name") != repo["full_name"]:
                 name_history.append({"night_id": self.night_id, "full_name": repo["full_name"]})
             if not branch_history or branch_history[-1].get("branch") != repo["default_branch"]:
@@ -476,7 +512,12 @@ class Runner:
                 "last_seen": self.night_id,
                 "name_history": name_history,
                 "default_branch_history": branch_history,
+                "layer2": l2_state,
             }
+            if isinstance(old, dict):
+                for field in ("head", "head_night", "previous_head"):
+                    if field in old:
+                        prior["repos"][key][field] = old[field]
 
     def load_repo_identity_state(self) -> dict[str, Any]:
         prior = read_json(self.repos_path, {"repos": {}})
@@ -615,6 +656,9 @@ class Runner:
             state: sum(1 for cell in cells if cell["status"] == state)
             for state in ("RUN", "NO-INPUT", "STALE-INPUT", "NOT-RUN", "INVALID-OUTPUT")
         }
+        deferred_repo_ids = {
+            cell.get("repo_id") for cell in cells if cell.get("deferred") is True
+        }
         metrics_by_check = {
             check_id: {"scanned": 0, "extracted": 0, "flagged": 0}
             for check_id in CHECK_IDS
@@ -642,6 +686,7 @@ class Runner:
                 "stale_input": counts["STALE-INPUT"],
                 "invalid_output": counts["INVALID-OUTPUT"],
                 "deferred": sum(1 for cell in cells if cell.get("deferred") is True),
+                "deferred_repos": len(deferred_repo_ids),
                 "target_pages": self.target_pages,
                 "left_scope_expired": self.left_scope_expired,
             },
@@ -654,6 +699,12 @@ class Runner:
                 "resolved_candidates": self.resolved,
                 "baseline": [item for item in self.new_findings if item.get("baseline")],
                 "self_health": self.self_health_findings,
+                "human_review": [
+                    item
+                    for item in self.new_findings
+                    if item.get("check_id") in LAYER_TWO_CHECK_IDS
+                    and item.get("confidence") in {"medium", "low"}
+                ],
             },
             "digest_mapping": {
                 "not_run_many": "ABORTED-equivalent",
@@ -710,6 +761,7 @@ class Runner:
             f"- STALE-INPUT: {scope['stale_input']}",
             f"- INVALID-OUTPUT: {scope['invalid_output']}",
             f"- deferred: {scope['deferred']}",
+            f"- QUEUED ({scope.get('deferred_repos', 0)} repos deferred)",
         ]
         if report.get("complete") is True:
             lines.append("- COMPLETE: yes")
@@ -757,9 +809,10 @@ class Runner:
         lines.extend(["", "## Findings", ""])
         for item in report["findings"]["new"]:
             prefix = "baseline" if item.get("baseline") else "new"
+            confidence = f" confidence={item['confidence']}" if item.get("confidence") else ""
             lines.extend(
                 [
-                    f"- [{prefix}] `{item['fingerprint']}`",
+                    f"- [{prefix}{confidence}] `{item['fingerprint']}`",
                     "",
                     "```text",
                     self.sanitize_claim(str(item.get("claim", "")), 500),
@@ -767,6 +820,19 @@ class Runner:
                 ]
             )
         if not report["findings"]["new"]:
+            lines.append("- none")
+        lines.extend(["", "## 要人間確認", ""])
+        for item in report["findings"].get("human_review", []):
+            lines.extend(
+                [
+                    f"- [{item['confidence']}] `{item['fingerprint']}`",
+                    "",
+                    "```text",
+                    self.sanitize_claim(str(item.get("claim", "")), 500),
+                    "```",
+                ]
+            )
+        if not report["findings"].get("human_review"):
             lines.append("- none")
         lines.extend(["", "## Resolved candidates", ""])
         for item in report["findings"]["resolved_candidates"]:
@@ -1089,6 +1155,16 @@ class Runner:
             return ""
 
     @staticmethod
+    def safe_mirror_file(mirror: pathlib.Path, path: pathlib.Path) -> bool:
+        try:
+            if path.is_symlink() or not path.is_file():
+                return False
+            path.resolve(strict=True).relative_to(mirror.resolve(strict=True))
+        except (OSError, ValueError):
+            return False
+        return True
+
+    @staticmethod
     def markdown_anchor(title: str) -> str:
         anchor = unicodedata.normalize("NFC", title).strip().lower()
         anchor = re.sub(r"[`*_~]", "", anchor)
@@ -1111,6 +1187,8 @@ class Runner:
 
     @staticmethod
     def without_fenced_blocks(text: str) -> str:
+        # Frozen scope rule: examples inside fenced code blocks are inert for
+        # every org-consistency checker, including reference-link definitions.
         lines: list[str] = []
         in_fence = False
         for line in text.splitlines():
@@ -1133,11 +1211,18 @@ class Runner:
             "FOR-AGENTS.md",
         ):
             path = mirror / name
-            if path.is_file():
+            if self.safe_mirror_file(mirror, path):
                 result.add(path)
         docs = mirror / "docs"
-        if docs.is_dir():
-            result.update(path for path in docs.rglob("*.md") if path.is_file())
+        if docs.is_dir() and not docs.is_symlink():
+            result.update(
+                path for path in docs.rglob("*.md") if self.safe_mirror_file(mirror, path)
+            )
+        claude_dir = mirror / ".claude"
+        if claude_dir.is_dir() and not claude_dir.is_symlink():
+            result.update(
+                path for path in claude_dir.rglob("*") if self.safe_mirror_file(mirror, path)
+            )
         return sorted(result)
 
     def registry_repo_sets(self) -> tuple[set[str], set[str]]:
@@ -1184,7 +1269,10 @@ class Runner:
         for source in files:
             relative_source = source.relative_to(mirror).as_posix()
             text = self.without_fenced_blocks(self.read_text(source))
-            for match in MARKDOWN_LINK.finditer(text):
+            link_matches = list(MARKDOWN_LINK.finditer(text))
+            if os.environ.get("OC_TEST_MUTATE") != "reference-links":
+                link_matches.extend(REFERENCE_LINK.finditer(text))
+            for match in link_matches:
                 raw_target = match.group("target").strip()
                 if raw_target.startswith("<") and ">" in raw_target:
                     raw_target = raw_target[1:raw_target.index(">")]
@@ -1379,15 +1467,21 @@ class Runner:
         result: set[pathlib.Path] = set()
         for name in ("AGENTS.md", "CLAUDE.md", "FOR-AGENTS.md"):
             path = mirror / name
-            if path.is_file():
+            if self.safe_mirror_file(mirror, path):
                 result.add(path)
         claude_dir = mirror / ".claude"
-        if claude_dir.is_dir():
-            result.update(path for path in claude_dir.rglob("*") if path.is_file())
+        if claude_dir.is_dir() and not claude_dir.is_symlink():
+            result.update(
+                path for path in claude_dir.rglob("*") if self.safe_mirror_file(mirror, path)
+            )
         for pattern in self.agent_doc_globs:
             if pathlib.PurePath(pattern).is_absolute() or ".." in pathlib.PurePath(pattern).parts:
                 continue
-            result.update(path for path in mirror.glob(pattern) if path.is_file())
+            result.update(
+                path
+                for path in mirror.glob(pattern)
+                if self.safe_mirror_file(mirror, path)
+            )
         return sorted(result)
 
     def agent_path_tokens(self, text: str, top_segments: set[str]) -> list[str]:
@@ -1464,6 +1558,583 @@ class Runner:
             **mirror_meta,
         }
 
+    def registry_entry_for_repo(self, repo: dict[str, Any]) -> dict[str, Any] | None:
+        modules = self.registry.get("modules", [])
+        if isinstance(modules, dict):
+            items = list(modules.values())
+        elif isinstance(modules, list):
+            items = modules
+        else:
+            return None
+        for item in items:
+            if (
+                isinstance(item, dict)
+                and normalize(str(item.get("repo", ""))) == normalize(repo["full_name"])
+            ):
+                return item
+        return None
+
+    def deterministic_tree(self, mirror: pathlib.Path) -> list[str]:
+        entries: list[str] = []
+        for root, dir_names, file_names in os.walk(mirror, followlinks=False):
+            dir_names[:] = sorted(name for name in dir_names if name != ".git")
+            root_path = pathlib.Path(root)
+            for name in dir_names:
+                path = root_path / name
+                entries.append(path.relative_to(mirror).as_posix() + "/")
+            for name in sorted(file_names):
+                path = root_path / name
+                entries.append(path.relative_to(mirror).as_posix())
+        return entries
+
+    def readme_inputs(self, mirror: pathlib.Path) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for name in ("README.md", "README.ja.md", "README.zh.md", "README.th.md"):
+            path = mirror / name
+            if self.safe_mirror_file(mirror, path):
+                result[name] = self.without_fenced_blocks(self.read_text(path))
+        return result
+
+    @staticmethod
+    def readme_hero(readme: str) -> str:
+        paragraphs: list[str] = []
+        current: list[str] = []
+        for line in readme.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                if current:
+                    paragraphs.append(" ".join(current))
+                    current = []
+                continue
+            if stripped.startswith("#") or stripped.startswith("![") or stripped.startswith("["):
+                continue
+            current.append(stripped)
+        if current:
+            paragraphs.append(" ".join(current))
+        return paragraphs[0] if paragraphs else ""
+
+    def make_targets(self, mirror: pathlib.Path) -> list[str]:
+        path = mirror / "Makefile"
+        if not self.safe_mirror_file(mirror, path):
+            return []
+        targets: set[str] = set()
+        for line in self.without_fenced_blocks(self.read_text(path)).splitlines():
+            match = re.match(r"^(?P<targets>[A-Za-z0-9_.-]+(?:\s+[A-Za-z0-9_.-]+)*)\s*:(?![=])", line)
+            if match:
+                targets.update(match.group("targets").split())
+        return sorted(targets)
+
+    @staticmethod
+    def workflow_files(mirror: pathlib.Path) -> list[str]:
+        workflow_dir = mirror / ".github" / "workflows"
+        if not workflow_dir.is_dir() or workflow_dir.is_symlink():
+            return []
+        return sorted(
+            path.relative_to(mirror).as_posix()
+            for path in workflow_dir.iterdir()
+            if Runner.safe_mirror_file(mirror, path)
+            and path.suffix.lower() in {".yml", ".yaml"}
+        )
+
+    def agent_doc_inputs(self, mirror: pathlib.Path) -> dict[str, str]:
+        return {
+            path.relative_to(mirror).as_posix(): self.without_fenced_blocks(self.read_text(path))
+            for path in self.oc_d_files(mirror)
+        }
+
+    def extract_handbook_index(self) -> list[dict[str, Any]]:
+        handbook = next(
+            (
+                repo
+                for repo in self.targets
+                if repo["full_name"].lower() == f"{self.org}/family-dev-handbook".lower()
+            ),
+            None,
+        )
+        self.handbook_repo = handbook
+        if handbook is None:
+            return []
+        synced, meta = self.mirror_results.get(handbook["id"], (False, {}))
+        if not synced or "mirror" not in meta:
+            return []
+        mirror = pathlib.Path(meta["mirror"])
+        entries: list[dict[str, Any]] = []
+        for path in sorted((mirror / "docs").glob("0*.md")):
+            if not self.safe_mirror_file(mirror, path):
+                continue
+            heading = ""
+            for line_number, line in enumerate(
+                self.without_fenced_blocks(self.read_text(path)).splitlines(), start=1
+            ):
+                heading_match = HEADING.match(line)
+                if heading_match:
+                    heading = heading_match.group("title").strip()
+                for rule_id in HANDBOOK_RULE_ID.findall(line):
+                    entries.append(
+                        {
+                            "file": path.relative_to(mirror).as_posix(),
+                            "line": line_number,
+                            "heading": heading,
+                            "rule_id": rule_id,
+                        }
+                    )
+        return entries
+
+    def current_head(self, repo: dict[str, Any]) -> str:
+        synced, meta = self.mirror_results.get(repo["id"], (False, {}))
+        return str(meta.get("new_head", "")) if synced else ""
+
+    def recorded_head(self, repo: dict[str, Any]) -> str:
+        value = self.repo_state["repos"][str(repo["id"])].get("head")
+        return value if isinstance(value, str) else ""
+
+    def append_layer_two_plan(self) -> None:
+        if not self.l2_enabled:
+            return
+        self.handbook_index = self.extract_handbook_index()
+        handbook_head = ""
+        if self.handbook_repo:
+            handbook_head = self.current_head(self.handbook_repo) or self.recorded_head(
+                self.handbook_repo
+            )
+        efg_candidates: list[dict[str, Any]] = []
+        h_priority: list[tuple[int, int, dict[str, Any]]] = []
+        for repo in self.targets:
+            head = self.current_head(repo) or self.recorded_head(repo)
+            layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
+            if (
+                os.environ.get("OC_TEST_MUTATE") == "l2-diff-selection"
+                or not head
+                or layer2.get("efg_head") != head
+            ):
+                efg_candidates.append(repo)
+            repo_changed = not head or layer2.get("h_repo_head") != head
+            handbook_changed = bool(handbook_head) and layer2.get("h_handbook_head") != handbook_head
+            synced, mirror_meta = self.mirror_results.get(repo["id"], (False, {}))
+            has_agent_docs = bool(
+                synced
+                and "mirror" in mirror_meta
+                and self.oc_d_files(pathlib.Path(mirror_meta["mirror"]))
+            )
+            if repo_changed or (handbook_changed and has_agent_docs):
+                # A handbook reverse trigger is the exceptional coverage path;
+                # place those agent-doc repositories ahead of ordinary
+                # repo-HEAD H work so a busy night cannot starve the trigger.
+                priority = 0 if handbook_changed and has_agent_docs else 1
+                h_priority.append((priority, repo["id"], repo))
+        h_candidates = [item[2] for item in sorted(h_priority)]
+
+        def add_cells(
+            candidates: list[dict[str, Any]], cap: int, check_ids: tuple[str, ...], queue_name: str
+        ) -> None:
+            deferred = candidates[cap:]
+            for index, repo in enumerate(candidates):
+                is_deferred = index >= cap
+                for check_id in check_ids:
+                    cell: dict[str, Any] = {
+                        "check_id": check_id,
+                        "repo_id": repo["id"],
+                        "repo": repo["full_name"],
+                        "layer": 2,
+                        "deferred": is_deferred,
+                    }
+                    if is_deferred:
+                        cell["result"] = {
+                            "status": "NOT-RUN",
+                            "reason": "deferred",
+                            "fresh": False,
+                            "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                        }
+                    else:
+                        synced, mirror_meta = self.mirror_results.get(repo["id"], (False, {}))
+                        if not synced:
+                            reason = str(mirror_meta.get("reason", "mirror-missing"))
+                            if not mirror_meta.get("old_head") and reason == "fetch-failed":
+                                reason = "mirror-missing"
+                            cell["result"] = {
+                                "status": "NOT-RUN",
+                                "reason": reason,
+                                "fresh": False,
+                                "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                            }
+                    self.plan["cells"].append(cell)
+            if deferred:
+                self.events.append(
+                    {
+                        "type": "QUEUED",
+                        "queue": queue_name,
+                        "repos_deferred": len(deferred),
+                    }
+                )
+
+        add_cells(efg_candidates, self.l2_max_repos, ("OC-E", "OC-F", "OC-G"), "OC-E/F/G")
+        add_cells(h_candidates, self.h_max_repos, ("OC-H",), "OC-H")
+        atomic_write_json(self.plan_path, self.plan)
+
+    def prompt_payload(self, repo: dict[str, Any], launch: str) -> dict[str, Any]:
+        mirror = pathlib.Path(self.mirror_results[repo["id"]][1]["mirror"])
+        readmes = self.readme_inputs(mirror)
+        payload: dict[str, Any] = {
+            "launch": launch,
+            "repository": {"id": repo["id"], "name": repo["full_name"]},
+            "readmes": readmes,
+            "agent_docs": self.agent_doc_inputs(mirror),
+        }
+        if launch == "OC-E/F/G":
+            payload.update(
+                {
+                    "api_description": repo.get("description", ""),
+                    "registry_entry": self.registry_entry_for_repo(repo),
+                    "readme_hero": self.readme_hero(readmes.get("README.md", "")),
+                    "tree": self.deterministic_tree(mirror),
+                    "make_targets": self.make_targets(mirror),
+                    "workflows": self.workflow_files(mirror),
+                }
+            )
+        else:
+            payload["handbook_index"] = self.handbook_index
+        return payload
+
+    def render_prompt(self, template_name: str, payload: dict[str, Any]) -> str:
+        template_path = self.prompt_dir / template_name
+        template = self.read_text(template_path)
+        placeholders = set(PROMPT_PLACEHOLDER.findall(template))
+        if placeholders != {"{{INPUT_JSON}}"}:
+            raise LaneError(f"prompt template placeholders invalid: {template_path}")
+        return template.replace(
+            "{{INPUT_JSON}}",
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+
+    @staticmethod
+    def strict_json(stdout: str) -> Any:
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate field: {key}")
+                result[key] = value
+            return result
+
+        return json.loads(stdout, object_pairs_hook=reject_duplicates)
+
+    @staticmethod
+    def valid_l2_file(value: str, allowed: set[str]) -> bool:
+        path = pathlib.PurePosixPath(value)
+        return bool(value) and not path.is_absolute() and ".." not in path.parts and value in allowed
+
+    def parse_l2_output(
+        self,
+        stdout: str,
+        allowed_checks: set[str],
+        allowed_files: dict[str, set[str]],
+    ) -> list[dict[str, Any]]:
+        if len(stdout.encode("utf-8")) > 2_000_000:
+            raise ValueError("seat stdout exceeds 2000000 bytes")
+        value = self.strict_json(stdout)
+        if not isinstance(value, dict) or set(value) != {"findings"}:
+            raise ValueError("top-level schema must contain only findings")
+        findings = value["findings"]
+        if not isinstance(findings, list) or len(findings) > 200:
+            raise ValueError("findings must be an array of at most 200 items")
+        allowed_rule_ids = {str(item["rule_id"]) for item in self.handbook_index}
+        parsed: list[dict[str, Any]] = []
+        for item in findings:
+            if not isinstance(item, dict):
+                raise ValueError("finding must be an object")
+            check_id = item.get("check_id")
+            if check_id not in allowed_checks or set(item) != L2_FIELDS_BY_CHECK.get(check_id):
+                raise ValueError("finding fields do not match the allowlist")
+            for field in L2_COMMON_FIELDS:
+                if not isinstance(item.get(field), str):
+                    raise ValueError(f"{field} must be a string")
+            if not self.valid_l2_file(item["file"], allowed_files.get(check_id, set())):
+                raise ValueError("file is not a deterministic input path")
+            if not item["claim"] or len(item["claim"]) > 500:
+                raise ValueError("claim must contain 1..500 characters")
+            if len(item["evidence"]) > 1000:
+                raise ValueError("evidence exceeds 1000 characters")
+            if item["confidence"] not in L2_CONFIDENCE:
+                raise ValueError("confidence is not high, medium, or low")
+            if check_id == "OC-E" and (
+                not isinstance(item["pair"], str) or item["pair"] not in L2_DESC_PAIRS
+            ):
+                raise ValueError("OC-E pair is not allowed")
+            if check_id == "OC-F" and (
+                not isinstance(item["claim_type"], str)
+                or item["claim_type"] not in L2_CLAIM_TYPES
+            ):
+                raise ValueError("OC-F claim_type is not allowed")
+            if check_id in {"OC-F", "OC-G", "OC-H"}:
+                token = item["target_token"]
+                if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_./+@=-]{1,300}", token):
+                    raise ValueError("target_token is not a bounded token")
+            if check_id == "OC-H":
+                rule_id = item["rule_id"]
+                if (
+                    not isinstance(rule_id, str)
+                    or len(rule_id) > 100
+                    or rule_id not in allowed_rule_ids
+                ):
+                    raise ValueError("OC-H rule_id is absent from the deterministic index")
+            parsed.append(item)
+        return parsed
+
+    def invoke_seat(self, prompt: str) -> tuple[str, str, str]:
+        if not self.seat_cmd:
+            return "missing", "", "OC_SEAT_CMD is not configured"
+        if not self.seat_adapter.is_file():
+            return "failed", "", "seat adapter is missing"
+        env = dict(os.environ)
+        env["OC_SEAT_CMD"] = self.seat_cmd
+        env["OC_SEAT_TIMEOUT_SEC"] = str(self.seat_timeout)
+        try:
+            result = subprocess.run(
+                ["/bin/bash", str(self.seat_adapter)],
+                input=prompt,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.seat_timeout + 15,
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "timeout", "", "seat adapter exceeded its timeout"
+        if result.returncode == 124:
+            return "timeout", result.stdout, result.stderr[-1000:]
+        if result.returncode != 0:
+            return "failed", result.stdout, result.stderr[-1000:]
+        return "ok", result.stdout, result.stderr[-1000:]
+
+    def l2_finding(self, repo: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+        check_id = item["check_id"]
+        if check_id == "OC-E":
+            claim_kind = f"desc:{item['pair']}"
+        elif check_id == "OC-F":
+            claim_kind = f"claim:{item['claim_type']}:{normalize(item['target_token'])}"
+        elif check_id == "OC-G":
+            claim_kind = f"agentproc:{normalize(item['target_token'])}"
+        else:
+            claim_kind = f"hb:{item['rule_id']}:{normalize(item['target_token'])}"
+        finding = self.make_finding(
+            check_id,
+            repo,
+            item["file"],
+            claim_kind,
+            f"[confidence={item['confidence']}] {item['claim']}",
+        )
+        finding["confidence"] = item["confidence"]
+        finding["evidence"] = self.sanitize_claim(item["evidence"], 1000)
+        return finding
+
+    @staticmethod
+    def l2_metrics(payload: dict[str, Any], check_id: str) -> dict[str, int]:
+        if check_id == "OC-E":
+            extracted = sum(
+                1
+                for value in (
+                    payload.get("api_description"),
+                    payload.get("registry_entry"),
+                    payload.get("readme_hero"),
+                )
+                if value
+            )
+            scanned = extracted
+        elif check_id == "OC-F":
+            extracted = len(payload.get("tree", [])) + len(payload.get("make_targets", [])) + len(payload.get("workflows", []))
+            scanned = len(payload.get("readmes", {}))
+        elif check_id == "OC-G":
+            extracted = len(payload.get("agent_docs", {}))
+            scanned = extracted
+        else:
+            extracted = len(payload.get("handbook_index", []))
+            scanned = len(payload.get("agent_docs", {}))
+        return {"scanned": scanned, "extracted": extracted, "flagged": 0}
+
+    def allowed_l2_files(self, payload: dict[str, Any], checks: set[str]) -> dict[str, set[str]]:
+        readmes = set(payload.get("readmes", {}))
+        agent_docs = set(payload.get("agent_docs", {}))
+        result: dict[str, set[str]] = {}
+        if "OC-E" in checks:
+            result["OC-E"] = readmes | {"registry/modules.json", ".github-api-description"}
+        if "OC-F" in checks:
+            result["OC-F"] = readmes
+        if "OC-G" in checks:
+            result["OC-G"] = agent_docs
+        if "OC-H" in checks:
+            result["OC-H"] = agent_docs
+        return result
+
+    def no_input_checks(self, payload: dict[str, Any], checks: set[str]) -> set[str]:
+        missing: set[str] = set()
+        if "OC-E" in checks and "README.md" not in payload.get("readmes", {}):
+            missing.add("OC-E")
+        if "OC-F" in checks and "README.md" not in payload.get("readmes", {}):
+            missing.add("OC-F")
+        if "OC-G" in checks and not payload.get("agent_docs"):
+            missing.add("OC-G")
+        if "OC-H" in checks and not payload.get("agent_docs"):
+            missing.add("OC-H")
+        return missing
+
+    def mark_l2_complete(self, repo: dict[str, Any], launch: str) -> None:
+        ledger = read_json(self.findings_path, None)
+        if (
+            isinstance(ledger, dict)
+            and str(ledger.get("fp_spec_version", "")) != self.fp_spec_version
+        ):
+            # Migration nights suppress current observations. Do not advance
+            # the diff ledger or the same HEAD would be silently skipped on
+            # the first normal night after migration.
+            return
+        layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
+        head = self.current_head(repo)
+        if launch == "OC-E/F/G":
+            layer2["efg_head"] = head
+            layer2["efg_night"] = self.night_id
+        else:
+            layer2["h_repo_head"] = head
+            layer2["h_handbook_head"] = self.current_head(self.handbook_repo) if self.handbook_repo else ""
+            layer2["h_night"] = self.night_id
+
+    def run_l2_launch(self, repo: dict[str, Any], launch: str, checks: set[str]) -> None:
+        payload = self.prompt_payload(repo, launch)
+        missing = self.no_input_checks(payload, checks)
+        active = checks - missing
+        for check_id in missing:
+            self.set_cell_result(
+                check_id,
+                repo["id"],
+                {
+                    "status": "NO-INPUT",
+                    "reason": "readme-missing" if check_id in {"OC-E", "OC-F"} else "no-agent-doc-input",
+                    "fresh": False,
+                    "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                },
+            )
+        if not active:
+            self.mark_l2_complete(repo, launch)
+            return
+        if "OC-H" in active and not self.handbook_index:
+            self.set_cell_result(
+                "OC-H",
+                repo["id"],
+                {
+                    "status": "STALE-INPUT",
+                    "reason": "handbook-index-unavailable",
+                    "fresh": False,
+                    "metrics": self.l2_metrics(payload, "OC-H"),
+                },
+            )
+            return
+        prompt = self.render_prompt("efg.txt" if launch == "OC-E/F/G" else "h.txt", payload)
+        seat_status, stdout, stderr = self.invoke_seat(prompt)
+        self.events.append(
+            {
+                "type": "SEAT-INVOKED",
+                "repo_id": repo["id"],
+                "launch": launch,
+                "status": seat_status,
+            }
+        )
+        if seat_status != "ok":
+            reason = {
+                "missing": "seat-command-missing",
+                "timeout": "seat-timeout",
+                "failed": "seat-failed",
+            }[seat_status]
+            for check_id in active:
+                metrics = self.l2_metrics(payload, check_id)
+                self.set_cell_result(
+                    check_id,
+                    repo["id"],
+                    {
+                        "status": "NOT-RUN",
+                        "reason": reason,
+                        "fresh": False,
+                        "seat_stderr": self.sanitize_claim(stderr, 1000),
+                        "metrics": metrics,
+                    },
+                )
+            return
+        try:
+            raw_findings = self.parse_l2_output(
+                stdout,
+                active,
+                self.allowed_l2_files(payload, active),
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            if os.environ.get("OC_TEST_MUTATE") == "invalid-output-guard":
+                raw_findings = []
+            else:
+                self.events.append(
+                    {
+                        "type": "INVALID-OUTPUT",
+                        "repo_id": repo["id"],
+                        "launch": launch,
+                        "detail": self.sanitize_claim(str(exc), 300),
+                    }
+                )
+                for check_id in active:
+                    metrics = self.l2_metrics(payload, check_id)
+                    self.set_cell_result(
+                        check_id,
+                        repo["id"],
+                        {
+                            "status": "INVALID-OUTPUT",
+                            "reason": "seat-schema-invalid",
+                            "fresh": False,
+                            "metrics": metrics,
+                        },
+                    )
+                return
+        by_check: dict[str, dict[str, dict[str, Any]]] = {check_id: {} for check_id in active}
+        for raw in raw_findings:
+            finding = self.l2_finding(repo, raw)
+            by_check[raw["check_id"]][finding["fingerprint"]] = finding
+        for check_id in active:
+            findings = list(by_check[check_id].values())
+            self.observations.extend(findings)
+            metrics = self.l2_metrics(payload, check_id)
+            metrics["flagged"] = len(findings)
+            result = {
+                "status": "RUN",
+                "reason": "seat-complete",
+                "fresh": True,
+                "metrics": metrics,
+            }
+            if self.target_status == "STALE":
+                result.update({"status": "STALE-INPUT", "reason": "targets-stale", "fresh": False})
+            self.set_cell_result(check_id, repo["id"], result)
+        if self.target_status == "FRESH":
+            self.mark_l2_complete(repo, launch)
+
+    def run_layer_two(self) -> None:
+        target_by_id = {repo["id"]: repo for repo in self.targets}
+        efg_repo_ids = sorted(
+            {
+                cell["repo_id"]
+                for cell in self.plan["cells"]
+                if cell["check_id"] in {"OC-E", "OC-F", "OC-G"} and cell.get("deferred") is not True
+                and not isinstance(cell.get("result"), dict)
+            }
+        )
+        h_repo_ids = sorted(
+            {
+                cell["repo_id"]
+                for cell in self.plan["cells"]
+                if cell["check_id"] == "OC-H" and cell.get("deferred") is not True
+                and not isinstance(cell.get("result"), dict)
+            }
+        )
+        for repo_id in efg_repo_ids:
+            self.run_l2_launch(target_by_id[repo_id], "OC-E/F/G", {"OC-E", "OC-F", "OC-G"})
+            self.publish_report(complete=False)
+        for repo_id in h_repo_ids:
+            self.run_l2_launch(target_by_id[repo_id], "OC-H", {"OC-H"})
+            self.publish_report(complete=False)
+
     def set_cell_result(
         self, check_id: str, repo_id: int | None, result: dict[str, Any]
     ) -> None:
@@ -1495,13 +2166,17 @@ class Runner:
             "schema_keys": sorted(value.keys()),
         }
 
-    def run_cells(self) -> None:
+    def sync_inputs(self) -> None:
         for repo in self.targets:
             self.mirror_results[repo["id"]] = self.sync_mirror(repo)
         self.load_registry()
+
+    def run_cells(self) -> None:
         target_by_id = {repo["id"]: repo for repo in self.targets}
         family = self.family_plan_repo()
         for cell in list(self.plan["cells"]):
+            if cell.get("layer") != 1:
+                continue
             check_id = cell["check_id"]
             repo_id = cell["repo_id"]
             repo = target_by_id.get(repo_id)
@@ -1595,11 +2270,17 @@ class Runner:
             zero_streaks = {}
         cells = self.effective_cells()
         for check_id in CHECK_IDS:
+            check_cells = [
+                cell
+                for cell in cells
+                if cell["check_id"] == check_id and cell.get("deferred") is not True
+            ]
+            if not check_cells:
+                continue
             metric_name = "scanned" if check_id == "OC-A" else "extracted"
             metric_value = sum(
                 int(cell.get("metrics", {}).get(metric_name, 0))
-                for cell in cells
-                if cell["check_id"] == check_id
+                for cell in check_cells
             )
             streak = int(zero_streaks.get(check_id, 0)) + 1 if metric_value == 0 else 0
             zero_streaks[check_id] = streak
@@ -1618,17 +2299,18 @@ class Runner:
                 "targets-stale",
                 f"TARGETS or mirror input was stale for {stale_streak} consecutive nights",
             )
-        layer_one = [
-            cell
-            for cell in cells
-            if cell.get("layer") == 1 and cell.get("deferred") is not True
-        ]
-        not_run = sum(1 for cell in layer_one if cell["status"] == "NOT-RUN")
-        if layer_one and not_run / len(layer_one) > 0.5:
-            self.emit_self_health(
-                "notrun-ratio",
-                f"Layer 1 NOT-RUN ratio was {not_run}/{len(layer_one)} after excluding deferred cells",
-            )
+        layer_groups = (
+            ("Layer 1", [cell for cell in cells if cell.get("layer") == 1]),
+            ("Layers 2+3", [cell for cell in cells if cell.get("layer") in {2, 3}]),
+        )
+        for label, layer_cells in layer_groups:
+            eligible = [cell for cell in layer_cells if cell.get("deferred") is not True]
+            not_run = sum(1 for cell in eligible if cell["status"] == "NOT-RUN")
+            if eligible and not_run / len(eligible) > 0.5:
+                self.emit_self_health(
+                    "notrun-ratio",
+                    f"{label} NOT-RUN ratio was {not_run}/{len(eligible)} after excluding deferred cells",
+                )
         if any(cell["status"] == "INVALID-OUTPUT" for cell in cells):
             self.emit_self_health("invalid-output", "At least one cell produced INVALID-OUTPUT")
         previous_signature = health.get("registry_signature")
@@ -1838,7 +2520,7 @@ class Runner:
                     if check_id == "self-health"
                     else f"org-consistency/{check_id}"
                 ),
-                "confirm_cost": "即断",
+                "confirm_cost": "1分" if check_id in LAYER_TWO_CHECK_IDS else "即断",
                 "date": self.night_id,
                 "evidence": [evidence],
             }
@@ -1893,7 +2575,11 @@ class Runner:
             atomic_write_text(self.lane_dir / "findings.jsonl", "")
             self.prune()
             return 2
+        self.sync_inputs()
+        self.append_layer_two_plan()
+        self.publish_report(complete=False)
         self.run_cells()
+        self.run_layer_two()
         self.update_self_health()
         self.reconcile_findings()
         self.write_proposals()
