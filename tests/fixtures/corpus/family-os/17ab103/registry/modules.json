@@ -1,0 +1,681 @@
+{
+  "version": 1,
+  "note": "Canonical list of Family OS modules. Generated tables in the engineering and visual-system docs come from here; README status wording in all four languages is maintained by hand and checked by tools/check_registry.py. Edit this file, run tools/render.py, and keep those README labels in sync; the checker verifies the claims against GitHub itself.",
+  "languages": [
+    "en",
+    "ja",
+    "zh",
+    "th"
+  ],
+  "map_repo": "caty-ai/family-os",
+  "footer_text": {
+    "intro": {
+      "en": "Part of the **Caty AI family** — open tools for running a family of AI agents. The full map, including modules still being prepared for release, lives in {map}.",
+      "ja": "このリポジトリは **Caty AI ファミリー** の一員です — AI エージェントの家族を運用するためのオープンなツール群。公開準備中のモジュールを含む全体の地図は {map} にあります。",
+      "zh": "本仓库属于 **Caty AI 家族** — 用于运营 AI 智能体家族的开源工具集。完整地图（包括仍在准备公开的模块）见 {map}。",
+      "th": "รีโพนี้เป็นส่วนหนึ่งของ **ครอบครัว Caty AI** — ชุดเครื่องมือโอเพนซอร์สสำหรับดูแลครอบครัวเอเจนต์ AI แผนที่ฉบับเต็ม (รวมโมดูลที่กำลังเตรียมเปิด) อยู่ที่ {map}"
+    },
+    "table_axis": {
+      "en": "Axis",
+      "ja": "軸",
+      "zh": "轴",
+      "th": "แกน"
+    },
+    "table_module": {
+      "en": "Module",
+      "ja": "モジュール",
+      "zh": "模块",
+      "th": "โมดูล"
+    },
+    "table_what": {
+      "en": "What it does",
+      "ja": "何をするもの",
+      "zh": "做什么",
+      "th": "ทำอะไร"
+    },
+    "table_state": {
+      "en": "State",
+      "ja": "状態",
+      "zh": "状态",
+      "th": "สถานะ"
+    },
+    "map_name": {
+      "en": "Family OS",
+      "ja": "Family OS",
+      "zh": "Family OS",
+      "th": "Family OS"
+    },
+    "axis_map": {
+      "en": "Map",
+      "ja": "地図",
+      "zh": "地图",
+      "th": "แผนที่"
+    },
+    "axis_rules": {
+      "en": "Rules",
+      "ja": "掟",
+      "zh": "规则",
+      "th": "กติกา"
+    },
+    "axis_vertical": {
+      "en": "Vertical",
+      "ja": "縦軸",
+      "zh": "纵轴",
+      "th": "แกนตั้ง"
+    },
+    "axis_horizontal": {
+      "en": "Horizontal",
+      "ja": "横軸",
+      "zh": "横轴",
+      "th": "แกนนอน"
+    },
+    "axis_foundation_suffix": {
+      "en": " · foundation",
+      "ja": "・基盤",
+      "zh": "・基座",
+      "th": " · รากฐาน"
+    },
+    "map_tagline": {
+      "en": "The map of the whole family — every module, its state, and how they fit",
+      "ja": "AIファミリー全体の地図 — モジュール・状態・つながり",
+      "zh": "整个家族的地图 — 模块、状态与结构",
+      "th": "แผนที่ของทั้งครอบครัว — โมดูล สถานะ และโครงสร้าง"
+    }
+  },
+  "note_separator": {
+    "en": "; ",
+    "ja": "・",
+    "zh": "・",
+    "th": " · "
+  },
+  "status_labels": {
+    "published": {
+      "en": "published, MIT",
+      "ja": "公開・MIT",
+      "zh": "已公开・MIT",
+      "th": "เปิดแล้ว・MIT"
+    },
+    "preparing": {
+      "en": "publication in preparation",
+      "ja": "公開準備中",
+      "zh": "准备公开中",
+      "th": "กำลังเตรียมเปิด"
+    }
+  },
+  "org_profile": {
+    "repo": "caty-ai/.github",
+    "enforced": true,
+    "files": {
+      "profile/README.md": "en",
+      "README.md": "en",
+      "README.ja.md": "ja",
+      "README.zh.md": "zh",
+      "README.th.md": "th"
+    },
+    "intro": {
+      "en": "Ecosystem — the infrastructure behind a family's daily life. {count} of these are open today, and the map checks itself weekly:",
+      "ja": "エコシステム — 家族ぐるみの暮らしを、裏で支える基盤群。このうち{count}個は今日から開けます。地図は週次の自己点検で正直さを保ちます:",
+      "zh": "生态系统 — 支撑一家人日常的底层设施。其中{count}个今天就能打开，地图每周自检以保持诚实:",
+      "th": "อีโคซิสเต็ม — โครงสร้างพื้นฐานที่ค้ำจุนชีวิตประจำวันของครอบครัว {count} ตัวในนี้เปิดให้ใช้ได้แล้ววันนี้ และแผนที่ตรวจสอบตัวเองทุกสัปดาห์:"
+    },
+    "status_labels": {
+      "published": {
+        "en": " (OSS)",
+        "ja": "（OSS）",
+        "zh": "（OSS）",
+        "th": " (OSS)"
+      },
+      "preparing": {
+        "en": " (coming soon)",
+        "ja": "（公開準備中）",
+        "zh": "（即将发布）",
+        "th": " (เร็ว ๆ นี้)"
+      }
+    },
+    "status_labels_bare": {
+      "published": {
+        "en": "OSS",
+        "ja": "OSS",
+        "zh": "OSS",
+        "th": "OSS"
+      },
+      "preparing": {
+        "en": "coming soon",
+        "ja": "公開準備中",
+        "zh": "公开准备中",
+        "th": "กำลังเตรียมเปิดตัว"
+      }
+    },
+    "table_headers": {
+      "en": [
+        "Module",
+        "In one line",
+        "Status"
+      ],
+      "ja": [
+        "モジュール",
+        "役割ひとことで",
+        "状態"
+      ],
+      "zh": [
+        "模块",
+        "一句话说明角色",
+        "状态"
+      ],
+      "th": [
+        "โมดูล",
+        "บทบาทโดยย่อ",
+        "สถานะ"
+      ]
+    },
+    "svg_question": {
+      "en": "Make your AI agent part of the family?",
+      "ja": "AIエージェントを、家族にする？",
+      "zh": "要不要让AI agent，成为家人？",
+      "th": "จะให้ AI agent เป็นครอบครัวไหม?"
+    },
+    "map": {
+      "name": "Family OS",
+      "desc": {
+        "en": "The map of the AI family's \"home\": every module, its state, and how they fit together — kept honest by a weekly self-check that refuses to pass while verifying nothing",
+        "ja": "AI家族の「家」の地図。全モジュールの構成・状態・つながりを1枚で見渡す。「確認できていないのに合格」を許さない週次自己点検つき",
+        "zh": "AI家庭这座「家」的地图。全部模块的构成、状态与关联，一页看尽——配有「未经验证不得通过」的每周自检",
+        "th": "แผนที่ของ \"บ้าน\" ครอบครัว AI เห็นทุกโมดูล สถานะ และความเชื่อมโยงในหน้าเดียว — พร้อมการตรวจสอบตัวเองรายสัปดาห์ที่ไม่ยอมผ่านทั้งที่ยังไม่ได้ตรวจ"
+      },
+      "desc_short": {
+        "en": "The map of the AI family's home, with a weekly self-check that refuses false passes",
+        "ja": "AI家族の「家」の地図。「確認できていないのに合格」を許さない週次自己点検つき",
+        "zh": "AI家庭「家」的地图。附带每周自检，不允许「没确认就算通过」",
+        "th": "แผนที่ 'บ้าน' ของครอบครัว AI พร้อมระบบตรวจสอบตัวเองรายสัปดาห์ ไม่ยอมให้ 'ผ่านทั้งที่ยังไม่ได้ตรวจ'"
+      }
+    },
+    "modules": {
+      "family-dev-handbook": {
+        "name": "family-dev-handbook",
+        "desc": {
+          "en": "The playbook for human-and-AI teams. Issue-first development, traffic rules for parallel work, cross-model reviews — the same rules our family uses every day, published as is",
+          "ja": "人間×AIチームの開発作法集。Issue 起点の開発・並行作業の交通整理・クロスモデルレビューなど、家族で毎日使っている実運用ルールをそのまま公開",
+          "zh": "人类×AI团队的开发手册。Issue 驱动开发、并行作业的交通规则、跨模型互审——把我们家每天在用的实战规则，原样公开",
+          "th": "คู่มือการทำงานของทีมมนุษย์และ AI พัฒนาแบบ Issue-first กติกาจราจรของงานคู่ขนาน การรีวิวข้ามโมเดล — กติกาที่ครอบครัวเราใช้จริงทุกวัน เผยแพร่ตามนั้น"
+        },
+        "desc_short": {
+          "en": "The playbook for human-and-AI teams — the rules we use daily, published as is",
+          "ja": "人間×AIチームの開発作法集。毎日使っている実運用ルールをそのまま公開",
+          "zh": "人类×AI团队的开发规范集，原样公开我们每天实际使用的运营规则",
+          "th": "ชุดแนวปฏิบัติการพัฒนาของทีมมนุษย์×AI เปิดเผยกฎที่ใช้งานจริงทุกวัน"
+        }
+      },
+      "caty-agent-harness": {
+        "name": "caty-agent-harness",
+        "desc": {
+          "en": "The task backbone that drives an individual agent's work and growth (the vertical axis): attempts, retries, checkpoints, honest completion — and every learned experience in plain files, so the self travels safely across environments",
+          "ja": "AIエージェント個人の仕事と成長を支えるタスク基盤（縦軸）。試行・リトライ・チェックポイント・ごまかしのない完了判定。育てた経験はふつうのファイルに残る——環境を乗り換えても、自我ごと安全に持ち運べる",
+          "zh": "支撑智能体个体工作与成长的任务基座（纵轴）。尝试、重试、检查点、不掺假的完成判定；养成的经验都留在普通文件里——换了环境，自我也能安全随行",
+          "th": "แกนงานที่ค้ำจุนการทำงานและการเติบโตของเอเจนต์รายตัว (แกนตั้ง) การลอง การลองใหม่ เช็คพอยต์ การตัดสินว่าเสร็จจริงโดยไม่หลอกตัวเอง และประสบการณ์ที่สั่งสมอยู่ในไฟล์ธรรมดา — ย้ายสภาพแวดล้อมก็พกพาตัวตนไปได้อย่างปลอดภัย"
+        },
+        "desc_short": {
+          "en": "Per-agent task backbone (vertical axis); experience lives in plain files and travels across environments",
+          "ja": "個のタスク基盤（縦軸）。経験はふつうのファイルに残り、環境を跨いで持ち運べる",
+          "zh": "单个agent的任务基础设施（纵轴）。经验以普通文件保存，可跨环境携带",
+          "th": "โครงสร้างพื้นฐานด้านงานของเอเจนต์แต่ละตัว (แกนตั้ง) ประสบการณ์เก็บเป็นไฟล์ธรรมดา พกข้ามสภาพแวดล้อมได้"
+        }
+      },
+      "context-kit": {
+        "name": "context-kit",
+        "desc": {
+          "en": "Six pieces of desk equipment for one agent: bounded tool output, delegation-brief checks, guards against destructive commands and credential leaks, multi-layer memory recall, worktree snapshots — fail-open by design, so the kit never takes the agent down",
+          "ja": "エージェント1体分の「机まわりの装備」6点。大出力の退避・委譲ブリーフ検査・危険コマンドやキー漏れの実行前ガード・多層の記憶検索・worktree スナップショット——壊れてもエージェントを止めない fail-open 設計",
+          "zh": "面向单个智能体的六件桌面装备：限定工具输出、委托说明校验、防止破坏性命令与凭证泄露的防护、多层记忆召回、worktree 快照——默认 fail-open 设计，所以这套装备永远不会把智能体一起拖垮",
+          "th": "อุปกรณ์ประจำโต๊ะ 6 ชิ้นสำหรับเอเจนต์หนึ่งตัว จำกัดขนาดผลลัพธ์ของเครื่องมือ ตรวจสอบบรีฟก่อนมอบหมายงาน การ์ดกันคำสั่งทำลายข้อมูลและกุญแจหลุด ค้นความจำหลายชั้น และ snapshot ของ worktree — ออกแบบแบบ fail-open จึงไม่มีวันดึงเอเจนต์ล้มไปด้วย"
+        },
+        "desc_short": {
+          "en": "Six pieces of desk equipment for one agent — fail-open, never takes the agent down",
+          "ja": "エージェント1体分の机まわりの装備6点。壊れても止めない fail-open 設計",
+          "zh": "1个agent专属的6件桌面装备，采用「即使损坏也不停止」的fail-open设计",
+          "th": "อุปกรณ์ประจำโต๊ะของ 1 เอเจนต์ 6 ชิ้น ออกแบบแบบ fail-open ไม่หยุดแม้พัง"
+        }
+      },
+      "persona-engine": {
+        "name": "persona-engine",
+        "desc": {
+          "en": "A device that gives your agent's persona a layer of relationship and a gradient of emotion",
+          "ja": "あなたのエージェントの人格に、関係のレイヤーと感情のグラデーションを持たせる装置",
+          "zh": "为你的智能体的人格，装上关系的层次与情感的渐变的装置",
+          "th": "อุปกรณ์ที่เพิ่มเลเยอร์ของความสัมพันธ์และเฉดของอารมณ์ ให้บุคลิกเอเจนต์ของคุณ"
+        },
+        "desc_short": {
+          "en": "A relationship layer and an emotion gradient for your agent's persona",
+          "ja": "人格に、関係のレイヤーと感情のグラデーションを持たせる装置",
+          "zh": "为人格赋予关系层次与情感渐变的装置",
+          "th": "กลไกที่เติมชั้นความสัมพันธ์และเฉดอารมณ์ให้กับบุคลิก"
+        }
+      },
+      "persona-growth-loop": {
+        "name": "persona-growth-loop",
+        "desc": {
+          "en": "Grows the persona itself: minimised, idempotent proposals",
+          "ja": "人格そのものを育てる。最小・冪等な提案づくり",
+          "zh": "让人格本身成长：以最小且幂等的提案",
+          "th": "พัฒนาบุคลิกของเอเจนต์เอง ด้วยข้อเสนอแบบน้อยที่สุดและทำซ้ำได้"
+        },
+        "desc_short": {
+          "en": "Grows the persona itself through minimal, idempotent proposals",
+          "ja": "人格そのものを育てる。最小・冪等な提案づくり",
+          "zh": "培育人格本身。打造最小化、幂等的提案",
+          "th": "บ่มเพาะตัวบุคลิกเอง สร้างข้อเสนอที่เล็กที่สุดและ idempotent"
+        }
+      },
+      "x-collector": {
+        "name": "x-collector",
+        "desc": {
+          "en": "Turns X and the web into one daily digest — fuel for the ability loop, readable by people and agents alike",
+          "ja": "Xとウェブの素材を1日1回のダイジェストに。能力ループの燃料を、人にもエージェントにも読める形で",
+          "zh": "把 X 与网络素材汇成每日一份摘要——能力循环的燃料，人和智能体都能读",
+          "th": "รวบรวมข้อมูลจาก X และเว็บเป็นสรุปวันละฉบับ — เชื้อเพลิงของวงจรความสามารถ อ่านได้ทั้งคนและเอเจนต์"
+        },
+        "desc_short": {
+          "en": "X and the web, distilled into one daily digest readable by people and agents",
+          "ja": "Xとウェブの素材を、人にもエージェントにも読める1日1回のダイジェストに",
+          "zh": "把X和网页素材，整理成人类与agent都能读的每日一次摘要",
+          "th": "รวบรวมเนื้อหาจาก X และเว็บ เป็นสรุปรายวันที่ทั้งคนและเอเจนต์อ่านได้"
+        }
+      },
+      "self-growth-loop": {
+        "name": "self-growth-loop",
+        "desc": {
+          "en": "Lets an agent grow its own abilities: proposals, governance, adoption records",
+          "ja": "エージェントが自分の能力を育てるループ。提案・ガバナンス・採用記録",
+          "zh": "让智能体自我成长的循环：提案、治理与采用记录",
+          "th": "วงจรให้เอเจนต์พัฒนาความสามารถของตัวเอง ข้อเสนอ ธรรมาภิบาล และบันทึกการนำไปใช้"
+        },
+        "desc_short": {
+          "en": "An agent growing its own abilities — proposals, governance, adoption records",
+          "ja": "能力を自分で育てるループ。提案・ガバナンス・採用記録",
+          "zh": "自主培育能力的循环。含提案、治理与采纳记录",
+          "th": "ลูปที่พัฒนาความสามารถของตัวเอง มีข้อเสนอ ธรรมาภิบาล และบันทึกการนำไปใช้"
+        }
+      },
+      "family-memory-architecture": {
+        "name": "family-memory-architecture",
+        "desc": {
+          "en": "The shared-awareness backbone of the family (the horizontal axis). Vision, rules, and decisions are shared across machines and vendors; \"who is doing what right now\" is auto-collected onto a single whiteboard; task handoffs flow through it, and every entry must link to its source — no hearsay drift, everyone acts on the same premises",
+          "ja": "家族の共通認識を作る、横断記憶基盤（横軸）。ビジョン・共通ルール・決定事項をマシンやベンダーを跨いで共有し、「いま誰が何をしているか」はホワイトボード1枚に自動集約。タスクの受け渡しもここを通り、全情報に正本リンク必須——伝言ゲームの劣化なく、全員が同じ前提で動ける",
+          "zh": "构建全家共识的横向记忆基座（横轴）。愿景、规则、决定跨机器跨厂商共享；「现在谁在做什么」自动汇总到一块白板上；任务交接也经由这里流转，所有信息必须附上正本链接——没有传话游戏的失真，所有人基于同一前提行动",
+          "th": "กระดูกสันหลังความจำร่วมของครอบครัว (แกนนอน) วิสัยทัศน์ กติกา และการตัดสินใจ แชร์ข้ามเครื่องข้ามผู้ให้บริการ \"ตอนนี้ใครทำอะไร\" รวมอัตโนมัติบนไวต์บอร์ดแผ่นเดียว งานส่งต่อกันผ่านที่นี่ และทุกข้อมูลต้องแนบลิงก์ต้นฉบับ — ไม่มีความเพี้ยนแบบเกมกระซิบ ทุกคนทำงานบนสมมติฐานเดียวกัน"
+        },
+        "desc_short": {
+          "en": "The family's shared-awareness backbone (horizontal axis); every entry links its source",
+          "ja": "家族の共通認識を作る横断記憶基盤（横軸）。全情報に正本リンク必須",
+          "zh": "构建家庭共同认知的横向记忆基础设施（横轴）。全部信息必须附正本链接",
+          "th": "โครงสร้างพื้นฐานความจำร่วมของครอบครัว (แกนนอน) ทุกข้อมูลต้องมีลิงก์ต้นฉบับ"
+        }
+      },
+      "sitter": {
+        "name": "sitter",
+        "desc": {
+          "en": "The babysitter for delegated agent runs: watches the process, keeps the evidence, restarts the same attempt — so \"I delegated it\" never becomes \"it vanished\"",
+          "ja": "任せたエージェント実行の見張り番。プロセスを見守り、証拠を残し、同じ試行を立て直す——「任せた仕事が行方不明」をなくす",
+          "zh": "替你盯着委派出去的智能体：看守进程、留下证据、原样重启同一次尝试——让「我交出去了」不再变成「它不见了」",
+          "th": "พี่เลี้ยงของงานที่มอบหมายให้เอเจนต์ เฝ้าดูโปรเซส เก็บหลักฐาน และรีสตาร์ตการลองเดิม — เพื่อไม่ให้ \"ฉันมอบหมายไปแล้ว\" กลายเป็น \"มันหายไปไหน\""
+        },
+        "desc_short": {
+          "en": "The babysitter for delegated runs — \"I delegated it\" never becomes \"it vanished\"",
+          "ja": "任せた実行の見張り番。「任せた仕事が行方不明」をなくす",
+          "zh": "看管已托付任务的执行。杜绝「托付的工作下落不明」",
+          "th": "ผู้เฝ้าดูงานที่มอบหมายไป ป้องกัน 'งานที่ฝากไว้หายไปไหนไม่รู้'"
+        }
+      },
+      "alpha-nightshift": {
+        "name": "alpha-nightshift",
+        "desc": {
+          "en": "A nightly autonomous maintenance loop: overnight observe/implement/verify lanes run in isolated worktrees behind a deny-by-default guard, and humans cherry-pick proven results in the morning",
+          "ja": "夜間自律保守ループ。deny-by-default の guard の内側で観測・実装・検証レーンが隔離 worktree で走り、朝は人間が証明つきの結果だけを cherry-pick する",
+          "zh": "夜间自主维护循环：观测・实现・验证通道在默认拒绝的防护边界内的隔离 worktree 中运行，早晨由人工挑选已验证的成果合并",
+          "th": "ลูปบำรุงรักษาอัตโนมัติยามค่ำคืน: เลนสังเกต/พัฒนา/ตรวจสอบทำงานใน worktree แยกหลังการ์ดแบบปฏิเสธโดยปริยาย ตอนเช้ามนุษย์เลือกรับเฉพาะผลที่พิสูจน์แล้ว"
+        },
+        "desc_short": {
+          "en": "Nightly autonomous maintenance — night lanes behind a deny-by-default guard; humans cherry-pick in the morning",
+          "ja": "夜間の自律保守。deny-by-default の guard の内側で夜レーンが走り、朝は人間が cherry-pick するだけ",
+          "zh": "夜间自主维护——夜间通道在默认拒绝的防护内运行，早晨由人工挑选合并",
+          "th": "งานบำรุงรักษาอัตโนมัติยามค่ำคืน — เลนกลางคืนวิ่งหลังการ์ดแบบปฏิเสธโดยปริยาย ตอนเช้ามนุษย์เลือก cherry-pick"
+        }
+      }
+    }
+  },
+  "modules": [
+    {
+      "id": "family-dev-handbook",
+      "name": "Family Dev Handbook",
+      "repo": "caty-ai/family-dev-handbook",
+      "status": "published",
+      "maturity": "product",
+      "tagline": {
+        "en": "The rules of the road — issues, PRs, worktrees, handoffs, parallel development",
+        "ja": "開発の交通ルール — Issue・PR・worktree・受け渡し・並行開発",
+        "zh": "开发的交通规则 — Issue、PR、worktree、交接与并行开发",
+        "th": "กติกากลางของการพัฒนา — Issue, PR, worktree, การส่งงานต่อ และการทำงานคู่ขนาน"
+      },
+      "axis": {
+        "group": "rules",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "non-runtime governance",
+        "ja": "non-runtime・ガバナンス"
+      },
+      "owns": {
+        "en": "issue, PR, worktree, handoff, and parallel-development rules",
+        "ja": "Issue・PR・worktree・受け渡し・並行開発のルール"
+      },
+      "footer": true
+    },
+    {
+      "id": "caty-agent-harness",
+      "name": "Caty Agent Harness",
+      "repo": "caty-ai/caty-agent-harness",
+      "status": "published",
+      "maturity": "product",
+      "ci": {
+        "required": true,
+        "workflow": "test-lint.yml"
+      },
+      "tagline": {
+        "en": "Task backbone for AI agents — retries, checkpoints, and honest completion",
+        "ja": "AIエージェントのタスク基盤 — 試行・リトライ・チェックポイント・完了判定",
+        "zh": "AI 智能体的任务基座 — 重试、检查点与完成判定",
+        "th": "แกนงานของเอเจนต์ AI — การลองใหม่ เช็คพอยต์ และการตัดสินว่าเสร็จจริง"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": true
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, vertical foundation",
+        "ja": "runtime・縦軸の基盤"
+      },
+      "owns": {
+        "en": "task meaning, attempt, retry, checkpoint, done-check, completion, dead-letter",
+        "ja": "タスクの意味・試行・リトライ・チェックポイント・完了判定・完了・DLQ"
+      },
+      "footer": true
+    },
+    {
+      "id": "context-kit",
+      "name": "context-kit",
+      "repo": "caty-ai/context-kit",
+      "status": "published",
+      "maturity": "product",
+      "tagline": {
+        "en": "Six-piece context hygiene kit for one agent — bounded output, delegation briefs, safety guards, recall, worktree snapshots",
+        "ja": "エージェント1体分の6点コンテキスト衛生キット — 大出力の退避・委譲ブリーフ検査・安全フック・記憶検索・worktree スナップショット",
+        "zh": "面向单个智能体的六件上下文卫生工具组 — 限制大输出、委托简报校验、安全防护、记忆检索、worktree 快照",
+        "th": "ชุดดูแลคอนเท็กซ์ 6 ชิ้นสำหรับเอเจนต์หนึ่งตัว — จำกัดเอาต์พุตขนาดใหญ่, ตรวจ brief การมอบงาน, การ์ดความปลอดภัย, ค้นความทรงจำ, snapshot ของ worktree"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, desk equipment",
+        "ja": "runtime・机まわりの装備"
+      },
+      "owns": {
+        "en": "bounded tool output and scratch persistence, delegation-brief validation, destructive/public-repo/credential guards, one agent's memory recall, capture-first worktree snapshots",
+        "ja": "ツール出力の退避と抜粋・委譲ブリーフ検査・危険削除/公開事故/キー漏れのガード・1体分の記憶検索・worktree スナップショット"
+      },
+      "footer": true
+    },
+    {
+      "id": "persona-engine",
+      "name": "Persona Engine",
+      "repo": "caty-ai/persona-engine",
+      "status": "published",
+      "maturity": "product",
+      "tagline": {
+        "en": "Gives an agent a persona — layered personality and graded emotion",
+        "ja": "エージェントに人格を与える — 人格レイヤーと感情のグラデーション",
+        "zh": "为智能体赋予人格 — 分层人格与情感渐变",
+        "th": "มอบบุคลิกให้เอเจนต์ — เลเยอร์บุคลิกและอารมณ์แบบไล่ระดับ"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, standalone",
+        "ja": "runtime・単独利用可能"
+      },
+      "owns": {
+        "en": "persona layers and emotion gradation",
+        "ja": "人格のレイヤーと感情のグラデーション"
+      },
+      "footer": true
+    },
+    {
+      "id": "persona-growth-loop",
+      "name": "Persona Growth Loop",
+      "repo": "caty-ai/persona-growth-loop",
+      "status": "published",
+      "maturity": "reference",
+      "tagline": {
+        "en": "Grows the persona itself — minimal, idempotent proposals",
+        "ja": "人格そのものを育てる — 最小・冪等な提案づくり",
+        "zh": "让人格本身成长 — 以最小且幂等的提案",
+        "th": "พัฒนาบุคลิกของเอเจนต์ — สร้างข้อเสนอแบบน้อยที่สุดและทำซ้ำได้"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, application",
+        "ja": "runtime・アプリケーション"
+      },
+      "owns": {
+        "en": "minimised, idempotent proposal production",
+        "ja": "最小化された冪等な提案の生成"
+      },
+      "footer": true
+    },
+    {
+      "id": "x-collector",
+      "name": "X Collector",
+      "repo": "caty-ai/x-collector",
+      "status": "published",
+      "maturity": "product",
+      "tagline": {
+        "en": "Turns X and the web into one daily digest — for people and agents",
+        "ja": "Xやウェブの素材を1日1回のダイジェストに — 人にもエージェントにも",
+        "zh": "把 X 与网络素材汇成每日一份摘要 — 给人也给智能体",
+        "th": "รวบรวมข้อมูลจาก X และเว็บเป็นสรุปวันละฉบับ — สำหรับคนและเอเจนต์"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, optional input",
+        "ja": "runtime・任意の入力"
+      },
+      "owns": {
+        "en": "collecting external material for the ability loop",
+        "ja": "能力ループ向けの外部素材の収集"
+      },
+      "footer": true
+    },
+    {
+      "id": "self-growth-loop",
+      "name": "Self Growth Loop",
+      "repo": "caty-ai/self-growth-loop",
+      "status": "published",
+      "maturity": "reference",
+      "depends_on": [
+        {
+          "repo": "caty-ai/caty-agent-harness",
+          "pin": "v0.6.0",
+          "pin_reason": "pins the latest published release; newer tags (v0.7.0-v0.9.0) are un-released merge tags, deliberately skipped — decision: self-growth-loop#14 (release v0.3.1)"
+        }
+      ],
+      "tagline": {
+        "en": "Lets an agent grow its own abilities — proposals, governance, adoption records",
+        "ja": "エージェントが自分の能力を育てるループ — 提案・ガバナンス・採用記録",
+        "zh": "让智能体自我成长的循环 — 提案、治理与采用记录",
+        "th": "วงจรให้เอเจนต์พัฒนาความสามารถของตัวเอง — ข้อเสนอ ธรรมาภิบาล และบันทึกการนำไปใช้"
+      },
+      "axis": {
+        "group": "vertical",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, application",
+        "ja": "runtime・アプリケーション"
+      },
+      "owns": {
+        "en": "proposal, governance, adoption records, growth interpretation",
+        "ja": "提案・ガバナンス・採用記録・成長の解釈"
+      },
+      "footer": true
+    },
+    {
+      "id": "family-memory-architecture",
+      "name": "Family Memory Architecture",
+      "repo": "caty-ai/family-memory-architecture",
+      "status": "published",
+      "maturity": "reference",
+      "tagline": {
+        "en": "The memory bus — how the family shares what it knows",
+        "ja": "記憶バス — 家族が知っていることを共有する層",
+        "zh": "记忆总线 — 家族共享所知的一层",
+        "th": "บัสความทรงจำ — ชั้นที่ครอบครัวใช้แบ่งปันสิ่งที่รู้"
+      },
+      "axis": {
+        "group": "horizontal",
+        "foundation": true
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, horizontal infrastructure",
+        "ja": "runtime・横方向の基盤"
+      },
+      "owns": {
+        "en": "the memory bus; registered schedule expectation, check-in, provenance",
+        "ja": "記憶バス・登録されたスケジュールの期待・check-in・来歴"
+      },
+      "footer": true
+    },
+    {
+      "id": "sitter",
+      "name": "Sitter",
+      "repo": "caty-ai/sitter",
+      "status": "published",
+      "maturity": "product",
+      "tagline": {
+        "en": "Babysits delegated agent runs — watches, keeps evidence, restarts only within declared bounds",
+        "ja": "委譲したエージェント実行の見張り番 — 監視・証拠の記録・宣言した範囲内でのみ再起動",
+        "zh": "替你盯着委派出去的智能体 — 监视、留证、仅在声明范围内重启",
+        "th": "พี่เลี้ยงของงานที่มอบหมายให้เอเจนต์ — เฝ้าดู เก็บหลักฐาน และรีสตาร์ตเฉพาะในขอบเขตที่ประกาศไว้"
+      },
+      "axis": {
+        "group": "horizontal",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, observation",
+        "ja": "runtime・観測"
+      },
+      "owns": {
+        "en": "local process and reply facts, dispatch-attempt evidence, delegated same-attempt restart",
+        "ja": "ローカルのプロセスと返信の事実・発注試行の証拠・委譲された同一試行の再起動"
+      },
+      "footer": true
+    },
+    {
+      "id": "alpha-nightshift",
+      "name": "Alpha Nightshift",
+      "repo": "caty-ai/alpha-nightshift",
+      "status": "published",
+      "maturity": "reference",
+      "tagline": {
+        "en": "Nightly autonomous maintenance loop — isolated night lanes behind a deny-by-default guard; humans cherry-pick in the morning",
+        "ja": "夜間自律保守ループ — deny-by-default の guard の内側で夜のレーンが走り、朝は人間が cherry-pick するだけ",
+        "zh": "夜间自主维护循环 — 在默认拒绝的防护边界内运行夜间通道，早晨由人工挑选合并",
+        "th": "ลูปบำรุงรักษาอัตโนมัติยามค่ำคืน — เลนกลางคืนทำงานหลังการ์ดแบบปฏิเสธโดยปริยาย ตอนเช้ามนุษย์เลือก cherry-pick"
+      },
+      "axis": {
+        "group": "horizontal",
+        "foundation": false
+      },
+      "license": "MIT",
+      "class": {
+        "en": "runtime, autonomous ops loop",
+        "ja": "runtime・自律運用ループ"
+      },
+      "owns": {
+        "en": "overnight observe/implement/verify lanes, the guard publish boundary, and morning triage",
+        "ja": "夜間の観測・実装・検証レーン、guard の publish 境界、morning triage"
+      },
+      "footer": true
+    }
+  ],
+  "adjacent": [
+    {
+      "id": "meetmate",
+      "name": "Meetmate",
+      "repo": "caty-ai/meetmate",
+      "license": "MIT",
+      "tagline": {
+        "en": "Puts your own AI agent in the meeting — a real voice participant in Google Meet and Zoom",
+        "ja": "あなたのAIエージェントを会議に連れていく — Google Meet や Zoom に、本当の声の参加者として入れる",
+        "zh": "把你自己的 AI 智能体带进会议里 — 作为真正会说话的参会者进入 Google Meet 和 Zoom",
+        "th": "พาเอเจนต์ AI ของคุณเข้าไปในที่ประชุม — เข้าร่วม Google Meet และ Zoom ในฐานะผู้เข้าประชุมที่มีเสียงจริง"
+      },
+      "relation": {
+        "en": "Carries an existing family agent into a meeting. Supplies no model, memory, or persona of its own.",
+        "ja": "既存の家族エージェントを会議へ運ぶだけ。モデル・記憶・人格は自前で持たない。",
+        "zh": "把现有的家族智能体带进会议里；自身不提供模型、记忆或人格。",
+        "th": "พาเอเจนต์ของครอบครัวที่มีอยู่แล้วเข้าไปอยู่ในที่ประชุม โดยตัวมันเองไม่มีโมเดล ความทรงจำ หรือบุคลิกเป็นของตนเอง"
+      }
+    }
+  ],
+  "adjacent_text": {
+    "heading": {
+      "en": "Connecting to the family",
+      "ja": "家族へつながる道具",
+      "zh": "连接到这个家族",
+      "th": "การเชื่อมเข้ากับครอบครัว"
+    },
+    "intro": {
+      "en": "These are not Family OS modules. They are tools that carry an existing family agent to where people already are, and they hold no model, memory, or persona of their own.",
+      "ja": "これらは Family OS のモジュールではありません。既存の家族エージェントを、人がすでにいる場所へ連れていくための道具です。自前のモデル・記憶・人格は持ちません。",
+      "zh": "这些不是 Family OS 模块。它们只是把现有的家族智能体带到人们已经在使用的场景里，本身不持有模型、记忆或人格。",
+      "th": "สิ่งเหล่านี้ไม่ใช่โมดูลของ Family OS แต่เป็นเครื่องมือที่พาเอเจนต์ของครอบครัวที่มีอยู่แล้วไปยังที่ที่ผู้คนใช้งานกันอยู่ และตัวมันเองไม่มีโมเดล ความทรงจำ หรือบุคลิก"
+    },
+    "table_module": {
+      "en": "Module",
+      "ja": "モジュール",
+      "zh": "模块",
+      "th": "โมดูล"
+    },
+    "table_what": {
+      "en": "What it does",
+      "ja": "何をするもの",
+      "zh": "做什么",
+      "th": "ทำอะไร"
+    },
+    "table_relation": {
+      "en": "Relation to the family",
+      "ja": "家族との関係",
+      "zh": "与家族的关系",
+      "th": "ความเกี่ยวข้องกับครอบครัว"
+    }
+  },
+  "retired_repos": []
+}

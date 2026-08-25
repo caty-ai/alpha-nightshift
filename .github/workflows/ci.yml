@@ -116,7 +116,7 @@ jobs:
         # One bash -n per file: `bash -n a.sh b.sh` only checks the first
         # file and treats the rest as script arguments.
         run: |
-          for f in guard/*.sh tests/*.sh; do
+          for f in guard/*.sh lanes/**/*.sh tests/*.sh; do
             bash -n "$f"
           done
 
@@ -139,6 +139,14 @@ jobs:
             tests/test_publication_gate_selftest.sh \
             tests/test_publication_gate_repo.sh \
             tests/test_publication_denylist.sh \
+            lanes/org-consistency/run.sh \
+            tests/test_lane_org_consistency_core.sh \
+            tests/test_lane_org_consistency_lifecycle.sh \
+            tests/test_lane_org_consistency_mutation.sh \
+            tests/test_lane_org_consistency_oc_a.sh \
+            tests/test_lane_org_consistency_targets_mirrors.sh \
+            tests/test_lane_org_consistency_timebox.sh \
+            tests/fixtures/org-consistency/lib.sh \
             tests/run_tests.sh
 
       - name: Tests

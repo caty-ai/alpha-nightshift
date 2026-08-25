@@ -11,7 +11,7 @@ test:
 # both lint lanes check the same thing. Everything else (incl. SC2086) fails.
 lint:
 	command -v shellcheck
-	for f in guard/*.sh tests/*.sh; do bash -n "$$f" || exit 1; done
+	for f in guard/*.sh lanes/**/*.sh tests/*.sh; do bash -n "$$f" || exit 1; done
 	shellcheck -e SC2015 \
 		guard/common.sh \
 		guard/broker.sh \
@@ -27,4 +27,12 @@ lint:
 		tests/test_publication_gate_selftest.sh \
 		tests/test_publication_gate_repo.sh \
 		tests/test_publication_denylist.sh \
+		lanes/org-consistency/run.sh \
+		tests/test_lane_org_consistency_core.sh \
+		tests/test_lane_org_consistency_lifecycle.sh \
+		tests/test_lane_org_consistency_mutation.sh \
+		tests/test_lane_org_consistency_oc_a.sh \
+		tests/test_lane_org_consistency_targets_mirrors.sh \
+		tests/test_lane_org_consistency_timebox.sh \
+		tests/fixtures/org-consistency/lib.sh \
 		tests/run_tests.sh
