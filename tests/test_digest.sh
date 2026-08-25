@@ -235,13 +235,13 @@ append_freshness_config "$boundary_config" "$boundary_report_dir" 1 3
 write_report_fixture "$boundary_report_dir" "$NIGHT_ID"
 boundary_now=1800000000
 boundary_mtime=$((boundary_now - 3 * 86400))
-touch -t "$(date -r "$boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+touch -t "$(date -r "$boundary_mtime" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
 digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/boundary.out"
 assert_contains "org-consistency freshness: OK ($NIGHT_ID age 3d)" "$TEST_TMP/boundary.out"
 assert_not_contains 'WARNING: org-consistency latest report is' "$TEST_TMP/boundary.out"
 
 over_boundary_mtime=$((boundary_now - 3 * 86400 - 3600))
-touch -t "$(date -r "$over_boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+touch -t "$(date -r "$over_boundary_mtime" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$over_boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
 digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/over-boundary.out"
 assert_contains 'WARNING: org-consistency latest report is 3 days old (max 3)' "$TEST_TMP/over-boundary.out"
 
