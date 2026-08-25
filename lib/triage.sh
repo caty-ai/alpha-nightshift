@@ -483,7 +483,10 @@ triage_open_findings_for_repo() {
 
 triage_target_repos_present() {
   triage_projection=$(triage_projection_file)
-  jq -r '.repo' "$triage_projection" | LC_ALL=C sort -u
+  jq -r '
+    select(((.kind // "") | startswith("org-consistency/") | not))
+    | .repo
+  ' "$triage_projection" | LC_ALL=C sort -u
 }
 
 triage_new_findings_for_repo() {
@@ -1998,7 +2001,11 @@ triage_run() {
     fi
     if ! triage_target_repo_for "$triage_repo" >/dev/null 2>&1; then
       triage_outside_count=$(jq -s -r --arg repo "$triage_repo" \
-        '[.[] | select(.repo == $repo and .current_status == "open")] | length' \
+        '[.[] | select(
+          .repo == $repo and
+          .current_status == "open" and
+          ((.kind // "") | startswith("org-consistency/") | not)
+        )] | length' \
         "$(triage_projection_file)")
       triage_stats_increment outside_repo_count "$triage_outside_count"
       continue

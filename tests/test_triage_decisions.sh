@@ -441,7 +441,7 @@ triage_seed_report_issue "$org_excluded_gh" demo/repo 201
 triage_seed_finding \
   "$org_excluded_state" \
   org-consistency-observation \
-  demo \
+  outside-org-only \
   app/render.sh:5 \
   'org consistency observation should stay triage-inert' \
   org-consistency/self-health \
@@ -458,6 +458,7 @@ env -u TRIAGE_STUB_QUEUE_FILE -u TRIAGE_STUB_RESPONSE_TABLE \
   fail 'org-consistency findings unexpectedly entered triage decisions'
 assert_contains 'new_findings_total: 0' "$org_excluded_state/triage/report.md"
 assert_contains 'verify_total: 0' "$org_excluded_state/triage/report.md"
+assert_contains 'outside_repo_count: 0' "$org_excluded_state/triage/report.md"
 [ ! -s "$org_excluded_state/triage/verify-results.jsonl" ] ||
   fail 'org-consistency findings unexpectedly entered verify processing'
 [ ! -s "$org_excluded_adapter_log" ] ||

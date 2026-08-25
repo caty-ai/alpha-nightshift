@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC1091
 set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -6,6 +7,7 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 . "$TEST_DIR/helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/ledger.sh"
+. "$ROOT/lib/digest.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-digest.XXXXXX")
 trap 'rm -rf "$TEST_TMP"' EXIT
@@ -231,11 +233,17 @@ boundary_report_dir="$boundary_state/org-consistency/report"
 write_digest_config "$boundary_config" "$boundary_state"
 append_freshness_config "$boundary_config" "$boundary_report_dir" 1 3
 write_report_fixture "$boundary_report_dir" "$NIGHT_ID"
-touch -t "$(date -v-3d '+%Y%m%d0000')" "$boundary_report_dir/$NIGHT_ID.json"
-run_digest "$boundary_config"
-boundary_digest="$boundary_state/digests/$NIGHT_ID.md"
-assert_contains "org-consistency freshness: OK ($NIGHT_ID age 3d)" "$boundary_digest"
-assert_not_contains 'WARNING: org-consistency latest report is' "$boundary_digest"
+boundary_now=1800000000
+boundary_mtime=$((boundary_now - 3 * 86400))
+touch -t "$(date -r "$boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/boundary.out"
+assert_contains "org-consistency freshness: OK ($NIGHT_ID age 3d)" "$TEST_TMP/boundary.out"
+assert_not_contains 'WARNING: org-consistency latest report is' "$TEST_TMP/boundary.out"
+
+over_boundary_mtime=$((boundary_now - 3 * 86400 - 3600))
+touch -t "$(date -r "$over_boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/over-boundary.out"
+assert_contains 'WARNING: org-consistency latest report is 3 days old (max 3)' "$TEST_TMP/over-boundary.out"
 
 missing_state="$TEST_TMP/missing-state"
 missing_config="$TEST_TMP/missing.conf"
@@ -256,6 +264,22 @@ write_digest_config "$invalid_config" "$invalid_state"
 append_freshness_config "$invalid_config" "$invalid_report_dir" 1 invalid
 if run_digest "$invalid_config"; then
   fail 'digest should fail when OC_REPORT_MAX_AGE_DAYS is invalid'
+fi
+
+invalid_disabled_state="$TEST_TMP/invalid-disabled-state"
+invalid_disabled_config="$TEST_TMP/invalid-disabled.conf"
+write_digest_config "$invalid_disabled_config" "$invalid_disabled_state"
+append_freshness_config "$invalid_disabled_config" "$invalid_disabled_state/report" 0 invalid
+if run_digest "$invalid_disabled_config"; then
+  fail 'digest accepted invalid OC_REPORT_MAX_AGE_DAYS while freshness enforcement was disabled'
+fi
+
+invalid_enforce_state="$TEST_TMP/invalid-enforce-state"
+invalid_enforce_config="$TEST_TMP/invalid-enforce.conf"
+write_digest_config "$invalid_enforce_config" "$invalid_enforce_state"
+append_freshness_config "$invalid_enforce_config" "$invalid_enforce_state/report" maybe 3
+if run_digest "$invalid_enforce_config"; then
+  fail 'digest accepted OC_FRESHNESS_ENFORCE outside 0/1'
 fi
 
 printf 'test_digest: PASS\n'

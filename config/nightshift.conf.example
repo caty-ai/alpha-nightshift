@@ -95,7 +95,7 @@ REVIEW_GLM_MAX_TOKENS=4096
 # "$REPO_ROOT/state/org-consistency/report". OC_REPORT_MAX_AGE_DAYS must stay a
 # positive integer; the digest fails closed when it is invalid.
 OC_FRESHNESS_ENFORCE=0
-OC_REPORT_DIR="$REPO_ROOT/state/org-consistency/report"
+# OC_REPORT_DIR="$NIGHTSHIFT_STATE_DIR/org-consistency/report"
 OC_REPORT_MAX_AGE_DAYS=3
 OC_SUGGEST_REPO='caty-ai/alpha-nightshift-dev'
 # LANE_CMD_3="OC_STATE_DIR='$REPO_ROOT/state/org-consistency' OC_L2_MAX_REPOS=3 OC_H_MAX_REPOS=2 OC_L3_MAX_REPOS=3 OC_L3_WEEKDAY=7 OC_EXCLUDE_REPOS='' OC_LANG_POLICY=4 OC_AGENT_DOC_GLOBS='' OC_LEFT_SCOPE_WINDOW_NIGHTS=30 OC_ZERO_STREAK_NIGHTS=5 OC_STALE_ESCALATE_NIGHTS=3 OC_SUGGEST_REPO='caty-ai/alpha-nightshift-dev' OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -' /bin/bash '$REPO_ROOT/lanes/org-consistency/run.sh'"

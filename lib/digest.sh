@@ -97,13 +97,11 @@ digest_org_consistency_freshness() {
   local latest_mtime=0
   local report_file
   local report_mtime
+  local age_seconds
   local age_days
+  local max_age_seconds
   local report_name
-
-  if [ "$enforce" != "1" ]; then
-    printf '%s\n' 'org-consistency freshness: disabled'
-    return 0
-  fi
+  local threshold_exceeded=false
 
   case "$max_age_days" in
     ''|*[!0-9]*|0)
@@ -111,6 +109,18 @@ digest_org_consistency_freshness() {
       return 1
       ;;
   esac
+  case "$enforce" in
+    0|1) ;;
+    *)
+      printf '%s\n' 'OC_FRESHNESS_ENFORCE must be 0 or 1' >&2
+      return 1
+      ;;
+  esac
+
+  if [ "$enforce" = "0" ]; then
+    printf '%s\n' 'org-consistency freshness: disabled'
+    return 0
+  fi
 
   if [ ! -d "$report_dir" ]; then
     printf '%s\n' 'WARNING: org-consistency has never published a report'
@@ -131,15 +141,17 @@ digest_org_consistency_freshness() {
   fi
 
   if [ "$now_epoch" -lt "$latest_mtime" ]; then
+    age_seconds=0
     age_days=0
   else
-    age_days=$(((now_epoch - latest_mtime) / 86400))
+    age_seconds=$((now_epoch - latest_mtime))
+    age_days=$((age_seconds / 86400))
   fi
+  max_age_seconds=$((max_age_days * 86400))
 
-  threshold_exceeded=false
   if [ "${OC_TEST_MODE:-}" = 1 ] && [ "${OC_TEST_MUTATE:-}" = freshness-threshold ]; then
-    [ "$age_days" -ge "$max_age_days" ] && threshold_exceeded=true
-  elif [ "$age_days" -gt "$max_age_days" ]; then
+    [ "$age_seconds" -ge "$max_age_seconds" ] && threshold_exceeded=true
+  elif [ "$age_seconds" -gt "$max_age_seconds" ]; then
     threshold_exceeded=true
   fi
 

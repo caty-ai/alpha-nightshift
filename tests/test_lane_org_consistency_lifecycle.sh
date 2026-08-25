@@ -18,6 +18,10 @@ make_nonbaseline_open() {
   oc_case_init "$prefix"
   case_roots="$case_roots $OC_CASE_ROOT"
   oc_make_remote family-os main pass
+  mkdir -p "$OC_WORK/family-os/registry"
+  printf '%s\n' '{"version":1,"modules":[]}' > "$OC_WORK/family-os/registry/modules.json"
+  oc_commit "$OC_WORK/family-os" add-registry
+  oc_push_work family-os main
   oc_write_single_api 501 family-os main
   oc_run 2026-08-01
   [ "$(jq '.findings | length' "$OC_STATE/findings.json")" -eq 0 ] || fail "$prefix baseline was not empty"
@@ -156,16 +160,58 @@ jq -e '.migration_mode == true and .quiet_mode == "migration" and .migration.fro
 [ ! -s "$OC_CASE_ROOT/lanes/2026-08-03/findings.jsonl" ] || fail 'migration night leaked ledger proposals'
 jq -e '.migration.from == "2" and .migration.to == "3" and (.migration.mappings | length) == 2' "$OC_STATE/journal/2026-08-03.json" >/dev/null || fail 'migration mapping was not journaled'
 
+# A migration remains quiet even when a legitimate stale-input self-health
+# event fires during the same complete night.
+oc_run 2026-08-04 OC_FP_SPEC_VERSION=4 OC_STALE_ESCALATE_NIGHTS=1 OC_ZERO_STREAK_NIGHTS=99 OC_TEST_API_FAIL=1
+jq -e '.migration_mode == true and (.findings.self_health | length) > 0' "$OC_STATE/report/2026-08-04.json" >/dev/null || fail 'migration/self-health overlap was not exercised'
+[ ! -s "$OC_CASE_ROOT/lanes/2026-08-04/findings.jsonl" ] || fail 'migration+self-health night leaked ledger proposals'
+
+# The initial baseline is equally quiet when self-health fires.
+oc_case_init baseline-self-health
+case_roots="$case_roots $OC_CASE_ROOT"
+oc_make_remote family-os main pass
+oc_write_single_api 504 family-os main
+oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=1 OC_STALE_ESCALATE_NIGHTS=99
+jq -e '.baseline == true and (.findings.self_health | length) > 0' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'baseline/self-health overlap was not exercised'
+jq -e '[.findings.self_health[] | select(.claim_kind == "zero-streak:OC-A")] | length == 0' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'green OC-A checker was treated as a zero-streak merely because it had no failures'
+[ ! -s "$OC_CASE_ROOT/lanes/2026-08-01/findings.jsonl" ] || fail 'baseline+self-health night leaked ledger proposals'
+
+# A self-health event resolves silently on the first complete non-firing night,
+# then reopens if the same event fires again.
+oc_case_init self-health-lifecycle
+case_roots="$case_roots $OC_CASE_ROOT"
+oc_make_remote family-os main pass
+mkdir -p "$OC_WORK/family-os/registry"
+printf '%s\n' '{"version":1,"modules":[]}' > "$OC_WORK/family-os/registry/modules.json"
+oc_commit "$OC_WORK/family-os" add-registry
+oc_push_work family-os main
+oc_write_single_api 505 family-os main
+oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=99
+oc_run 2026-08-02 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=1 OC_TEST_API_FAIL=1
+self_health_fp=$(jq -r '.findings[] | select(.check_id == "self-health" and .claim_kind == "targets-stale") | .fingerprint' "$OC_STATE/findings.json")
+[ -n "$self_health_fp" ] || fail 'self-health lifecycle did not fire targets-stale'
+oc_run 2026-08-03 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=1
+jq -e --arg fp "$self_health_fp" '.findings[] | select(.fingerprint == $fp) | .status == "resolved"' "$OC_STATE/findings.json" >/dev/null || fail 'non-firing complete night did not resolve self-health'
+jq -e --arg fp "$self_health_fp" '[.events[] | select(.type == "SELF-HEALTH-RESOLVED" and .fingerprint == $fp)] | length == 1' "$OC_STATE/journal/2026-08-03.json" >/dev/null || fail 'self-health resolution was not journaled'
+jq -e '.findings.resolved_candidates | all(.check_id != "self-health")' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'resolved self-health leaked into close proposals'
+oc_run 2026-08-04 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=1 OC_TEST_API_FAIL=1
+jq -e --arg fp "$self_health_fp" '.findings[] | select(.fingerprint == $fp) | .status == "open" and .last_seen == "2026-08-04"' "$OC_STATE/findings.json" >/dev/null || fail 'recurring self-health did not reopen'
+jq -e --arg fp "$self_health_fp" '[.events[] | select(.type == "REOPENED" and .fingerprint == $fp and .from == "resolved")] | length == 1' "$OC_STATE/journal/2026-08-04.json" >/dev/null || fail 'self-health reopen was not journaled'
+
 # The same persistent self-health condition is emitted with a night-qualified
 # proposal ID, so the central ledger ingests it on consecutive nights instead
 # of treating night two as a duplicate.
 oc_case_init self-health-ledger
 case_roots="$case_roots $OC_CASE_ROOT"
 oc_make_remote family-os main pass
+mkdir -p "$OC_WORK/family-os/registry"
+printf '%s\n' '{"version":1,"modules":[]}' > "$OC_WORK/family-os/registry/modules.json"
+oc_commit "$OC_WORK/family-os" add-registry
+oc_push_work family-os main
 oc_write_single_api 503 family-os main
-oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=99
-oc_run 2026-08-02 OC_ZERO_STREAK_NIGHTS=1
-oc_run 2026-08-03 OC_ZERO_STREAK_NIGHTS=1
+oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=99
+oc_run 2026-08-02 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=1 OC_TEST_API_FAIL=1
+oc_run 2026-08-03 OC_ZERO_STREAK_NIGHTS=99 OC_STALE_ESCALATE_NIGHTS=1 OC_TEST_API_FAIL=1
 health_two="$OC_CASE_ROOT/lanes/2026-08-02/findings.jsonl"
 health_three="$OC_CASE_ROOT/lanes/2026-08-03/findings.jsonl"
 jq -e -s 'length > 0 and all(.[]; .kind == "org-consistency/self-health" and (.id | startswith("oc-2026-08-02-")))' "$health_two" >/dev/null || fail 'first self-health observation violated the ledger mapping'
@@ -175,9 +221,9 @@ mkdir -p "$STATE_DIR/ledger"
 export NIGHT_ID=2026-08-02
 ledger_ingest_proposals "$health_two"
 health_ingested_two=$LEDGER_INGESTED_COUNT
-[ "$health_ingested_two" -gt 0 ] && [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] || fail 'first self-health proposal did not reach the central ledger'
+[ "$health_ingested_two" -gt 0 ] && [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] && [ "$LEDGER_SKIPPED_COUNT" -eq 0 ] || fail 'first self-health proposal did not reach the central ledger'
 export NIGHT_ID=2026-08-03
 ledger_ingest_proposals "$health_three"
-[ "$LEDGER_INGESTED_COUNT" -eq "$health_ingested_two" ] && [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] || fail 'consecutive self-health proposal fell into the ledger duplicate path'
+[ "$LEDGER_INGESTED_COUNT" -eq "$health_ingested_two" ] && [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] && [ "$LEDGER_SKIPPED_COUNT" -eq 0 ] || fail 'consecutive self-health proposal fell into the ledger duplicate path'
 
 printf 'test_lane_org_consistency_lifecycle: PASS\n'

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC1091,SC2034
 set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -16,6 +17,27 @@ cleanup() {
 }
 trap cleanup EXIT
 NIGHT_ID=$(date -v-8H '+%F')
+
+# Normalize sandbox-only process-list denial to stock macOS's "not found"
+# status. This suite is about ledger write failures; the dedicated process
+# inspection suite owns fail-closed inspection behavior.
+fake_bin="$TEST_TMP/bin"
+mkdir -p "$fake_bin"
+cat > "$fake_bin/ps" <<'EOF'
+#!/bin/bash
+/bin/ps "$@"
+ps_rc=$?
+[ "$ps_rc" -eq 0 ] && exit 0
+exit 1
+EOF
+cat > "$fake_bin/pgrep" <<'EOF'
+#!/bin/bash
+/usr/bin/pgrep "$@"
+pgrep_rc=$?
+[ "$pgrep_rc" -eq 0 ] && exit 0
+exit 1
+EOF
+chmod +x "$fake_bin/ps" "$fake_bin/pgrep"
 
 marker="$TEST_TMP/probe-ran"
 probe="$TEST_TMP/marker-probe"
@@ -43,7 +65,7 @@ printf '%s\n' \
   > "$run_config"
 
 run_rc=0
-NIGHTSHIFT_CONFIG="$run_config" \
+PATH="$fake_bin:$PATH" NIGHTSHIFT_CONFIG="$run_config" \
   /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || run_rc=$?
 [ "$run_rc" -ne 0 ] || fail "run succeeded with an unwritable ledger directory"
 [ ! -e "$marker" ] || fail "budget probe ran after run_start ledger append failed"
@@ -64,7 +86,7 @@ printf '%s\n' \
   "LANE_HOME_LINKS=''" \
   > "$later_config"
 later_rc=0
-NIGHTSHIFT_CONFIG="$later_config" \
+PATH="$fake_bin:$PATH" NIGHTSHIFT_CONFIG="$later_config" \
   /bin/bash "$ROOT/bin/nightshift-dispatch" run >/dev/null || later_rc=$?
 [ "$later_rc" -ne 0 ] || fail "run succeeded after a later ledger append failure"
 assert_file_exists "$later_lane_one"

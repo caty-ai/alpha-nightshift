@@ -59,6 +59,18 @@ sys.stdout.write(text)
 PY
 }
 
+oc_suggest_sanitize_field() {
+  sanitized_field=$(oc_suggest_sanitize_claim "$1")
+  /usr/bin/python3 - "$sanitized_field" <<'PY'
+import re
+import sys
+
+text = re.sub(r"[`\\<>\[\]()]", " ", sys.argv[1])
+text = re.sub(r"\s+", " ", text).strip()
+sys.stdout.write(text[:200] or "-")
+PY
+}
+
 oc_suggest_single_line() {
   printf '%s' "$1" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
@@ -142,12 +154,22 @@ oc_suggest_find_issues_snapshot() {
     fi
     return 1
   fi
-  find "$OC_STATE_DIR" -maxdepth 3 -type f \( -path '*/issues/*.json' -o -iname '*issue*.json' \) -print 2>/dev/null | LC_ALL=C sort | tail -n 1
+  snapshot_path="$OC_STATE_DIR/issues/family-os-open.json"
+  [ -f "$snapshot_path" ] || return 1
+  printf '%s\n' "$snapshot_path"
+}
+
+oc_suggest_snapshot_is_fresh() {
+  snapshot_path=$1
+  snapshot_night=$(jq -r '.night_id // empty' "$snapshot_path" 2>/dev/null || true)
+  [ -n "$snapshot_night" ] || return 1
+  snapshot_age_days=$(oc_suggest_report_age_days "$snapshot_night" 2>/dev/null) || return 1
+  [ "$snapshot_age_days" -le "$OC_REPORT_MAX_AGE_DAYS" ]
 }
 
 oc_suggest_snapshot_has_open_stale_pointer() {
   snapshot_path=$1
-  jq -e '
+  jq -e --arg family_repo "$OC_FAMILY_OS_REPO" '
     def entries:
       if type == "array" then .
       elif (.issues? | type == "array") then .issues
@@ -163,7 +185,7 @@ oc_suggest_snapshot_has_open_stale_pointer() {
     any(
       entries[]?;
       ((.state // "open") != "closed")
-      and ((repo_name(.) == "") or (repo_name(.) == "caty-ai/family-os"))
+      and ((repo_name(.) == "") or (repo_name(.) == $family_repo))
       and ((label_names(.) | index("stale-pointer")) != null)
     )
   ' "$snapshot_path" >/dev/null 2>&1
@@ -202,6 +224,14 @@ oc_suggest_render_resolved_line() {
   repo=$(printf '%s\n' "$finding_json" | jq -r '.repo // "-"')
   summary=$(oc_suggest_finding_summary "$finding_json")
   printf '%s\n' "- $fp issue #$issue_number $repo :: $summary"
+}
+
+oc_suggest_render_self_health_line() {
+  finding_json=$1
+  fp=$(printf '%s\n' "$finding_json" | jq -r '.fingerprint')
+  status=$(printf '%s\n' "$finding_json" | jq -r '.status // "-"')
+  summary=$(oc_suggest_finding_summary "$finding_json")
+  printf '%s\n' "- $fp [$status] :: $summary"
 }
 
 oc_suggest_update_findings_file() {
@@ -246,10 +276,10 @@ oc_suggest_build_issue_body() {
   finding_json=$1
   report_rel=$2
   fp=$(printf '%s\n' "$finding_json" | jq -r '.fingerprint')
-  repo=$(printf '%s\n' "$finding_json" | jq -r '.repo // "-"')
-  check_id=$(printf '%s\n' "$finding_json" | jq -r '.check_id // "-"')
-  file=$(printf '%s\n' "$finding_json" | jq -r '.file // .target // "-"')
-  first_seen=$(printf '%s\n' "$finding_json" | jq -r '.first_seen // "-"')
+  repo=$(oc_suggest_sanitize_field "$(printf '%s\n' "$finding_json" | jq -r '.repo // "-"')")
+  check_id=$(oc_suggest_sanitize_field "$(printf '%s\n' "$finding_json" | jq -r '.check_id // "-"')")
+  file=$(oc_suggest_sanitize_field "$(printf '%s\n' "$finding_json" | jq -r '.file // .target // "-"')")
+  first_seen=$(oc_suggest_sanitize_field "$(printf '%s\n' "$finding_json" | jq -r '.first_seen // "-"')")
   claim=$(printf '%s\n' "$finding_json" | jq -r '.claim // ""')
   sanitized=$(oc_suggest_sanitize_claim "$claim")
   cat <<EOF
@@ -322,6 +352,10 @@ oc_suggest_stale_pointer_state() {
   issues_snapshot=
   if issues_snapshot=$(oc_suggest_find_issues_snapshot); then
     if [ -n "$issues_snapshot" ] && [ -f "$issues_snapshot" ]; then
+      if ! oc_suggest_snapshot_is_fresh "$issues_snapshot"; then
+        printf '%s\n' "missing:$issues_snapshot"
+        return 0
+      fi
       if oc_suggest_snapshot_has_open_stale_pointer "$issues_snapshot"; then
         printf '%s\n' "present:$issues_snapshot"
         return 0
@@ -371,9 +405,28 @@ oc_suggest_list() {
   resolved_count=0
   missing_snapshot_note=false
 
+  self_health_entries=$(jq -c '
+    [.findings[]? | select(.check_id == "self-health")]
+    | sort_by(.claim_kind // "", .fingerprint)
+    | .[]
+  ' "$OC_FINDINGS_PATH")
+  printf '%s\n' ""
+  printf '%s\n' "Self-health (informational)"
+  if [ -z "$self_health_entries" ]; then
+    printf '%s\n' "- none"
+  else
+    while IFS= read -r finding_json; do
+      [ -n "$finding_json" ] || continue
+      oc_suggest_render_self_health_line "$finding_json"
+    done <<EOF
+$self_health_entries
+EOF
+  fi
+
   open_entries=$(jq -c '
     [.findings[]? |
       select(.status == "open")
+      | select(.check_id != "self-health")
       | select(.baseline != true)
       | select((if (.issue_number // .issue?.number // null) == null then "" else (.issue_number // .issue?.number | tostring) end) | length == 0)
     ] | sort_by(.repo // "", .check_id // "", .fingerprint)
@@ -417,7 +470,7 @@ EOF
   fi
   if [ "$missing_snapshot_note" = true ]; then
     printf '%s\n' ""
-    printf '%s\n' "NOTE: family-os issues snapshot is missing; OC-A candidates were not suppressed."
+    printf '%s\n' "NOTE: family-os issues snapshot is missing or stale; OC-A candidates were not suppressed."
   elif [ "$stale_pointer_mode" = "absent" ] && [ -n "$stale_pointer_source" ]; then
     :
   fi
@@ -425,6 +478,7 @@ EOF
   resolved_entries=$(jq -c '
     [.findings[]? |
       select(.status == "resolved-candidate")
+      | select(.check_id != "self-health")
       | select((if (.issue_number // .issue?.number // null) == null then "" else (.issue_number // .issue?.number | tostring) end) | length > 0)
     ] | sort_by(.repo // "", .check_id // "", .fingerprint)
     | .[]
@@ -482,6 +536,10 @@ oc_suggest_file_locked() {
   stale_pointer_mode=${stale_pointer_state%%:*}
   report_rel=${latest_report#"$OC_STATE_DIR"/}
 
+  if [ "$stale_pointer_mode" = "missing" ]; then
+    printf '%s\n' "NOTE: family-os issues snapshot is missing or stale; OC-A candidates were not suppressed."
+  fi
+
   command -v gh >/dev/null 2>&1 || oc_suggest_die "gh is required for file"
 
   for fp in "$@"; do
@@ -501,6 +559,7 @@ oc_suggest_file_locked() {
     fi
 
     check_id=$(printf '%s\n' "$finding_json" | jq -r '.check_id // ""')
+    [ "$check_id" != "self-health" ] || oc_suggest_die "self-health findings are informational and cannot be filed: $fp"
     if [ "$check_id" = "OC-A" ] && [ "$stale_pointer_mode" = "present" ]; then
       oc_suggest_die "OC-A filing is suppressed while family-os stale-pointer is open: $fp"
     fi
@@ -606,16 +665,25 @@ latest_report=$(oc_suggest_latest_report)
 [ -n "$latest_report" ] || oc_suggest_die "no report JSON found in $OC_REPORT_DIR"
 report_night=$(oc_suggest_latest_report_night "$latest_report")
 report_age_days=$(oc_suggest_report_age_days "$report_night")
+OC_FAMILY_OS_REPO=$(jq -r '
+  ([.cells[]? | select(.check_id == "OC-A") | .repo][0]) // empty
+' "$latest_report")
+if [ -z "$OC_FAMILY_OS_REPO" ]; then
+  OC_FAMILY_OS_REPO=$(jq -r '
+    ([.findings[]? | select(.check_id == "OC-A") | .repo][0]) // empty
+  ' "$OC_FINDINGS_PATH")
+fi
 
 case "$mode" in
   list)
     if [ "${#promote_fps[@]}" -gt 0 ]; then
-      oc_suggest_with_lock "$OC_STATE_DIR/.oc-suggest.lock" oc_suggest_promote_locked "${promote_fps[@]}"
+      # Mutations share the lane's lock so findings.json cannot race a nightly run.
+      oc_suggest_with_lock "$OC_STATE_DIR/.lock" oc_suggest_promote_locked "${promote_fps[@]}"
     fi
     oc_suggest_list "$latest_report" "$report_night" "$report_age_days"
     ;;
   promote)
-    oc_suggest_with_lock "$OC_STATE_DIR/.oc-suggest.lock" oc_suggest_promote_locked "${promote_fps[@]}"
+    oc_suggest_with_lock "$OC_STATE_DIR/.lock" oc_suggest_promote_locked "${promote_fps[@]}"
     ;;
   file)
     [ "${#promote_fps[@]}" -eq 0 ] || oc_suggest_die "--promote cannot be combined with file"
@@ -623,7 +691,7 @@ case "$mode" in
     if [ "$report_age_days" -gt "$OC_REPORT_MAX_AGE_DAYS" ]; then
       printf '%s\n' "WARNING: latest report is ${report_age_days} days old (> ${OC_REPORT_MAX_AGE_DAYS})"
     fi
-    oc_suggest_with_lock "$OC_STATE_DIR/.oc-suggest.lock" oc_suggest_file_locked "$latest_report" "$report_night" "${file_fps[@]}"
+    oc_suggest_with_lock "$OC_STATE_DIR/.lock" oc_suggest_file_locked "$latest_report" "$report_night" "${file_fps[@]}"
     ;;
   *)
     oc_suggest_usage

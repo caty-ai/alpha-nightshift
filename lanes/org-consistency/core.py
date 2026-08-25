@@ -52,7 +52,6 @@ GITHUB_REPO_URL = re.compile(
     re.IGNORECASE,
 )
 HEADING = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
-AGENT_PATH_TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])(?P<token>(?:\.?\.?/)?[A-Za-z0-9_.@+-]+(?:/[A-Za-z0-9_.@+-]+)+/?(?:#[^\s`'\"<>)]*)?)")
 ALLOWED_AGENT_EXTENSIONS = {
     ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".go", ".h", ".html",
     ".ini", ".java", ".js", ".json", ".jsx", ".kt", ".lock", ".md", ".mjs",
@@ -222,6 +221,7 @@ class Runner:
         self.mirror_results: dict[int, tuple[bool, dict[str, Any]]] = {}
         self.registry: dict[str, Any] = {}
         self.registry_signature: dict[str, Any] | None = None
+        self.registry_available = False
         self.repo_state: dict[str, Any] = {"repos": {}}
         self.plan: dict[str, Any] = {}
         self.settings = {
@@ -409,7 +409,7 @@ class Runner:
             value = read_json(pathlib.Path(fixture))
             if not isinstance(value, list):
                 raise LaneError("OC_TEST_ISSUES_FIXTURE must contain an array")
-            atomic_write_json(destination, value)
+            atomic_write_json(destination, {"night_id": self.night_id, "issues": value})
             return
         if self.api_fixture:
             return
@@ -429,7 +429,7 @@ class Runner:
                 payload = json.loads(response.read().decode("utf-8"))
             if not isinstance(payload, list):
                 raise LaneError("family-os issues API payload was not an array")
-            atomic_write_json(destination, payload)
+            atomic_write_json(destination, {"night_id": self.night_id, "issues": payload})
         except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError, LaneError) as exc:
             self.events.append({"type": "ISSUES-SNAPSHOT-MISSING", "detail": str(exc)})
 
@@ -749,7 +749,11 @@ class Runner:
             ]
         )
         for cell in report["cells"]:
-            lines.append(f"| {cell['check_id']} | {cell['repo_id']} | {cell['repo']} | {cell['status']} | {cell.get('reason', '')} |")
+            repo_id = cell.get("repo_id")
+            lines.append(
+                f"| {cell['check_id']} | {repo_id if repo_id is not None else '-'} | "
+                f"{cell['repo']} | {cell['status']} | {cell.get('reason', '')} |"
+            )
         lines.extend(["", "## Findings", ""])
         for item in report["findings"]["new"]:
             prefix = "baseline" if item.get("baseline") else "new"
@@ -1105,6 +1109,18 @@ class Runner:
                 anchors.add(self.markdown_anchor(match.group("title")))
         return anchors
 
+    @staticmethod
+    def without_fenced_blocks(text: str) -> str:
+        lines: list[str] = []
+        in_fence = False
+        for line in text.splitlines():
+            if re.match(r"^\s*(?:```|~~~)", line):
+                in_fence = not in_fence
+                lines.append("")
+                continue
+            lines.append("" if in_fence else line)
+        return "\n".join(lines)
+
     def oc_b_files(self, mirror: pathlib.Path) -> list[pathlib.Path]:
         result: set[pathlib.Path] = set()
         for name in (
@@ -1167,7 +1183,7 @@ class Runner:
         findings: dict[str, dict[str, Any]] = {}
         for source in files:
             relative_source = source.relative_to(mirror).as_posix()
-            text = self.read_text(source)
+            text = self.without_fenced_blocks(self.read_text(source))
             for match in MARKDOWN_LINK.finditer(text):
                 raw_target = match.group("target").strip()
                 if raw_target.startswith("<") and ">" in raw_target:
@@ -1374,14 +1390,15 @@ class Runner:
             result.update(path for path in mirror.glob(pattern) if path.is_file())
         return sorted(result)
 
-    def agent_path_tokens(self, text: str, mirror: pathlib.Path) -> list[str]:
-        top_segments = {path.name for path in mirror.iterdir() if path.exists()}
+    def agent_path_tokens(self, text: str, top_segments: set[str]) -> list[str]:
+        text = re.sub(r"\b[a-z][a-z0-9+.-]*://\S+", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\S*[*?\[\]]\S*", " ", text)
         candidates = re.findall(r"(?<![\w.-])(?:\./)?[A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.@+-]+)*/?", text)
         tokens: list[str] = []
         for candidate in candidates:
             token = candidate.strip("`'\"(),;:")
             token = re.sub(r"[.,;:!?]+$", "", token)
-            if not token or any(char in token for char in "*?[]#") or "://" in token:
+            if not token or any(char in token for char in "*?[]#"):
                 continue
             normalized_token = token[2:] if token.startswith("./") else token
             if normalized_token.startswith("../") or "/../" in normalized_token:
@@ -1389,6 +1406,8 @@ class Runner:
             path = pathlib.PurePosixPath(normalized_token.rstrip("/"))
             suffix_allowed = path.suffix.lower() in ALLOWED_AGENT_EXTENSIONS
             first = path.parts[0] if path.parts else ""
+            if "." in first and first not in top_segments:
+                continue
             extensionless_command = len(path.parts) >= 2 and first in {"bin", "scripts"}
             rooted = len(path.parts) >= 2 and first in top_segments
             if suffix_allowed or extensionless_command or rooted:
@@ -1408,9 +1427,11 @@ class Runner:
             }
         findings: dict[str, dict[str, Any]] = {}
         extracted = 0
+        top_segments = {path.name for path in mirror.iterdir() if path.exists()}
         for source in files:
             relative_source = source.relative_to(mirror).as_posix()
-            for token in self.agent_path_tokens(self.read_text(source), mirror):
+            text = self.without_fenced_blocks(self.read_text(source))
+            for token in self.agent_path_tokens(text, top_segments):
                 extracted += 1
                 target = mirror / token.rstrip("/")
                 try:
@@ -1462,10 +1483,13 @@ class Runner:
         if not synced or "mirror" not in mirror_meta:
             return
         registry_path = pathlib.Path(mirror_meta["mirror"]) / "registry" / "modules.json"
+        if not registry_path.is_file():
+            return
         value = read_json(registry_path, {})
         if not isinstance(value, dict):
             raise LaneError("family-os registry/modules.json must be an object")
         self.registry = value
+        self.registry_available = True
         self.registry_signature = {
             "version": value.get("version"),
             "schema_keys": sorted(value.keys()),
@@ -1510,6 +1534,14 @@ class Runner:
                     }
                 elif check_id == "OC-A":
                     result = self.run_oc_a(repo, mirror_meta)
+                elif check_id in {"OC-B", "OC-C"} and not self.registry_available:
+                    result = {
+                        "status": "STALE-INPUT",
+                        "reason": "registry-unavailable",
+                        "fresh": False,
+                        "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                        **mirror_meta,
+                    }
                 elif check_id == "OC-B":
                     result = self.run_oc_b(repo, mirror_meta)
                 elif check_id == "OC-C":
@@ -1563,17 +1595,18 @@ class Runner:
             zero_streaks = {}
         cells = self.effective_cells()
         for check_id in CHECK_IDS:
-            extracted = sum(
-                int(cell.get("metrics", {}).get("extracted", 0))
+            metric_name = "scanned" if check_id == "OC-A" else "extracted"
+            metric_value = sum(
+                int(cell.get("metrics", {}).get(metric_name, 0))
                 for cell in cells
                 if cell["check_id"] == check_id
             )
-            streak = int(zero_streaks.get(check_id, 0)) + 1 if extracted == 0 else 0
+            streak = int(zero_streaks.get(check_id, 0)) + 1 if metric_value == 0 else 0
             zero_streaks[check_id] = streak
             if streak >= self.zero_streak_nights:
                 self.emit_self_health(
                     f"zero-streak:{check_id}",
-                    f"{check_id} extracted zero candidates for {streak} consecutive nights",
+                    f"{check_id} {metric_name} zero candidates for {streak} consecutive nights",
                 )
         mirror_stale = any(not synced for synced, _meta in self.mirror_results.values())
         stale = self.target_status != "FRESH" or mirror_stale or any(
@@ -1753,6 +1786,12 @@ class Runner:
             if entry.get("status") != "open" or entry.get("fingerprint") in observed:
                 continue
             if str(entry.get("fingerprint")) in reopened_from_scope:
+                continue
+            if entry.get("check_id") == "self-health":
+                entry["status"] = "resolved"
+                self.events.append(
+                    {"type": "SELF-HEALTH-RESOLVED", "fingerprint": entry["fingerprint"]}
+                )
                 continue
             if (entry.get("check_id"), entry.get("repo_id")) not in fresh_cells:
                 continue
