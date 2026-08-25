@@ -39,8 +39,8 @@ done
 # torn JSON document, and the completion flag belongs only to the final stage.
 jq -e 'has("complete") | not' "$report" >/dev/null || fail 'partial report was marked complete'
 assert_not_contains 'COMPLETE:' "$OC_STATE/report/2026-08-01.md"
-jq -e '.scope.not_run == 1 and .cells[0].status == "NOT-RUN" and .cells[0].reason == "missing-result"' "$report" >/dev/null || fail 'plan/result reconciliation did not expose partial NOT-RUN'
-jq -e '(.cells | length) == 1 and (.cells[0] | has("result") | not)' "$plan" >/dev/null || fail 'write-ahead plan was not written before execution'
+jq -e '.scope.not_run == 3 and (.cells | length) == 3 and all(.cells[]; .status == "NOT-RUN" and .reason == "missing-result")' "$report" >/dev/null || fail 'plan/result reconciliation did not expose partial NOT-RUN'
+jq -e '(.cells | length) == 3 and all(.cells[]; has("result") | not)' "$plan" >/dev/null || fail 'write-ahead plan was not written before execution'
 
 kill -TERM "$lane_pid"
 lane_rc=0
@@ -76,6 +76,6 @@ case_roots="$case_roots $OC_CASE_ROOT"
 oc_make_remote family-os main slow-pass
 oc_write_single_api 803 family-os main
 oc_run 2026-08-03 OC_CHECK_TIMEOUT_SEC=1
-jq -e '.complete == true and .cells[0].status == "NOT-RUN" and .cells[0].reason == "checker-timeout" and .cells[0].fresh == false' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'checker timeout was not a completed NOT-RUN cell'
+jq -e '.complete == true and ([.cells[] | select(.check_id == "OC-A" and .status == "NOT-RUN" and .reason == "checker-timeout" and .fresh == false)] | length) == 1' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'checker timeout was not a completed NOT-RUN cell'
 
 printf 'test_lane_org_consistency_timebox: PASS\n'

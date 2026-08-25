@@ -21,6 +21,18 @@ write_digest_config() {
     > "$config_path"
 }
 
+append_freshness_config() {
+  config_path=$1
+  report_dir=$2
+  enforce=$3
+  max_age_days=$4
+  printf '%s\n' \
+    "OC_FRESHNESS_ENFORCE='$enforce'" \
+    "OC_REPORT_DIR='$report_dir'" \
+    "OC_REPORT_MAX_AGE_DAYS='$max_age_days'" \
+    >> "$config_path"
+}
+
 run_digest() {
   config_path=$1
   NIGHTSHIFT_CONFIG="$config_path" /bin/bash "$ROOT/bin/nightshift-dispatch" digest >/dev/null
@@ -32,6 +44,13 @@ seed_record() {
   STATE_DIR=$state_path
   mkdir -p "$STATE_DIR/ledger"
   ledger_append "$record"
+}
+
+write_report_fixture() {
+  report_dir=$1
+  report_name=$2
+  mkdir -p "$report_dir"
+  printf '%s\n' '{}' > "$report_dir/$report_name.json"
 }
 
 assert_zero_kpi() {
@@ -53,6 +72,7 @@ dead_digest="$dead_state/digests/$NIGHT_ID.md"
 assert_file_exists "$dead_digest"
 assert_contains DEAD_MAN "$dead_digest"
 assert_contains '夜番は起きなかった' "$dead_digest"
+assert_contains 'org-consistency freshness: disabled' "$dead_digest"
 assert_zero_kpi "$dead_digest"
 printf '%s\n' 'sentinel-that-must-be-overwritten' >> "$dead_digest"
 run_digest "$dead_config"
@@ -181,5 +201,61 @@ skipped_digest="$skipped_state/digests/$NIGHT_ID.md"
 assert_contains SKIPPED "$skipped_digest"
 assert_contains 'budget_exhausted' "$skipped_digest"
 assert_zero_kpi "$skipped_digest"
+
+fresh_state="$TEST_TMP/fresh-state"
+fresh_config="$TEST_TMP/fresh.conf"
+fresh_report_dir="$fresh_state/org-consistency/report"
+write_digest_config "$fresh_config" "$fresh_state"
+append_freshness_config "$fresh_config" "$fresh_report_dir" 1 3
+write_report_fixture "$fresh_report_dir" "$NIGHT_ID"
+run_digest "$fresh_config"
+fresh_digest="$fresh_state/digests/$NIGHT_ID.md"
+assert_contains "org-consistency freshness: OK ($NIGHT_ID age 0d)" "$fresh_digest"
+assert_not_contains 'WARNING: org-consistency has never published a report' "$fresh_digest"
+assert_not_contains 'WARNING: org-consistency latest report is' "$fresh_digest"
+
+stale_state="$TEST_TMP/stale-state"
+stale_config="$TEST_TMP/stale.conf"
+stale_report_dir="$stale_state/org-consistency/report"
+write_digest_config "$stale_config" "$stale_state"
+append_freshness_config "$stale_config" "$stale_report_dir" 1 3
+write_report_fixture "$stale_report_dir" "$NIGHT_ID"
+touch -t "$(date -v-5d '+%Y%m%d0000')" "$stale_report_dir/$NIGHT_ID.json"
+run_digest "$stale_config"
+stale_digest="$stale_state/digests/$NIGHT_ID.md"
+assert_contains 'WARNING: org-consistency latest report is 5 days old (max 3)' "$stale_digest"
+
+boundary_state="$TEST_TMP/boundary-state"
+boundary_config="$TEST_TMP/boundary.conf"
+boundary_report_dir="$boundary_state/org-consistency/report"
+write_digest_config "$boundary_config" "$boundary_state"
+append_freshness_config "$boundary_config" "$boundary_report_dir" 1 3
+write_report_fixture "$boundary_report_dir" "$NIGHT_ID"
+touch -t "$(date -v-3d '+%Y%m%d0000')" "$boundary_report_dir/$NIGHT_ID.json"
+run_digest "$boundary_config"
+boundary_digest="$boundary_state/digests/$NIGHT_ID.md"
+assert_contains "org-consistency freshness: OK ($NIGHT_ID age 3d)" "$boundary_digest"
+assert_not_contains 'WARNING: org-consistency latest report is' "$boundary_digest"
+
+missing_state="$TEST_TMP/missing-state"
+missing_config="$TEST_TMP/missing.conf"
+missing_report_dir="$missing_state/org-consistency/report"
+write_digest_config "$missing_config" "$missing_state"
+append_freshness_config "$missing_config" "$missing_report_dir" 1 3
+run_digest "$missing_config"
+missing_digest="$missing_state/digests/$NIGHT_ID.md"
+assert_contains 'WARNING: org-consistency has never published a report' "$missing_digest"
+mkdir -p "$missing_report_dir"
+run_digest "$missing_config"
+assert_contains 'WARNING: org-consistency has never published a report' "$missing_digest"
+
+invalid_state="$TEST_TMP/invalid-state"
+invalid_config="$TEST_TMP/invalid.conf"
+invalid_report_dir="$invalid_state/org-consistency/report"
+write_digest_config "$invalid_config" "$invalid_state"
+append_freshness_config "$invalid_config" "$invalid_report_dir" 1 invalid
+if run_digest "$invalid_config"; then
+  fail 'digest should fail when OC_REPORT_MAX_AGE_DAYS is invalid'
+fi
 
 printf 'test_digest: PASS\n'

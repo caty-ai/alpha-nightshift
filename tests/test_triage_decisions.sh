@@ -428,4 +428,79 @@ wait "$b1_watcher_pid"
   fail 'B1 full-run wiring retained a decision after its canonical settled'
 assert_contains 'decision_drops_canonical: 1' "$b1_state/triage/report.md"
 
+org_excluded_state="$TEST_TMP/org-excluded-state"
+org_excluded_gh="$TEST_TMP/org-excluded-gh"
+org_excluded_config="$TEST_TMP/org-excluded.conf"
+org_excluded_adapter_log="$TEST_TMP/org-excluded-adapter.log"
+mkdir -p "$org_excluded_state" "$org_excluded_gh"
+triage_write_config \
+  "$org_excluded_config" \
+  "$org_excluded_state" \
+  "$TEST_DIR/fixtures/triage/fake-gh.sh"
+triage_seed_report_issue "$org_excluded_gh" demo/repo 201
+triage_seed_finding \
+  "$org_excluded_state" \
+  org-consistency-observation \
+  demo \
+  app/render.sh:5 \
+  'org consistency observation should stay triage-inert' \
+  org-consistency/self-health \
+  2026-08-12
+env -u TRIAGE_STUB_QUEUE_FILE -u TRIAGE_STUB_RESPONSE_TABLE \
+  TRIAGE_FAKE_GH_DIR="$org_excluded_gh" \
+  TRIAGE_STUB_LOG_FILE="$org_excluded_adapter_log" \
+  NIGHTSHIFT_CONFIG="$org_excluded_config" \
+  /bin/bash "$ROOT/bin/morning-triage" \
+  --dry-run \
+  --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+[ ! -s "$org_excluded_state/triage/decisions.draft.jsonl" ] ||
+  fail 'org-consistency findings unexpectedly entered triage decisions'
+assert_contains 'new_findings_total: 0' "$org_excluded_state/triage/report.md"
+assert_contains 'verify_total: 0' "$org_excluded_state/triage/report.md"
+[ ! -s "$org_excluded_state/triage/verify-results.jsonl" ] ||
+  fail 'org-consistency findings unexpectedly entered verify processing'
+[ ! -s "$org_excluded_adapter_log" ] ||
+  fail 'org-consistency findings unexpectedly invoked the triage adapter'
+
+org_included_state="$TEST_TMP/org-included-state"
+org_included_gh="$TEST_TMP/org-included-gh"
+org_included_config="$TEST_TMP/org-included.conf"
+org_included_adapter_log="$TEST_TMP/org-included-adapter.log"
+org_included_response="$TEST_TMP/org-included-verify.jsonl"
+mkdir -p "$org_included_state" "$org_included_gh"
+triage_write_config \
+  "$org_included_config" \
+  "$org_included_state" \
+  "$TEST_DIR/fixtures/triage/fake-gh.sh"
+triage_seed_report_issue "$org_included_gh" demo/repo 201
+triage_seed_finding \
+  "$org_included_state" \
+  normal-triage-finding \
+  demo \
+  app/render.sh:5 \
+  'normal finding should still flow through triage' \
+  Bug \
+  2026-08-12
+printf '%s\n' \
+  '{"finding_id":"normal-triage-finding","verdict":"CONFIRMED_CURRENT","file":"app/render.sh","line":5,"quoted_line":"current evidence","removed_pattern":"","explanation":"still current"}' \
+  > "$org_included_response"
+env -u TRIAGE_STUB_QUEUE_FILE -u TRIAGE_STUB_RESPONSE_TABLE \
+  TRIAGE_FAKE_GH_DIR="$org_included_gh" \
+  TRIAGE_STUB_DEFAULT_RESPONSE="$org_included_response" \
+  TRIAGE_STUB_LOG_FILE="$org_included_adapter_log" \
+  NIGHTSHIFT_CONFIG="$org_included_config" \
+  /bin/bash "$ROOT/bin/morning-triage" \
+  --dry-run \
+  --force \
+  --repo-pin "demo=$repo_sha@$repo_src" >/dev/null
+assert_contains 'new_findings_total: 1' "$org_included_state/triage/report.md"
+assert_contains 'verify_total: 1' "$org_included_state/triage/report.md"
+assert_contains 'dedup_pool_empty: 1' "$org_included_state/triage/report.md"
+jq -e 'select(.finding_id == "normal-triage-finding" and .verdict == "CONFIRMED_CURRENT")' \
+  "$org_included_state/triage/verify-results.jsonl" >/dev/null ||
+  fail 'non-org-consistency findings stopped flowing through verify'
+[ "$(wc -l < "$org_included_adapter_log" | tr -d ' ')" -eq 1 ] ||
+  fail 'non-org-consistency findings did not continue invoking the triage adapter'
+
 printf 'test_triage_decisions: PASS\n'

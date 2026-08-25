@@ -121,6 +121,18 @@ oc_commit() {
   git -C "$work" commit -qm "$message"
 }
 
+oc_write_readmes() {
+  work=$1
+  for language in en ja zh th; do
+    if [ "$language" = en ]; then
+      readme="$work/README.md"
+    else
+      readme="$work/README.$language.md"
+    fi
+    printf '# Fixture\n\n## Install\n\nText.\n' > "$readme"
+  done
+}
+
 oc_make_remote() {
   repo_name=$1
   branch=${2:-main}
@@ -129,9 +141,8 @@ oc_make_remote() {
   work="$OC_WORK/$repo_name"
   if [ "$checker_mode" != none ]; then
     oc_write_checker "$work" "$checker_mode"
-  else
-    printf '%s\n' fixture > "$work/README.md"
   fi
+  oc_write_readmes "$work"
   oc_commit "$work" initial
   git clone -q --bare "$work" "$OC_REMOTES/$repo_name.git"
 }
