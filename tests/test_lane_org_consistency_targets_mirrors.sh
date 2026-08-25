@@ -8,7 +8,7 @@ TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 
 oc_case_init targets
 case_one=$OC_CASE_ROOT
-trap 'rm -rf "$case_one" ${case_two:-} ${case_three:-}' EXIT
+trap 'rm -rf "$case_one" ${case_two:-} ${case_three:-} ${case_four:-}' EXIT
 
 # Pagination follows Link, the 100-item page forces INCOMPLETE, and exclusion
 # applies after the complete numeric-ID target set has been assembled.
@@ -80,10 +80,12 @@ oc_run 2026-08-04
 jq -e '.scope.not_run == 1 and .cells[0].reason == "fetch-failed"' "$OC_STATE/report/2026-08-04.json" >/dev/null || fail 'fetch failure was not visible in the report'
 
 mv "$OC_REMOTES/family-os.git.offline" "$OC_REMOTES/family-os.git"
+oc_write_checker "$OC_WORK/family-os" pass
+oc_commit "$OC_WORK/family-os" add-checker-before-rename
 git clone -q --bare "$OC_WORK/family-os" "$OC_REMOTES/renamed.git"
 oc_write_single_api 600 renamed trunk renamed
 oc_run 2026-08-05
-jq -e '(.scope.renamed | length) == 1 and .scope.renamed[0].from == "caty-ai/family-os" and .scope.renamed[0].to == "caty-ai/renamed" and (.cells | length) == 0' "$OC_STATE/report/2026-08-05.json" >/dev/null || fail 'numeric-ID rename event is missing'
+jq -e '(.scope.renamed | length) == 1 and .scope.renamed[0].from == "caty-ai/family-os" and .scope.renamed[0].to == "caty-ai/renamed" and (.cells | length) == 1 and .cells[0].repo_id == 600 and .cells[0].repo == "caty-ai/renamed" and .cells[0].status == "RUN" and .cells[0].reason == "checker-complete" and .cells[0].fresh == true' "$OC_STATE/report/2026-08-05.json" >/dev/null || fail 'numeric-ID rename did not keep OC-A on the renamed repository'
 jq -e '.repos["600"].name_history | length == 2' "$OC_STATE/repos.json" >/dev/null || fail 'id-to-name history did not retain the rename'
 [ -d "$OC_STATE/mirrors/600" ] || fail 'rename changed the numeric mirror path'
 
@@ -137,5 +139,15 @@ printf '%s\n' \
 chmod +x "$OC_CASE_ROOT/git-shim/git"
 oc_run 2026-08-01 PATH="$OC_CASE_ROOT/git-shim:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 jq -e '.complete == true and .cells[0].status == "NOT-RUN" and .cells[0].reason == "mirror-finalize-failed" and .cells[0].fresh == false' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'unexpected Git failure aborted the lane instead of isolating the cell'
+
+# OC-A is still planned when configuration removes family-os from tonight's
+# target set. The explicit non-fresh cell keeps the night from looking green.
+oc_case_init excluded-family-os
+case_four=$OC_CASE_ROOT
+oc_make_remote family-os main pass
+oc_write_single_api 602 family-os main
+oc_run 2026-08-01 OC_EXCLUDE_REPOS=family-os
+jq -e '.complete == true and (.cells | length) == 1 and .cells[0].repo_id == 602 and .cells[0].repo == "caty-ai/family-os" and .cells[0].status == "NOT-RUN" and .cells[0].reason == "family-os-absent" and .cells[0].fresh == false and .scope.not_run == 1' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'excluded family-os left no non-fresh OC-A trace'
+[ ! -e "$OC_STATE/mirrors/602" ] || fail 'excluded family-os was fetched despite its NOT-RUN cell'
 
 printf 'test_lane_org_consistency_targets_mirrors: PASS\n'

@@ -174,6 +174,7 @@ class Runner:
         self.journal_path = self.state_dir / "journal" / f"{self.night_id}.json"
         self.snapshot_dir = self.state_dir / "snapshots"
         self.baseline = not self.findings_path.exists()
+        self.discovered_repos: list[dict[str, Any]] = []
         self.targets: list[dict[str, Any]] = []
         self.target_status = "FRESH"
         self.target_snapshot_night = self.night_id
@@ -356,6 +357,7 @@ class Runner:
                 self.excluded.append({"id": repo["id"], "name": repo["full_name"], "reason": reason})
             else:
                 self.targets.append(repo)
+        self.discovered_repos = sorted(raw_repos, key=lambda item: item["id"])
         self.targets.sort(key=lambda item: item["id"])
 
     def update_repo_identity_state(self) -> None:
@@ -408,7 +410,56 @@ class Runner:
 
     def planned_targets(self) -> list[dict[str, Any]]:
         family_os = f"{self.org}/family-os".lower()
-        return [repo for repo in self.targets if repo["full_name"].lower() == family_os]
+        historical_ids = {
+            int(repo_id)
+            for repo_id, repo in self.repo_state["repos"].items()
+            if repo.get("full_name", "").lower() == family_os
+            or any(
+                item.get("full_name", "").lower() == family_os
+                for item in repo.get("name_history", [])
+                if isinstance(item, dict)
+            )
+        }
+        for repo in self.targets:
+            if repo["id"] in historical_ids:
+                return [repo]
+        for repo in self.targets:
+            if repo["full_name"].lower() == family_os:
+                return [repo]
+
+        absent_repo = next(
+            (repo for repo in self.discovered_repos if repo["id"] in historical_ids),
+            None,
+        )
+        if absent_repo is None:
+            absent_repo = next(
+                (
+                    repo
+                    for repo in self.discovered_repos
+                    if repo["full_name"].lower() == family_os
+                ),
+                None,
+            )
+        if absent_repo is not None:
+            return [{**absent_repo, "family_os_absent": True}]
+
+        if historical_ids:
+            repo_id = min(historical_ids)
+            historical_repo = self.repo_state["repos"][str(repo_id)]
+            return [
+                {
+                    "id": repo_id,
+                    "full_name": historical_repo.get("full_name", f"{self.org}/family-os"),
+                    "family_os_absent": True,
+                }
+            ]
+        return [
+            {
+                "id": None,
+                "full_name": f"{self.org}/family-os",
+                "family_os_absent": True,
+            }
+        ]
 
     def write_initial_plan(self) -> None:
         self.plan = {
@@ -585,11 +636,12 @@ class Runner:
         return result
 
     @staticmethod
-    def family_remote_is_canonical(url: str) -> bool:
+    def family_remote_is_canonical(url: str, full_name: str) -> bool:
         value = url.strip().lower()
         value = re.sub(r"^git@github\.com:", "github.com/", value)
         value = re.sub(r"^(?:https?|ssh)://(?:git@)?", "", value)
-        return value.rstrip("/").removesuffix(".git") == "github.com/caty-ai/family-os"
+        expected = f"github.com/{full_name}".lower()
+        return value.rstrip("/").removesuffix(".git") == expected
 
     def sync_mirror(self, repo: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
         mirror = self.state_dir / "mirrors" / str(repo["id"])
@@ -752,12 +804,12 @@ class Runner:
 
     def run_oc_a(self, repo: dict[str, Any], mirror_meta: dict[str, Any]) -> dict[str, Any]:
         mirror = pathlib.Path(mirror_meta["mirror"])
-        if repo["full_name"].lower() != f"{self.org}/family-os".lower():
-            return {"status": "NO-INPUT", "reason": "not-family-os", "fresh": False, "metrics": {"scanned": 0, "extracted": 0, "flagged": 0}, **mirror_meta}
         # Read the configured URL, not `remote get-url`: the latter expands the
         # test-only url.insteadOf transport and would obscure the trust anchor.
         remote = self.git_command(mirror, "config", "--get", "remote.origin.url", check=False)
-        if remote.returncode != 0 or not self.family_remote_is_canonical(remote.stdout):
+        if remote.returncode != 0 or not self.family_remote_is_canonical(
+            remote.stdout, repo["full_name"]
+        ):
             return {"status": "NOT-RUN", "reason": "family-os-remote-untrusted", "fresh": False, "metrics": {"scanned": 0, "extracted": 0, "flagged": 0}, **mirror_meta}
         checker = mirror / "tools" / "check_registry.py"
         if not checker.is_file():
@@ -819,7 +871,7 @@ class Runner:
             **mirror_meta,
         }
 
-    def set_cell_result(self, repo_id: int, result: dict[str, Any]) -> None:
+    def set_cell_result(self, repo_id: int | None, result: dict[str, Any]) -> None:
         for cell in self.plan["cells"]:
             if cell["check_id"] == CHECK_ID and cell["repo_id"] == repo_id:
                 cell["result"] = result
@@ -829,6 +881,18 @@ class Runner:
 
     def run_cells(self) -> None:
         for repo in self.planned_targets():
+            if repo.get("family_os_absent") is True:
+                self.set_cell_result(
+                    repo["id"],
+                    {
+                        "status": "NOT-RUN",
+                        "reason": "family-os-absent",
+                        "fresh": False,
+                        "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                    },
+                )
+                self.publish_report(complete=False)
+                continue
             synced, mirror_meta = self.sync_mirror(repo)
             if not synced:
                 result = {"status": "NOT-RUN", "fresh": False, "metrics": {"scanned": 0, "extracted": 0, "flagged": 0}, **mirror_meta}
