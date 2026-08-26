@@ -15,3 +15,5 @@ and OC-D without network access.
 The files under `bin/`, `docs/`, and `src/` are existence-only corpus stubs for
 paths that are present at the pinned upstream commit and referenced by
 `AGENTS.md`. They prevent fixture truncation from masquerading as OC-D drift.
+
+Do not silently overwrite the corpus-authored drift when refreshing this corpus.

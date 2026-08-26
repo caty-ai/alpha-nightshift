@@ -254,6 +254,8 @@ oc_suggest_promote_locked() {
     oc_suggest_require_fingerprint "$fp"
     finding_json=$(oc_suggest_find_entry "$fp")
     [ -n "$finding_json" ] || oc_suggest_die "unknown fingerprint: $fp"
+    check_id=$(printf '%s\n' "$finding_json" | jq -r '.check_id // ""')
+    [ "$check_id" != "self-health" ] || oc_suggest_die "self-health findings are informational and cannot be promoted: $fp"
     is_baseline=$(printf '%s\n' "$finding_json" | jq -r '.baseline == true')
     [ "$is_baseline" = true ] || oc_suggest_die "fingerprint is not baseline: $fp"
     status=$(printf '%s\n' "$finding_json" | jq -r '.status // ""')

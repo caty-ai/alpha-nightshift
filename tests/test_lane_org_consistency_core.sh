@@ -48,7 +48,9 @@ PY
 # The parsed path is preferred, with a fixed unknown fallback when no path exists.
 /usr/bin/env OC_TEST_MUTATE= /usr/bin/python3 - "$OC_CORE" <<'PY'
 import importlib.util
+import pathlib
 import sys
+import tempfile
 
 spec = importlib.util.spec_from_file_location("org_consistency_core", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -63,6 +65,18 @@ assert without_path["claim_kind"].startswith("regcheck:unknown:unknown:")
 assert with_path["claim"] == "unstructured README.md failure detail"
 assert without_path["claim"] == "unstructured failure detail"
 assert runner.parse_checker_failures("FAILED (2):\n  - first\n\nOK\n  - ghost") == ["first"]
+with tempfile.TemporaryDirectory() as root:
+    root_path = pathlib.Path(root)
+    mirror = root_path / "mirror"
+    mirror.mkdir()
+    inside = mirror / "README.md"
+    inside.write_text("inside", encoding="utf-8")
+    outside = root_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    linked = mirror / "AGENTS.md"
+    linked.symlink_to(outside)
+    assert runner.safe_mirror_file(mirror, inside)
+    assert not runner.safe_mirror_file(mirror, linked)
 runner.night_id = "2026-08-01"
 empty_metrics = {check: {"scanned": 0, "extracted": 0, "flagged": 0} for check in module.CHECK_IDS}
 markdown = runner.report_markdown({
@@ -145,6 +159,9 @@ jq -e --arg fp "$first_fp" '.findings[] | select(.fingerprint == $fp) | .last_se
 assert_contains 'dispatcher stops scanning at the first missing LANE_CMD_n' "$ROOT/config/nightshift.conf.example"
 assert_contains '# LANE_CMD_3="OC_STATE_DIR=' "$ROOT/config/nightshift.conf.example"
 assert_contains "OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -'" "$ROOT/config/nightshift.conf.example"
+if grep -Eq '^OC_SEAT_TIMEOUT_SEC=' "$ROOT/config/nightshift.conf.example"; then
+  fail 'OC_SEAT_TIMEOUT_SEC remained as an inert top-level setting outside LANE_CMD_3'
+fi
 lane_cmd_numbers=$(grep -Eo 'LANE_CMD_[0-9]+' "$ROOT/config/nightshift.conf.example" | sed 's/.*_//' | sort -nu)
 lane_cmd_max=$(printf '%s\n' "$lane_cmd_numbers" | tail -n 1)
 expected_lane_cmd_numbers=$(seq 1 "$lane_cmd_max")

@@ -226,4 +226,17 @@ export NIGHT_ID=2026-08-03
 ledger_ingest_proposals "$health_three"
 [ "$LEDGER_INGESTED_COUNT" -eq "$health_ingested_two" ] && [ "$LEDGER_DUPLICATE_COUNT" -eq 0 ] && [ "$LEDGER_SKIPPED_COUNT" -eq 0 ] || fail 'consecutive self-health proposal fell into the ledger duplicate path'
 
+# OBS-1 positive control: two explicit OC-A NO-INPUT nights reach a two-night
+# zero-streak threshold. A green checker remains covered by the negative control
+# above and must not trigger merely because it found zero registry failures.
+oc_case_init zero-streak-positive
+case_roots="$case_roots $OC_CASE_ROOT"
+oc_make_remote family-os main none
+oc_write_single_api 506 family-os main
+oc_run 2026-08-01 OC_ZERO_STREAK_NIGHTS=2 OC_STALE_ESCALATE_NIGHTS=99
+jq -e '[.findings.self_health[] | select(.claim_kind == "zero-streak:OC-A")] | length == 0' "$OC_STATE/report/2026-08-01.json" >/dev/null || fail 'OC-A zero streak fired one night before its threshold'
+oc_run 2026-08-02 OC_ZERO_STREAK_NIGHTS=2 OC_STALE_ESCALATE_NIGHTS=99
+jq -e '[.cells[] | select(.check_id == "OC-A" and .status == "NO-INPUT")] | length == 1' "$OC_STATE/report/2026-08-02.json" >/dev/null || fail 'OC-A missing checker control was not NO-INPUT'
+jq -e '[.findings.self_health[] | select(.claim_kind == "zero-streak:OC-A")] | length == 1' "$OC_STATE/report/2026-08-02.json" >/dev/null || fail 'two OC-A NO-INPUT nights did not fire zero-streak self-health'
+
 printf 'test_lane_org_consistency_lifecycle: PASS\n'

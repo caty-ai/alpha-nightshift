@@ -201,6 +201,7 @@ oc_run() {
     OC_STATE_DIR="$OC_STATE" \
     OC_API_FIXTURE="$OC_API" \
     OC_TEST_MODE=1 \
+    OC_TEST_DISABLE_L2=1 \
     OC_TEST_FIXTURE_GIT_ROOT="$OC_REMOTES" \
     OC_TEST_MUTATE="${OC_TEST_MUTATE:-}" \
     "$@" \

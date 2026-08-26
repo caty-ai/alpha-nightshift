@@ -225,7 +225,7 @@ write_report_fixture "$stale_report_dir" "$NIGHT_ID"
 touch -t "$(date -v-5d '+%Y%m%d0000' 2>/dev/null || date -d '-5 days' '+%Y%m%d0000')" "$stale_report_dir/$NIGHT_ID.json"
 run_digest "$stale_config"
 stale_digest="$stale_state/digests/$NIGHT_ID.md"
-assert_contains 'WARNING: org-consistency latest report is 5 days old (max 3)' "$stale_digest"
+assert_contains 'WARNING: org-consistency latest report is 5 days old (>3 days)' "$stale_digest"
 
 boundary_state="$TEST_TMP/boundary-state"
 boundary_config="$TEST_TMP/boundary.conf"
@@ -243,7 +243,7 @@ assert_not_contains 'WARNING: org-consistency latest report is' "$TEST_TMP/bound
 over_boundary_mtime=$((boundary_now - 3 * 86400 - 3600))
 touch -t "$(date -r "$over_boundary_mtime" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$over_boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
 digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/over-boundary.out"
-assert_contains 'WARNING: org-consistency latest report is 3 days old (max 3)' "$TEST_TMP/over-boundary.out"
+assert_contains 'WARNING: org-consistency latest report is 3 days old (>3 days)' "$TEST_TMP/over-boundary.out"
 
 missing_state="$TEST_TMP/missing-state"
 missing_config="$TEST_TMP/missing.conf"

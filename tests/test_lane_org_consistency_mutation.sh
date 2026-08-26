@@ -28,5 +28,8 @@ assert_mutation_red degraded-whole-stdout test_lane_org_consistency_core.sh
 assert_mutation_red rc0-contract test_lane_org_consistency_lifecycle.sh
 assert_mutation_red sanitize test_lane_org_consistency_oc_bcd.sh
 assert_mutation_red freshness-threshold test_digest.sh
+assert_mutation_red invalid-output-guard test_lane_org_consistency_layer2.sh
+assert_mutation_red l2-diff-selection test_lane_org_consistency_layer2.sh
+assert_mutation_red reference-links test_lane_org_consistency_oc_bcd.sh
 
 printf 'test_lane_org_consistency_mutation: PASS\n'

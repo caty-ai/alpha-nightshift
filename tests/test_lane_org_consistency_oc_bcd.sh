@@ -45,15 +45,22 @@ cat >> "$demo/README.md" <<'EOF'
 
 [missing doc](docs/missing.md)
 [missing anchor](#not-there)
+[reference missing]: docs/reference-missing.md
+[reference ghost]: https://github.com/ref-owner/ref-ghost
+[^1]: docs/footnote-definition-is-not-a-link.md
 https://github.com/outside-owner/demo
 https://github.com/no-owner/ghost
 https://github.com/legacy/known-neighbor
 
 ```markdown
 [fenced missing](docs/fenced-missing.md)
+[fenced reference]: docs/fenced-reference.md
 https://github.com/no-owner/fenced-ghost
 ```
 EOF
+mkdir -p "$demo/.claude"
+printf '%s\n' '[claude missing](../docs/claude-missing.md)' > "$demo/.claude/notes.md"
+printf '%s\n' '[json missing](../docs/json-missing.md)' > "$demo/.claude/settings.json"
 printf '%s\n' \
   '# Agent notes' \
   'Use scripts/existing and scripts/missing.' \
@@ -105,11 +112,15 @@ for check_id in OC-A OC-B OC-C OC-D; do
 done
 jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "xrepo:legacy/known-neighbor")] | length == 0' "$report" >/dev/null || fail 'known adjacent repo was not suppressed from OC-B'
 jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "xrepo:outside-owner/demo")] | length == 1' "$report" >/dev/null || fail 'OC-B owner mismatch was not independently fingerprinted'
+jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "rel:docs/reference-missing.md")] | length == 1' "$report" >/dev/null || fail 'OC-B did not extract a broken reference-style relative link'
+jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "xrepo:ref-owner/ref-ghost")] | length == 1' "$report" >/dev/null || fail 'OC-B did not route a reference-style GitHub target through xrepo'
+jq -e '[.findings.new[] | select(.check_id == "OC-B" and .claim_kind == "rel:../docs/claude-missing.md")] | length == 1' "$report" >/dev/null || fail 'OC-B did not scan .claude markdown input'
+jq -e '[.findings.new[] | select(.check_id == "OC-B" and (.claim_kind == "rel:docs/footnote-definition-is-not-a-link.md" or .claim_kind == "rel:../docs/json-missing.md"))] | length == 0' "$report" >/dev/null || fail 'OC-B treated a GFM footnote or .claude non-Markdown file as a link input'
 jq -e '[.findings.new[] | select(.check_id == "OC-C" and .claim_kind == "lang-missing:th")] | length == 1' "$report" >/dev/null || fail 'OC-C language absence was not detected'
 jq -e '[.findings.new[] | select(.check_id == "OC-C" and (.claim_kind | startswith("heading-drift:ja:")))] | length > 0' "$report" >/dev/null || fail 'OC-C heading tree drift was not detected'
 jq -e '[.findings.new[] | select(.check_id == "OC-D" and .claim_kind == "ref:scripts/missing")] | length == 1' "$report" >/dev/null || fail 'OC-D extensionless scripts reference was not detected'
 jq -e '[.findings.new[] | select(.check_id == "OC-D" and (.claim_kind | contains("*")))] | length == 0' "$report" >/dev/null || fail 'OC-D accepted an out-of-scope glob token'
-jq -e '[.findings.new[] | select(.claim_kind == "rel:docs/fenced-missing.md" or .claim_kind == "xrepo:no-owner/fenced-ghost")] | length == 0' "$report" >/dev/null || fail 'OC-B scanned fenced examples'
+jq -e '[.findings.new[] | select(.claim_kind == "rel:docs/fenced-missing.md" or .claim_kind == "rel:docs/fenced-reference.md" or .claim_kind == "xrepo:no-owner/fenced-ghost")] | length == 0' "$report" >/dev/null || fail 'OC-B scanned fenced examples'
 jq -e '[.findings.new[] | select(.check_id == "OC-D" and (.claim_kind == "ref:scripts/fenced-missing" or .claim_kind == "ref:docs/fenced-agent.md" or (.claim_kind | contains("github.com"))))] | length == 0' "$report" >/dev/null || fail 'OC-D scanned fenced paths or URL host segments'
 [ ! -s "$OC_CASE_ROOT/lanes/2026-08-01/findings.jsonl" ] || fail 'baseline findings leaked into findings.jsonl'
 
@@ -162,6 +173,7 @@ oc_write_readmes "$demo"
 mkdir -p "$demo/docs"
 printf '%s\n' '# Existing' '' '## not there' > "$demo/docs/missing.md"
 printf '%s\n' present > "$demo/docs/ghost.md"
+printf '%s\n' present > "$demo/docs/claude-missing.md"
 printf '%s\n' '#!/bin/bash' 'exit 0' > "$demo/scripts/missing"
 chmod +x "$demo/scripts/missing"
 oc_commit "$demo" fix-bcd
