@@ -8,7 +8,7 @@ alpha-nightshift is a macOS nightly observation and repair harness for repositor
 
 ## Architecture
 
-The system comprises eight core components working within isolation boundaries to maintain safety and auditability.
+The system comprises core components working within isolation boundaries to maintain safety and auditability.
 
 | Component | Paths | Responsibility |
 |---|---|---|
@@ -16,10 +16,25 @@ The system comprises eight core components working within isolation boundaries t
 | night-bot | `launchd/`, `bin/nightshift-dispatch` | Dispatcher that runs credential-free observation lanes serially, manages worktree lifecycle, handles SIGINT gracefully, and enforces wall-clock timeouts |
 | triage | `bin/morning-triage`, `lib/triage-*.sh`, `templates/` | Daytime read-only verification against current main, automatic deduplication across ledger history, and evidence-driven candidate ranking with GitHub integration |
 | metsuke | `lanes/review/run.sh`, `lib/evidence.sh` | Multimodel review observation lane with deterministic DESIGN-lens assignment, rotating reviewer seats, JSONL parsing with persona reconstruction, and lane-HOME credential narrowing |
+| org-consistency | `lanes/org-consistency/`, `bin/oc-suggest` | Org-wide public-surface drift detection with deterministic and model-assisted checks, a fingerprint lifecycle ledger, and a human-gated daytime issue path |
 | drift-monitor | `guard/drift-monitor.sh` | Read-only control-plane drift check that verifies GitHub App permissions, webhook configuration, installation identity, and publishes only MATCH / DRIFT_DENY / MONITOR_UNVERIFIED verdicts |
 | tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | GitHub-hosted reusable gates (ubuntu + macos) for lint and make test, plus the full-contract suite with pinned tool verification on hosted macos-15 for every event |
 | docs | `docs/*.md` | Design documentation including morning-triage specification, night-bot revocation runbook, and this engineering guide |
 | i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | Non-code translations: the front-door README in four languages, plus Japanese mirrors of the engineering and reference docs |
+
+---
+
+## Org-consistency observation lane
+
+The org-consistency lane reads the organization's public repositories without GitHub credentials and detects drift without filing or closing issues at night. Its checks are split by cost and judgment: **L1** runs deterministic checks on every eligible run (`OC-A` through `OC-D`); **L2** uses read-only model seats for change-driven semantic comparisons (`OC-E` through `OC-H`); and **L3** schedules rotating qualitative README checks (`OC-I` and `OC-J`) on its configured weekday. L2 and L3 seat output is schema-checked and treated as untrusted input; the lane computes identities itself.
+
+Before work begins, the runner writes `state/org-consistency/plan-<NIGHT_ID>.json`. A **cell** is one planned `check_id × repo_id` unit. Reports use the closed state vocabulary `RUN`, `NO-INPUT`, `STALE-INPUT`, `NOT-RUN`, and `INVALID-OUTPUT`; capped work is marked `deferred` rather than disappearing. Missing results become `NOT-RUN`, and reports are published atomically during the run, so an interrupted night leaves visible partial coverage instead of a false clean result.
+
+Findings are reconciled in `state/org-consistency/findings.json` by a deterministic SHA-256 **fingerprint** built from length-prefixed identity fields: fingerprint-spec version, check ID, numeric repository ID, normalized file, and lane-derived claim kind. Repeated observations update `last_seen`; an open finding becomes a resolved candidate only after its own cell runs successfully with fresh input. The first baseline and fingerprint-migration runs are quiet, preventing a bootstrap or identity rewrite from becoming an issue burst.
+
+`bin/oc-suggest` is the separate daytime gate. It lists open and resolved candidates, can explicitly promote a baseline fingerprint, and files only selected fingerprints through an authenticated `gh` session while writing the issue reference back under the lane lock. Self-health findings are informational and cannot be promoted or filed. The lane emits self-health when coverage signals degrade, including sustained zero extraction, stale targets or mirrors, excessive non-running cells, invalid model output, and a changed registry schema.
+
+Freshness is checked twice: `oc-suggest` warns when its latest report is too old, while the regular morning digest can expose a missing or stale org-consistency report when `OC_FRESHNESS_ENFORCE=1`. The full operator surface, including the `env -i` command-embedding requirement, is in [the reference](reference.md#org-consistency-settings).
 
 ---
 
@@ -61,11 +76,11 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 This gate runs `make test` and `make lint` on ubuntu and macOS (macOS run controlled by `run_macos: true`). Suite reconciliation is enforced on the ubuntu job (`require_suite_reconciliation: true`); the reusable does not reconcile on its macOS job.
 
-The test lanes deliberately cover different depths, because most of this suite is Darwin-native. Counts are measured (run 32474196361), all at `declared=30`:
+The test lanes deliberately cover different depths, because most of this suite is Darwin-native:
 
 - **ubuntu** — the portable subset (Darwin-bound suites skip with printed per-suite reasons under a caller-declared skip cap), `make lint`, and the reconciliation arithmetic itself
-- **hosted macOS, reusable lane** (`test-lint.yml` → `test-macos`) — 25 of 30; the suites bound to the pinned gitleaks/git contract paths skip, because this lane does not install them
-- **hosted macOS, full contract** (`ci.yml` on `pull_request`) — all 30. This job installs the pinned gitleaks and git contract paths itself rather than assuming the runner ships them, and fails if even one suite skipped
+- **hosted macOS, reusable lane** (`test-lint.yml` → `test-macos`) — suites bound to pinned gitleaks/git contract paths skip because this lane does not install them
+- **hosted macOS, full contract** (`ci.yml` on `pull_request`) — installs the pinned gitleaks and git contract paths itself, runs the complete discovered census, and fails if even one suite skips
 - **hosted macOS, full contract** (`ci.yml` on `push` to `main`) — the same full contract, re-run after merge
 
 ### Full-contract suite

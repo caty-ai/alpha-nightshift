@@ -292,6 +292,7 @@ printf '%s  %s\n' \
   34911274374734bf556bd70a0156b8f75ea10b69823e2d63996d95ba05540575 "$meetmate_corpus/package.json" \
   34e4167f6815f1225ef99ce1e1b73b6dcff390c992c2670b31af802a3ef459a5 "$handbook_corpus/README.md" \
   3b98c310db52c4cf2024006f216aadc049f25e6cd8e00de6166ac4cb13885149 "$handbook_corpus/README.ja.md" \
+  3c18175c9ec00644c17e6ef708c472d068133294d31874d5fedc01825750bdb2 "$handbook_corpus/docs/05-fail-posture.md" \
   | shasum -a 256 -c >/dev/null || fail 'pinned B/C/D corpus drifted'
 
 oc_case_init real-bcd

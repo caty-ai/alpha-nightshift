@@ -214,6 +214,37 @@ Neither success nor denial emits the proposed text itself.
 
 ---
 
+<a id="org-consistency-settings"></a>
+
+## Org-consistency settings
+
+The public operator surface below is synchronized with `config/nightshift.conf.example`. Positive-integer settings fail closed when malformed; `OC_L3_WEEKDAY` additionally accepts only ISO weekdays `1` through `7`.
+
+| Setting | Scope and example value | Meaning |
+|---|---|---|
+| `OC_FRESHNESS_ENFORCE` | daytime digest; `0` | Set to `1` when the lane is enabled to report a missing or stale org-consistency report in the morning digest. |
+| `OC_REPORT_DIR` | daytime digest / `oc-suggest`; unset | Report directory override. When unset, it follows the org-consistency directory under the Nightshift state directory. |
+| `OC_REPORT_MAX_AGE_DAYS` | daytime digest / `oc-suggest`; `3` | Maximum report age before the freshness sensor warns. |
+| `OC_SUGGEST_REPO` | lane and `oc-suggest`; `caty-ai/alpha-nightshift-dev` | Repository used for daytime issue filing and for lane-level self-health attribution. |
+| `OC_STATE_DIR` | lane; required absolute path | Non-symlink state root containing mirrors, plans, reports, journals, and the findings ledger. |
+| `OC_L2_MAX_REPOS` | lane; `3` | Per-night repository cap for the combined `OC-E`/`OC-F`/`OC-G` queue. |
+| `OC_H_MAX_REPOS` | lane; `2` | Independent per-night repository cap for `OC-H`. |
+| `OC_L3_MAX_REPOS` | lane; `3` | Repository cap for a scheduled `OC-I`/`OC-J` run; selection rotates by least recent attempt. |
+| `OC_L3_WEEKDAY` | lane; `7` | ISO weekday on which L3 is planned (`1` is Monday and `7` is Sunday), derived from `NIGHT_ID`. |
+| `OC_EXCLUDE_REPOS` | lane; empty | Comma-separated repository names or `owner/name` values excluded from the target set. |
+| `OC_LANG_POLICY` | lane; `4` | Fallback README language policy when the registry does not declare one. `4` means English, Japanese, Simplified Chinese, and Thai; comma lists and semicolon-separated repository overrides are also accepted. |
+| `OC_AGENT_DOC_GLOBS` | lane; empty | Comma-separated additional globs for agent-instruction documents beyond the built-in names. |
+| `OC_LEFT_SCOPE_WINDOW_NIGHTS` | lane; `30` | Number of nights a finding may remain outside the current target set before it becomes left-scope-expired. |
+| `OC_ZERO_STREAK_NIGHTS` | lane; `5` | Consecutive zero-extraction nights that trigger an informational self-health finding. |
+| `OC_STALE_ESCALATE_NIGHTS` | lane; `3` | Consecutive stale-target or stale-mirror nights that trigger self-health. |
+| `OC_PROMPT_MAX_BYTES` | lane; `262144` | Maximum encoded prompt size per model-seat invocation. Oversized work is recorded as `NOT-RUN` with reason `prompt-too-large`. |
+| `OC_SEAT_TIMEOUT_SEC` | lane; `900` | Positive per-invocation timeout for each read-only model seat. |
+| `OC_SEAT_CMD` | lane; required for L2/L3 | Full command used by `seat.sh`; it receives the prompt on stdin and runs from a scratch working directory. |
+
+Lane commands are intentionally launched under `env -i`. A top-level assignment in `nightshift.conf` is therefore **not inherited by the lane**: every lane-scoped `OC_*` value must be embedded inside the `LANE_CMD_3` command string, as shown in `config/nightshift.conf.example`. The daytime freshness settings are the exception because the dispatcher and `oc-suggest` read them outside the isolated lane process. Keep `LANE_CMD_n` entries contiguous; dispatch stops at the first missing number.
+
+---
+
 ## Local gateway interface
 
 The gateway accepts only these operations:

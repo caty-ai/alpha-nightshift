@@ -214,6 +214,37 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 
 ---
 
+<a id="org-consistency-settings"></a>
+
+## Org-consistency設定
+
+以下の公開運用設定は`config/nightshift.conf.example`と同期しています。正の整数を要求する設定は不正な値でフェイルクローズし、`OC_L3_WEEKDAY`はさらにISO曜日の`1`〜`7`のみを受け付けます。
+
+| 設定 | スコープと例値 | 意味 |
+|---|---|---|
+| `OC_FRESHNESS_ENFORCE` | 日中ダイジェスト、`0` | レーンを有効にしたら`1`に設定し、org-consistencyレポートの未生成・鮮度低下を朝ダイジェストに表示します。 |
+| `OC_REPORT_DIR` | 日中ダイジェスト／`oc-suggest`、未設定 | レポートディレクトリの上書き。未設定の場合はNightshift stateディレクトリ下のorg-consistencyディレクトリに従います。 |
+| `OC_REPORT_MAX_AGE_DAYS` | 日中ダイジェスト／`oc-suggest`、`3` | 鮮度センサーが警告するまでの最大レポート経過日数。 |
+| `OC_SUGGEST_REPO` | レーンと`oc-suggest`、`caty-ai/alpha-nightshift-dev` | 日中のIssue起票先、およびレーン自身のself-health帰属先リポジトリ。 |
+| `OC_STATE_DIR` | レーン、絶対パス必須 | ミラー、plan、レポート、journal、finding台帳を保存する非シンボリックリンクのstate root。 |
+| `OC_L2_MAX_REPOS` | レーン、`3` | `OC-E`／`OC-F`／`OC-G`合同キューの1夜あたりリポジトリ上限。 |
+| `OC_H_MAX_REPOS` | レーン、`2` | `OC-H`用の独立した1夜あたりリポジトリ上限。 |
+| `OC_L3_MAX_REPOS` | レーン、`3` | `OC-I`／`OC-J`実行時のリポジトリ上限。対象は最終試行が古い順にローテーションします。 |
+| `OC_L3_WEEKDAY` | レーン、`7` | `NIGHT_ID`から決定論的に導出したL3計画のISO曜日（`1`は月曜日、`7`は日曜日）。 |
+| `OC_EXCLUDE_REPOS` | レーン、空 | 対象集合から除外する、カンマ区切りのリポジトリ名または`owner/name`。 |
+| `OC_LANG_POLICY` | レーン、`4` | registryに宣言がない場合のREADME言語フォールバック。`4`は英語、日本語、簡体中国語、タイ語を意味し、カンマ区切りの一覧とセミコロン区切りのリポジトリ個別上書きも受け付けます。 |
+| `OC_AGENT_DOC_GLOBS` | レーン、空 | 組み込み名以外にagent指示ドキュメントとして追加する、カンマ区切りのglob。 |
+| `OC_LEFT_SCOPE_WINDOW_NIGHTS` | レーン、`30` | findingがleft-scope-expiredになるまで、現在の対象集合外で保持される夜数。 |
+| `OC_ZERO_STREAK_NIGHTS` | レーン、`5` | 情報提供用self-health findingを発行するまでの、連続した抽出ゼロ夜数。 |
+| `OC_STALE_ESCALATE_NIGHTS` | レーン、`3` | staleな対象またはミラーについてself-healthを発行するまでの連続夜数。 |
+| `OC_PROMPT_MAX_BYTES` | レーン、`262144` | モデル席1回の起動で許されるエンコード済みprompt最大バイト数。超過した作業は理由`prompt-too-large`の`NOT-RUN`として記録されます。 |
+| `OC_SEAT_TIMEOUT_SEC` | レーン、`900` | 読み取り専用モデル席の1起動あたり正のタイムアウト秒数。 |
+| `OC_SEAT_CMD` | レーン、L2／L3で必須 | `seat.sh`が使う完全なコマンド。promptをstdinで受け、scratch作業ディレクトリから実行されます。 |
+
+レーンコマンドは意図的に`env -i`下で起動されます。したがって`nightshift.conf`のトップレベルへの代入は**レーンに継承されません**。レーンスコープのすべての`OC_*`値は、`config/nightshift.conf.example`の例のように`LANE_CMD_3`のコマンド文字列内へ埋め込む必要があります。日中の鮮度設定は、dispatcherと`oc-suggest`が隔離レーンプロセス外で読むため例外です。`LANE_CMD_n`は連番を維持してください。dispatcherは最初に欠番した番号で走査を停止します。
+
+---
+
 ## ローカルゲートウェイインターフェース
 
 ゲートウェイが受け付けるのは、次の操作のみです:

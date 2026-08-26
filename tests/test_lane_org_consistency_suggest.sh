@@ -59,6 +59,7 @@ jq -n \
         file: "README.md",
         claim_kind: "rel:docs/missing.md",
         claim: $open_claim,
+        confidence: "medium",
         first_seen: "2026-08-23",
         last_seen: "2026-08-24",
         status: "open",
@@ -145,6 +146,7 @@ OC_SUGGEST_TODAY=2026-08-25 \
 assert_contains 'Latest report: report/2026-08-20.json (2026-08-20)' "$list_output"
 assert_contains 'WARNING: latest report is 5 days old (> 3)' "$list_output"
 assert_contains "$FP_OPEN" "$list_output"
+assert_contains "$FP_OPEN [OC-B] caty-ai/demo README.md confidence=medium" "$list_output"
 assert_contains "$FP_RESOLVED issue #88" "$list_output"
 assert_not_contains "$FP_BASELINE" "$list_output"
 assert_not_contains "$FP_OCA" "$list_output"
@@ -158,6 +160,7 @@ stale_snapshot_output="$TEST_TMP/list-stale-snapshot.out"
 OC_SUGGEST_TODAY=2026-08-25 \
   /bin/bash "$ROOT/bin/oc-suggest" --state-dir "$STATE_DIR" >"$stale_snapshot_output"
 assert_contains "$FP_OCA" "$stale_snapshot_output"
+assert_not_contains "$FP_OCA [OC-A] caty-ai/family-os registry/modules.json confidence=" "$stale_snapshot_output"
 assert_contains 'NOTE: family-os issues snapshot is missing or stale; OC-A candidates were not suppressed.' "$stale_snapshot_output"
 
 invalid_fp_rc=0
