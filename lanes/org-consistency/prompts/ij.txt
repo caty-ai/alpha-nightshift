@@ -19,8 +19,8 @@ For OC-J, act as a first-time non-technical reader with only 30 seconds. Score
 the English README from 1 through 5 for whether it quickly explains what the
 project does, which problem it solves, and how to start. score must be an integer.
 Return exactly one OC-J assessment when README.md is supplied, including the
-score rationale in claim; the lane accepts it as a finding only when score is 1
-or 2. Use README.md for file.
+score rationale in claim. Score honestly; do not consider how the score will be
+used. Use README.md for file.
 
 confidence is high, medium, or low. claim must contain 1..500 characters and
 evidence at most 1000 characters. Report only supplied evidence. Otherwise return

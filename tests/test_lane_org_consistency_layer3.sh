@@ -68,6 +68,44 @@ jq -e '
   ([.events[] | select(.type == "SEAT-INVOKED" and .repo_id == 3101)] | length) == 1
 ' "$OC_STATE/report/2026-08-02.json" >/dev/null || fail 'matching Sunday did not run one bundled OC-I/J seat'
 
+# Fenced command bodies are deliberately absent from the seat payload. A README
+# shaped like this repository remains eligible for gate 9 because the quick-start
+# structure and lead sentences are visible outside the fence.
+setup_ij_case l3-quickstart-fenced-command 3151
+cat > "$OC_WORK/demo-1/README.md" <<'EOF'
+# alpha-nightshift fixture
+
+An operations suite for unattended repository checks.
+
+## Quick start
+
+Prerequisite: a local clone and Bash.
+
+### Installation
+
+Install the checked-in scripts from this repository.
+
+### Minimum configuration
+
+Set the lane directory before the first run.
+
+### First invocation
+
+Run the lane once to create its state.
+
+```bash
+./bin/nightshift fixture-command
+```
+EOF
+oc_commit "$OC_WORK/demo-1" quickstart-fenced-command
+oc_push_work demo-1 main
+run_ij 2026-08-02 ij-quickstart-fence
+jq -e '
+  ([.cells[] | select(.repo_id == 3151 and .check_id == "OC-I" and .status == "RUN" and .metrics.flagged == 0)] | length) == 1 and
+  ([.findings.new[] | select(.repo_id == 3151 and .check_id == "OC-I" and .claim_kind == "gate:9")] | length) == 0
+' "$OC_STATE/report/2026-08-02.json" >/dev/null || fail 'fenced-only command body produced a gate:9 false positive'
+jq -e '[.findings[] | select(.repo_id == 3151 and .check_id == "OC-I" and .claim_kind == "gate:9")] | length == 0' "$OC_STATE/findings.json" >/dev/null || fail 'gate:9 false positive entered the open set'
+
 # OC-J score 3 is an accepted result but not a finding.
 setup_ij_case l3-score-three 3201
 run_ij 2026-08-01 ij-score-3
@@ -88,6 +126,21 @@ jq -e '
   ([.findings.new[] | select(.repo_id == 3301 and .check_id == "OC-J" and .claim_kind == "first30" and .score == 2 and (.claim | contains("score 2")))] | length) == 1
 ' "$OC_STATE/report/2026-08-02.json" >/dev/null || fail 'OC-J score 2 did not produce the first30 finding with rationale'
 jq -e -s 'length == 1 and .[0].kind == "org-consistency/OC-J" and .[0].confirm_cost == "3分"' "$OC_CASE_ROOT/lanes/2026-08-02/findings.jsonl" >/dev/null || fail 'OC-J score 2 violated the layer-3 proposal mapping'
+run_ij 2026-08-09 ij-score-2
+jq -e '[.findings[] | select(.repo_id == 3301 and .check_id == "OC-J" and .claim_kind == "first30" and .last_seen == "2026-08-09" and .score == 2)] | length == 1' "$OC_STATE/findings.json" >/dev/null || fail 'OC-J score 2 was not re-observed with its score intact'
+
+# Layer 3 is weekly by default, so zero-streak prose counts scheduled runs rather
+# than calendar nights. Two README-missing Sundays exercise that shared message.
+setup_ij_case l3-zero-streak-wording 3351
+rm "$OC_WORK/demo-1"/README*.md
+oc_commit "$OC_WORK/demo-1" remove-readmes
+oc_push_work demo-1 main
+run_ij 2026-08-02 ij-valid OC_ZERO_STREAK_NIGHTS=2
+run_ij 2026-08-09 ij-valid OC_ZERO_STREAK_NIGHTS=2
+jq -e '
+  ([.findings.self_health[] | select(.claim_kind == "zero-streak:OC-I" and (.claim | contains("2 consecutive scheduled runs")))] | length) == 1 and
+  ([.findings.self_health[] | select(.claim_kind == "zero-streak:OC-J" and (.claim | contains("2 consecutive scheduled runs")))] | length) == 1
+' "$OC_STATE/report/2026-08-09.json" >/dev/null || fail 'layer-3 zero streak was not described as consecutive scheduled runs'
 
 # A schema breach has the same INVALID-OUTPUT contract as layer 2, including
 # non-fresh cells and self-health. The same single-repo queue remains retryable

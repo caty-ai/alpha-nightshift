@@ -1906,10 +1906,18 @@ class Runner:
 
     def readme_gate_item_ids(self) -> set[int]:
         gate_path = pathlib.Path(__file__).resolve().parent / "readme-gate.md"
+        gate_text = self.read_text(gate_path)
+        checklist_heading = re.search(r"(?m)^## Numbered checklist\s*$", gate_text)
+        if checklist_heading is None:
+            raise LaneError("readme-gate.md is missing the numbered checklist heading")
+        checklist = gate_text[checklist_heading.end() :]
+        next_heading = re.search(r"(?m)^##\s+", checklist)
+        if next_heading is not None:
+            checklist = checklist[: next_heading.start()]
         item_ids = {
             int(match.group("item"))
             for match in re.finditer(
-                r"(?m)^(?P<item>[1-9][0-9]*)\.\s+", self.read_text(gate_path)
+                r"(?m)^(?P<item>[1-9][0-9]*)\.\s+", checklist
             )
         }
         if not item_ids:
@@ -2539,7 +2547,7 @@ class Runner:
             if streak >= self.zero_streak_nights:
                 self.emit_self_health(
                     f"zero-streak:{check_id}",
-                    f"{check_id} {metric_name} zero candidates for {streak} consecutive nights",
+                    f"{check_id} {metric_name} zero candidates for {streak} consecutive scheduled runs",
                 )
         mirror_stale = any(not synced for synced, _meta in self.mirror_results.values())
         stale = self.target_status != "FRESH" or mirror_stale or any(

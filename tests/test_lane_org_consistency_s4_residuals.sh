@@ -150,6 +150,40 @@ jq -e '
 ' "$OC_STATE/report/2026-08-03.json" >/dev/null || fail 'raised prompt limit did not retry the changed repository'
 jq -e '.repos["4201"].layer2.efg_night == "2026-08-03" and .repos["4201"].layer2.efg_head == .repos["4201"].head' "$OC_STATE/repos.json" >/dev/null || fail 'successful prompt retry did not consume the changed HEAD'
 
+# README gate IDs come only from the vendored checklist section and remain the
+# frozen 1..16 set. The synthetic preface catches accidental whole-file scans.
+/usr/bin/env PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B - "$OC_CORE" <<'PY'
+import importlib.util
+import pathlib
+import re
+import sys
+
+spec = importlib.util.spec_from_file_location("org_consistency_core", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+runner = module.Runner.__new__(module.Runner)
+expected_ids = set(range(1, 17))
+assert runner.readme_gate_item_ids() == expected_ids
+
+gate_path = pathlib.Path(sys.argv[1]).resolve().parent / "readme-gate.md"
+gate_text = gate_path.read_text(encoding="utf-8")
+assert "contents of fenced code blocks" in gate_text
+assert "the Core item 2 language-navigation requirement is evaluated only under item 15" in gate_text
+assert "Command-body validity is outside this gate" in gate_text
+assert "uses as organization, product, or repository names are excluded" in gate_text
+item_nine = re.search(r"(?m)^9\. .+$", gate_text)
+assert item_nine is not None
+assert "heading or lead sentence" in item_nine.group(0)
+assert "copied as written" not in item_nine.group(0)
+
+synthetic = "99. provenance note, not a gate item\n## Numbered checklist\n" + "\n".join(
+    f"{item}. fixture" for item in range(1, 17)
+)
+runner.read_text = lambda _path: synthetic
+assert runner.readme_gate_item_ids() == expected_ids
+PY
+
 # The pinned public handbook corpus must exercise the deterministic rule-index
 # extractor. This prevents an all-zero real-world OC-H input from passing CI.
 CORPUS_ROOT="$TEST_DIR/fixtures/corpus/family-dev-handbook/49be5f3"

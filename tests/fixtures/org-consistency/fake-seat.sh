@@ -77,10 +77,29 @@ case "$mode" in
     if printf '%s\n' "$prompt" | grep -q '"agent_docs"'; then
       exit 4
     fi
-    if ! printf '%s\n' "$prompt" | grep -Eq '"(gate_items|readme_gate_items)"'; then
+    if ! printf '%s\n' "$prompt" | grep -q '"gate_items"'; then
+      exit 4
+    fi
+    printf '%s\n' "$prompt" | grep -q 'Score honestly; do not consider how the score will be' || exit 4
+    if printf '%s\n' "$prompt" | grep -q 'accepts it as a finding'; then
       exit 4
     fi
     printf '%s\n' '{"findings":[]}'
+    ;;
+  ij-quickstart-fence)
+    [ "$(seat_launch)" = OC-I/J ] || exit 4
+    for lead in '## Quick start' 'Prerequisite:' '### Installation' '### Minimum configuration' '### First invocation'; do
+      printf '%s\n' "$prompt" | grep -q "$lead" || exit 4
+    done
+    if printf '%s\n' "$prompt" | grep -q './bin/nightshift fixture-command'; then
+      printf '%s\n' 'fenced command leaked into OC-I/J input' >&2
+      exit 4
+    fi
+    if printf '%s\n' "$prompt" | grep -q 'copied as written'; then
+      printf '%s\n' '{"findings":[{"check_id":"OC-I","file":"README.md","gate_item":9,"claim":"first invocation cannot be copied from the supplied README","evidence":"fenced command body is not supplied","confidence":"high"},{"check_id":"OC-J","file":"README.md","score":3,"claim":"score 3: quick-start leads are understandable","evidence":"fixture","confidence":"medium"}]}'
+    else
+      printf '%s\n' '{"findings":[{"check_id":"OC-J","file":"README.md","score":3,"claim":"score 3: quick-start leads are understandable","evidence":"fixture","confidence":"medium"}]}'
+    fi
     ;;
   ij-score-3)
     [ "$(seat_launch)" = OC-I/J ] || exit 4
