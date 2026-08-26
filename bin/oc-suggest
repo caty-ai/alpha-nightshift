@@ -213,8 +213,13 @@ oc_suggest_render_open_line() {
   check_id=$(printf '%s\n' "$finding_json" | jq -r '.check_id // "-"')
   repo=$(printf '%s\n' "$finding_json" | jq -r '.repo // "-"')
   file=$(printf '%s\n' "$finding_json" | jq -r '.file // .target // "-"')
+  confidence=$(printf '%s\n' "$finding_json" | jq -r '.confidence // empty')
   summary=$(oc_suggest_finding_summary "$finding_json")
-  printf '%s\n' "- $fp [$check_id] $repo $file :: $summary"
+  if [ -n "$confidence" ]; then
+    printf '%s\n' "- $fp [$check_id] $repo $file confidence=$confidence :: $summary"
+  else
+    printf '%s\n' "- $fp [$check_id] $repo $file :: $summary"
+  fi
 }
 
 oc_suggest_render_resolved_line() {

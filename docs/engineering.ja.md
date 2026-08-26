@@ -8,7 +8,7 @@ alpha-nightshiftは、リポジトリメンテナンスのためのmacOS向け�
 
 ## アーキテクチャ
 
-このシステムは、安全性と監査可能性を維持するために隔離境界の中で動作する8つのコアコンポーネントで構成されています。
+このシステムは、安全性と監査可能性を維持するために隔離境界の中で動作するコアコンポーネントで構成されています。
 
 | コンポーネント | パス | 役割 |
 |---|---|---|
@@ -16,10 +16,25 @@ alpha-nightshiftは、リポジトリメンテナンスのためのmacOS向け�
 | night-bot | `launchd/`, `bin/nightshift-dispatch` | 認証情報を持たない観察レーンを直列に実行し、worktreeのライフサイクルを管理し、SIGINTを適切に処理し、実時間タイムアウトを強制するディスパッチャー |
 | triage | `bin/morning-triage`, `lib/triage-*.sh`, `templates/` | 現在のmainに対する日中の読み取り専用検証、台帳履歴全体にわたる自動重複排除、GitHub連携によるエビデンス駆動の候補ランキング |
 | metsuke | `lanes/review/run.sh`, `lib/evidence.sh` | 決定論的なDESIGN観点の割り当て、ローテーションするレビュアー席、ペルソナ再構成付きJSONLパース、レーンHOMEによる認証情報の限定を備えたマルチモデルレビュー観察レーン |
+| org-consistency | `lanes/org-consistency/`, `bin/oc-suggest` | 決定論的検査とモデル補助検査、fingerprintライフサイクル台帳、人間がゲートする日中の起票経路を備えた、org全体の公開面ドリフト検出 |
 | drift-monitor | `guard/drift-monitor.sh` | GitHub Appの権限、Webhook設定、インストールIDを検証し、MATCH／DRIFT_DENY／MONITOR_UNVERIFIEDのいずれかの判定のみを出力する、読み取り専用のコントロールプレーンドリフトチェック |
 | tests-ci | `.github/workflows/ci.yml`, `.github/workflows/test-lint.yml`, `tests/run_tests.sh` | lintとmake test用のGitHubホスト型再利用可能ゲート（ubuntu＋macos）に加え、バージョン固定ツール検証を伴う完全契約スイート（全イベントとも hosted の macos-15） |
 | docs | `docs/*.md` | morning-triage仕様書、night-bot失効ランブック、およびこのエンジニアリングガイドを含む設計ドキュメント |
 | i18n | `README.ja.md`, `README.zh.md`, `README.th.md`, `docs/*.ja.md` | 非コード翻訳: 4言語版の玄関口README、およびengineering・referenceドキュメントの日本語ミラー |
+
+---
+
+## Org-consistency観察レーン
+
+org-consistencyレーンは、GitHubの認証情報を使わずにorgの公開リポジトリを読み取り、夜間にIssueを起票・クローズせずにドリフトを検出します。検査はコストと判断の性質で分かれます。**L1**は毎回の対象実行で決定論的検査（`OC-A`〜`OC-D`）を行い、**L2**は読み取り専用モデル席で差分駆動の意味比較（`OC-E`〜`OC-H`）を行い、**L3**は設定された曜日にREADMEの定性検査（`OC-I`と`OC-J`）をローテーション実行します。L2とL3の席出力はスキーマ検証された信頼しない入力として扱われ、識別子はレーン自身が計算します。
+
+作業開始前に、ランナーは`state/org-consistency/plan-<NIGHT_ID>.json`を書きます。**セル**は、計画された1つの`check_id × repo_id`実行単位です。レポートの状態語彙は`RUN`、`NO-INPUT`、`STALE-INPUT`、`NOT-RUN`、`INVALID-OUTPUT`のクローズドセットで、上限で後回しになった作業は消えずに`deferred`と記録されます。結果のないセルは`NOT-RUN`となり、レポートは実行中もatomicに公開されるため、夜間実行が中断しても、綺麗だったと誤表示せず部分カバレッジが残ります。
+
+findingは、fingerprint仕様版、検査ID、数値のリポジトリID、正規化したファイル、レーンが導出したclaim kindの各識別フィールドを長さ付きで連結した、決定論的なSHA-256 **fingerprint**によって`state/org-consistency/findings.json`へ照合されます。再観測は`last_seen`を更新し、open findingが解決候補になるのはそのセル自身がfreshな入力で正常完了した後だけです。初回baselineとfingerprint移行の実行は静粛化され、初期棚卸しや識別子書き換えがIssueの大量発生になることを防ぎます。
+
+`bin/oc-suggest`は独立した日中のゲートです。open・解決候補の表示、baseline fingerprintの明示的な昇格、選択されfingerprintだけの認証済み`gh`セッションによる起票、およびレーンのロック下でのIssue参照書き戻しを行います。self-health findingは情報提供専用で、昇格や起票はできません。レーンは、抽出ゼロの継続、対象・ミラーの鮮度低下、未実行セルの過多、不正なモデル出力、registryスキーマの変化など、カバレッジの劣化信号に対してself-healthを発行します。
+
+鮮度は二重に検査されます。`oc-suggest`は最新レポートが古すぎると警告し、通常の朝ダイジェストは`OC_FRESHNESS_ENFORCE=1`のときorg-consistencyレポートの未生成・鮮度低下を表示できます。`env -i`によるコマンド埋め込み要件を含む運用設定の全体は[リファレンス](reference.ja.md#org-consistency-settings)を参照してください。
 
 ---
 
@@ -61,11 +76,11 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 このゲートはubuntuとmacOS上で`make test`と`make lint`を実行します（macOSでの実行は`run_macos: true`で制御されます）。スイートの整合性確認はubuntuジョブで強制されます（`require_suite_reconciliation: true`）。再利用可能ゲートのmacOSジョブでは整合性確認を行いません。
 
-テストレーンは意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです。件数は実測値です（run 32474196361・いずれも`declared=30`）:
+テストレーンは意図的に異なる深さをカバーしています。というのも、このスイートの大半はDarwin固有だからです:
 
 - **ubuntu** — 移植可能な部分（Darwin依存のスイートは、呼び出し元が宣言したスキップ上限の範囲内で、スキップ理由をスイートごとに出力しつつスキップします）、`make lint`、そして整合性確認の算出処理そのもの
-- **hosted macOS・共通ワークフロー側**（`test-lint.yml` の `test-macos`） — 30中25。固定版 gitleaks / git の契約パスに紐づくスイートは、このレーンがそれらを導入しないためスキップする
-- **hosted macOS・完全契約**（`ci.yml` の `pull_request`） — 30すべて。固定版ツールの契約パスはランナー任せにせずジョブ自身が導入する。1つでもスイートがスキップされたら失敗するステップつき
+- **hosted macOS・共通ワークフロー側**（`test-lint.yml` の `test-macos`） — このレーンは固定版gitleaks／gitの契約パスを導入しないため、それらに紐づくスイートはスキップする
+- **hosted macOS・完全契約**（`ci.yml` の `pull_request`） — 固定版gitleaks／gitの契約パスをジョブ自身が導入し、検出済みの全censusを実行し、1つでもスイートがスキップされたら失敗する
 - **hosted macOS・完全契約**（`ci.yml` の `main` への `push`） — 同じ完全契約を、マージ後に再実行
 
 ### 完全契約スイート

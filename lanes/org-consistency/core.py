@@ -27,7 +27,8 @@ from typing import Any
 
 LAYER_ONE_CHECK_IDS = ("OC-A", "OC-B", "OC-C", "OC-D")
 LAYER_TWO_CHECK_IDS = ("OC-E", "OC-F", "OC-G", "OC-H")
-CHECK_IDS = LAYER_ONE_CHECK_IDS + LAYER_TWO_CHECK_IDS
+LAYER_THREE_CHECK_IDS = ("OC-I", "OC-J")
+CHECK_IDS = LAYER_ONE_CHECK_IDS + LAYER_TWO_CHECK_IDS + LAYER_THREE_CHECK_IDS
 DEFAULT_ORG = "caty-ai"
 DEFAULT_FP_SPEC_VERSION = "2"
 LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
@@ -68,6 +69,10 @@ L2_FIELDS_BY_CHECK = {
     "OC-F": L2_COMMON_FIELDS | {"claim_type", "target_token"},
     "OC-G": L2_COMMON_FIELDS | {"target_token"},
     "OC-H": L2_COMMON_FIELDS | {"rule_id", "target_token"},
+}
+L3_FIELDS_BY_CHECK = {
+    "OC-I": L2_COMMON_FIELDS | {"gate_item"},
+    "OC-J": L2_COMMON_FIELDS | {"score"},
 }
 L2_CONFIDENCE = {"high", "medium", "low"}
 L2_DESC_PAIRS = {"api-registry", "registry-readme", "api-readme"}
@@ -198,6 +203,15 @@ class Runner:
         self.seat_timeout = self.positive_int("OC_SEAT_TIMEOUT_SEC", 900)
         self.l2_max_repos = self.positive_int("OC_L2_MAX_REPOS", 3)
         self.h_max_repos = self.positive_int("OC_H_MAX_REPOS", 2)
+        self.l3_max_repos = self.positive_int("OC_L3_MAX_REPOS", 3)
+        self.l3_weekday = self.weekday_int("OC_L3_WEEKDAY", 7)
+        try:
+            self.night_date = datetime.strptime(self.night_id, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise LaneError("NIGHT_ID must be an ISO calendar date (YYYY-MM-DD)") from exc
+        if self.night_date.isoformat() != self.night_id:
+            raise LaneError("NIGHT_ID must be an ISO calendar date (YYYY-MM-DD)")
+        self.prompt_max_bytes = self.positive_int("OC_PROMPT_MAX_BYTES", 262144)
         self.left_scope_window = self.positive_int("OC_LEFT_SCOPE_WINDOW_NIGHTS", 30)
         self.zero_streak_nights = self.positive_int("OC_ZERO_STREAK_NIGHTS", 5)
         self.stale_escalate_nights = self.positive_int("OC_STALE_ESCALATE_NIGHTS", 3)
@@ -219,6 +233,10 @@ class Runner:
         self.l2_enabled = not (
             os.environ.get("OC_TEST_MODE") == "1"
             and os.environ.get("OC_TEST_DISABLE_L2") == "1"
+        )
+        self.l3_enabled = not (
+            os.environ.get("OC_TEST_MODE") == "1"
+            and os.environ.get("OC_TEST_DISABLE_L3") == "1"
         )
         self.prompt_dir = pathlib.Path(__file__).resolve().parent / "prompts"
         self.seat_adapter = pathlib.Path(__file__).resolve().parent / "seat.sh"
@@ -269,11 +287,12 @@ class Runner:
             "OC_SUGGEST_REPO": self.suggest_repo,
             "OC_L2_MAX_REPOS": self.l2_max_repos,
             "OC_H_MAX_REPOS": self.h_max_repos,
-            "OC_L3_MAX_REPOS": self.positive_int("OC_L3_MAX_REPOS", 3),
-            "OC_L3_WEEKDAY": self.positive_int("OC_L3_WEEKDAY", 7),
+            "OC_L3_MAX_REPOS": self.l3_max_repos,
+            "OC_L3_WEEKDAY": self.l3_weekday,
             "OC_STALE_ESCALATE_NIGHTS": self.stale_escalate_nights,
             "OC_ZERO_STREAK_NIGHTS": self.zero_streak_nights,
             "OC_SEAT_TIMEOUT_SEC": self.seat_timeout,
+            "OC_PROMPT_MAX_BYTES": self.prompt_max_bytes,
             "OC_SEAT_CMD": "configured" if self.seat_cmd else "missing",
             "OC_API_MODE": "fixture" if self.api_fixture else "anonymous-github",
             "OC_GIT_TRANSPORT": "fixture" if self.fixture_git_root else "origin",
@@ -292,6 +311,13 @@ class Runner:
         if not raw.isdigit():
             raise LaneError(f"{name} must be a non-negative integer")
         return int(raw)
+
+    @staticmethod
+    def weekday_int(name: str, default: int) -> int:
+        value = Runner.positive_int(name, default)
+        if value > 7:
+            raise LaneError(f"{name} must be an ISO weekday from 1 through 7")
+        return value
 
     def prepare_dirs(self) -> None:
         for path in (
@@ -498,6 +524,7 @@ class Runner:
                 branch_history = []
                 first_seen = self.night_id
             l2_state = dict(old.get("layer2", {})) if isinstance(old, dict) and isinstance(old.get("layer2"), dict) else {}
+            l3_state = dict(old.get("layer3", {})) if isinstance(old, dict) and isinstance(old.get("layer3"), dict) else {}
             if not name_history or name_history[-1].get("full_name") != repo["full_name"]:
                 name_history.append({"night_id": self.night_id, "full_name": repo["full_name"]})
             if not branch_history or branch_history[-1].get("branch") != repo["default_branch"]:
@@ -513,6 +540,7 @@ class Runner:
                 "name_history": name_history,
                 "default_branch_history": branch_history,
                 "layer2": l2_state,
+                "layer3": l3_state,
             }
             if isinstance(old, dict):
                 for field in ("head", "head_night", "previous_head"):
@@ -702,7 +730,7 @@ class Runner:
                 "human_review": [
                     item
                     for item in self.new_findings
-                    if item.get("check_id") in LAYER_TWO_CHECK_IDS
+                    if item.get("check_id") in LAYER_TWO_CHECK_IDS + LAYER_THREE_CHECK_IDS
                     and item.get("confidence") in {"medium", "low"}
                 ],
             },
@@ -1696,6 +1724,8 @@ class Runner:
     def append_layer_two_plan(self) -> None:
         if not self.l2_enabled:
             return
+        # K4: layer 2/3 plans are intentionally appended only after mirror sync,
+        # because candidate selection depends on the just-fetched repository HEAD.
         self.handbook_index = self.extract_handbook_index()
         handbook_head = ""
         if self.handbook_repo:
@@ -1732,8 +1762,8 @@ class Runner:
                 and "mirror" in mirror_meta
                 and self.oc_d_files(pathlib.Path(mirror_meta["mirror"]))
             )
-            # Repositories without agent docs cannot produce OC-H findings, so
-            # omit them from the plan instead of spending cap on NO-INPUT cells.
+            # OC-H is planned only for repositories that have agent docs. Their
+            # absence means non-planning, deliberately not an OC-H NO-INPUT cell.
             if has_agent_docs and (repo_changed or handbook_changed):
                 h_candidates.append(repo)
         efg_candidates.sort(key=lambda repo: least_recently_run(repo, "efg_night"))
@@ -1745,6 +1775,8 @@ class Runner:
             deferred = candidates[cap:]
             for index, repo in enumerate(candidates):
                 is_deferred = index >= cap
+                if not is_deferred and self.target_status == "FRESH":
+                    self.mark_launch_attempt(repo, queue_name)
                 for check_id in check_ids:
                     cell: dict[str, Any] = {
                         "check_id": check_id,
@@ -1786,6 +1818,61 @@ class Runner:
         add_cells(h_candidates, self.h_max_repos, ("OC-H",), "OC-H")
         atomic_write_json(self.plan_path, self.plan)
 
+    def append_layer_three_plan(self) -> None:
+        if not self.l3_enabled or self.night_date.isoweekday() != self.l3_weekday:
+            return
+
+        def least_recently_attempted(repo: dict[str, Any]) -> tuple[int, str, int]:
+            layer3 = self.repo_state["repos"][str(repo["id"])]["layer3"]
+            night = layer3.get("ij_night")
+            if not isinstance(night, str) or not night:
+                return (0, "", repo["id"])
+            return (1, night, repo["id"])
+
+        candidates = sorted(self.targets, key=least_recently_attempted)
+        deferred = candidates[self.l3_max_repos:]
+        for index, repo in enumerate(candidates):
+            is_deferred = index >= self.l3_max_repos
+            if not is_deferred and self.target_status == "FRESH":
+                self.mark_launch_attempt(repo, "OC-I/J")
+            for check_id in LAYER_THREE_CHECK_IDS:
+                cell: dict[str, Any] = {
+                    "check_id": check_id,
+                    "repo_id": repo["id"],
+                    "repo": repo["full_name"],
+                    "layer": 3,
+                    "deferred": is_deferred,
+                }
+                if is_deferred:
+                    cell["result"] = {
+                        "status": "NOT-RUN",
+                        "reason": "deferred",
+                        "fresh": False,
+                        "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                    }
+                else:
+                    synced, mirror_meta = self.mirror_results.get(repo["id"], (False, {}))
+                    if not synced:
+                        reason = str(mirror_meta.get("reason", "mirror-missing"))
+                        if not mirror_meta.get("old_head") and reason == "fetch-failed":
+                            reason = "mirror-missing"
+                        cell["result"] = {
+                            "status": "NOT-RUN",
+                            "reason": reason,
+                            "fresh": False,
+                            "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
+                        }
+                self.plan["cells"].append(cell)
+        if deferred:
+            self.events.append(
+                {
+                    "type": "QUEUED",
+                    "queue": "OC-I/J",
+                    "repos_deferred": len(deferred),
+                }
+            )
+        atomic_write_json(self.plan_path, self.plan)
+
     def prompt_payload(self, repo: dict[str, Any], launch: str) -> dict[str, Any]:
         mirror = pathlib.Path(self.mirror_results[repo["id"]][1]["mirror"])
         readmes = self.readme_inputs(mirror)
@@ -1793,11 +1880,11 @@ class Runner:
             "launch": launch,
             "repository": {"id": repo["id"], "name": repo["full_name"]},
             "readmes": readmes,
-            "agent_docs": self.agent_doc_inputs(mirror),
         }
         if launch == "OC-E/F/G":
             payload.update(
                 {
+                    "agent_docs": self.agent_doc_inputs(mirror),
                     "api_description": repo.get("description", ""),
                     "registry_entry": self.registry_entry_for_repo(repo),
                     "readme_hero": self.readme_hero(readmes.get("README.md", "")),
@@ -1806,9 +1893,36 @@ class Runner:
                     "workflows": self.workflow_files(mirror),
                 }
             )
-        else:
+        elif launch == "OC-H":
+            payload["agent_docs"] = self.agent_doc_inputs(mirror)
             payload["handbook_index"] = self.handbook_index
+        elif launch == "OC-I/J":
+            gate_path = pathlib.Path(__file__).resolve().parent / "readme-gate.md"
+            payload["readme_gate"] = self.read_text(gate_path)
+            payload["gate_items"] = sorted(self.readme_gate_item_ids())
+        else:
+            raise LaneError(f"unknown seat launch: {launch}")
         return payload
+
+    def readme_gate_item_ids(self) -> set[int]:
+        gate_path = pathlib.Path(__file__).resolve().parent / "readme-gate.md"
+        gate_text = self.read_text(gate_path)
+        checklist_heading = re.search(r"(?m)^## Numbered checklist\s*$", gate_text)
+        if checklist_heading is None:
+            raise LaneError("readme-gate.md is missing the numbered checklist heading")
+        checklist = gate_text[checklist_heading.end() :]
+        next_heading = re.search(r"(?m)^##\s+", checklist)
+        if next_heading is not None:
+            checklist = checklist[: next_heading.start()]
+        item_ids = {
+            int(match.group("item"))
+            for match in re.finditer(
+                r"(?m)^(?P<item>[1-9][0-9]*)\.\s+", checklist
+            )
+        }
+        if not item_ids:
+            raise LaneError("readme-gate.md contains no numbered checklist items")
+        return item_ids
 
     def render_prompt(self, template_name: str, payload: dict[str, Any]) -> str:
         template_path = self.prompt_dir / template_name
@@ -1853,12 +1967,18 @@ class Runner:
         if not isinstance(findings, list) or len(findings) > 200:
             raise ValueError("findings must be an array of at most 200 items")
         allowed_rule_ids = {str(item["rule_id"]) for item in self.handbook_index}
+        allowed_gate_items = self.readme_gate_item_ids() if "OC-I" in allowed_checks else set()
         parsed: list[dict[str, Any]] = []
+        seen_gate_items: set[int] = set()
+        seen_first30 = False
         for item in findings:
             if not isinstance(item, dict):
                 raise ValueError("finding must be an object")
             check_id = item.get("check_id")
-            if check_id not in allowed_checks or set(item) != L2_FIELDS_BY_CHECK.get(check_id):
+            if not isinstance(check_id, str):
+                raise ValueError("check_id must be a string")
+            expected_fields = L2_FIELDS_BY_CHECK.get(check_id) or L3_FIELDS_BY_CHECK.get(check_id)
+            if check_id not in allowed_checks or set(item) != expected_fields:
                 raise ValueError("finding fields do not match the allowlist")
             for field in L2_COMMON_FIELDS:
                 if not isinstance(item.get(field), str):
@@ -1892,6 +2012,20 @@ class Runner:
                     or rule_id not in allowed_rule_ids
                 ):
                     raise ValueError("OC-H rule_id is absent from the deterministic index")
+            if check_id == "OC-I":
+                gate_item = item["gate_item"]
+                if type(gate_item) is not int or gate_item not in allowed_gate_items:
+                    raise ValueError("OC-I gate_item is absent from the vendored checklist")
+                if gate_item in seen_gate_items:
+                    raise ValueError("OC-I gate_item must be unique")
+                seen_gate_items.add(gate_item)
+            if check_id == "OC-J":
+                score = item["score"]
+                if type(score) is not int or score < 1 or score > 5:
+                    raise ValueError("OC-J score must be an integer from 1 through 5")
+                if seen_first30:
+                    raise ValueError("OC-J may contain at most one assessment")
+                seen_first30 = True
             parsed.append(item)
         return parsed
 
@@ -1918,7 +2052,7 @@ class Runner:
             )
         except subprocess.TimeoutExpired:
             return "timeout", "", "seat adapter exceeded its timeout"
-        except (UnicodeDecodeError, RecursionError, ValueError) as exc:
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
             return "failed", "", f"seat adapter output handling failed: {exc}"
         if result.returncode == 124:
             return "timeout", result.stdout, result.stderr[-1000:]
@@ -1934,11 +2068,17 @@ class Runner:
             claim_kind = f"claim:{item['claim_type']}:{normalize(item['target_token'])}"
         elif check_id == "OC-G":
             claim_kind = f"agentproc:{normalize(item['target_token'])}"
-        else:
+        elif check_id == "OC-H":
             claim_kind = f"hb:{item['rule_id']}:{normalize(item['target_token'])}"
+        elif check_id == "OC-I":
+            claim_kind = f"gate:{item['gate_item']}"
+        elif check_id == "OC-J":
+            claim_kind = "first30"
+        else:
+            raise LaneError(f"unknown seat finding check: {check_id}")
         # OC-E's pair already identifies the comparison. Keep the seat-selected
         # file for display/evidence, but use one canonical file in its identity.
-        identity_file = "README.md" if check_id == "OC-E" else item["file"]
+        identity_file = "README.md" if check_id in {"OC-E", "OC-I", "OC-J"} else item["file"]
         finding = self.make_finding(
             check_id,
             repo,
@@ -1949,6 +2089,8 @@ class Runner:
         finding["file"] = normalize(item["file"])
         finding["confidence"] = item["confidence"]
         finding["evidence"] = self.sanitize_claim(item["evidence"], 1000)
+        if check_id == "OC-J":
+            finding["score"] = item["score"]
         return finding
 
     @staticmethod
@@ -1970,9 +2112,17 @@ class Runner:
         elif check_id == "OC-G":
             extracted = len(payload.get("agent_docs", {}))
             scanned = extracted
-        else:
+        elif check_id == "OC-H":
             extracted = len(payload.get("handbook_index", []))
             scanned = len(payload.get("agent_docs", {}))
+        elif check_id == "OC-I":
+            extracted = len(payload.get("gate_items", []))
+            scanned = len(payload.get("readmes", {}))
+        elif check_id == "OC-J":
+            extracted = 1 if "README.md" in payload.get("readmes", {}) else 0
+            scanned = extracted
+        else:
+            raise LaneError(f"unknown seat metric check: {check_id}")
         return {"scanned": scanned, "extracted": extracted, "flagged": 0}
 
     def allowed_l2_files(self, payload: dict[str, Any], checks: set[str]) -> dict[str, set[str]]:
@@ -1987,6 +2137,16 @@ class Runner:
             result["OC-G"] = agent_docs
         if "OC-H" in checks:
             result["OC-H"] = agent_docs
+        if "OC-I" in checks:
+            result["OC-I"] = {
+                "README.md",
+                "README.ja.md",
+                "README.zh.md",
+                "README.th.md",
+                "readme-gate.md",
+            }
+        if "OC-J" in checks:
+            result["OC-J"] = {"README.md"}
         return result
 
     def no_input_checks(self, payload: dict[str, Any], checks: set[str]) -> set[str]:
@@ -1999,9 +2159,26 @@ class Runner:
             missing.add("OC-G")
         if "OC-H" in checks and not payload.get("agent_docs"):
             missing.add("OC-H")
+        if "OC-I" in checks and "README.md" not in payload.get("readmes", {}):
+            missing.add("OC-I")
+        if "OC-J" in checks and "README.md" not in payload.get("readmes", {}):
+            missing.add("OC-J")
         return missing
 
-    def mark_l2_complete(self, repo: dict[str, Any], launch: str) -> None:
+    def mark_launch_attempt(self, repo: dict[str, Any], launch: str) -> None:
+        state_name = "layer3" if launch == "OC-I/J" else "layer2"
+        state = self.repo_state["repos"][str(repo["id"])][state_name]
+        if launch == "OC-E/F/G":
+            state["efg_night"] = self.night_id
+        elif launch == "OC-H":
+            state["h_night"] = self.night_id
+        elif launch == "OC-I/J":
+            state["ij_night"] = self.night_id
+        else:
+            raise LaneError(f"unknown seat launch: {launch}")
+        atomic_write_json(self.repos_path, self.repo_state)
+
+    def mark_launch_complete(self, repo: dict[str, Any], launch: str) -> None:
         ledger = read_json(self.findings_path, None)
         if (
             isinstance(ledger, dict)
@@ -2011,17 +2188,24 @@ class Runner:
             # the diff ledger or the same HEAD would be silently skipped on
             # the first normal night after migration.
             return
-        layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
         head = self.current_head(repo)
         if launch == "OC-E/F/G":
+            layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
             layer2["efg_head"] = head
-            layer2["efg_night"] = self.night_id
-        else:
+        elif launch == "OC-H":
+            layer2 = self.repo_state["repos"][str(repo["id"])]["layer2"]
             layer2["h_repo_head"] = head
             handbook_head = self.current_head(self.handbook_repo) if self.handbook_repo else ""
             if handbook_head:
                 layer2["h_handbook_head"] = handbook_head
-            layer2["h_night"] = self.night_id
+        elif launch == "OC-I/J":
+            self.repo_state["repos"][str(repo["id"])]["layer3"]["ij_head"] = head
+        else:
+            raise LaneError(f"unknown seat launch: {launch}")
+
+    # Compatibility surface for focused S3 contract tests and local callers.
+    def mark_l2_complete(self, repo: dict[str, Any], launch: str) -> None:
+        self.mark_launch_complete(repo, launch)
 
     def run_l2_launch(self, repo: dict[str, Any], launch: str, checks: set[str]) -> None:
         payload = self.prompt_payload(repo, launch)
@@ -2033,14 +2217,18 @@ class Runner:
                 repo["id"],
                 {
                     "status": "NO-INPUT",
-                    "reason": "readme-missing" if check_id in {"OC-E", "OC-F"} else "no-agent-doc-input",
+                    "reason": (
+                        "readme-missing"
+                        if check_id in {"OC-E", "OC-F", "OC-I", "OC-J"}
+                        else "no-agent-doc-input"
+                    ),
                     "fresh": False,
                     "metrics": {"scanned": 0, "extracted": 0, "flagged": 0},
                 },
             )
         if not active:
             if self.target_status == "FRESH":
-                self.mark_l2_complete(repo, launch)
+                self.mark_launch_complete(repo, launch)
             return
         if "OC-H" in active and not self.handbook_index:
             self.set_cell_result(
@@ -2054,7 +2242,35 @@ class Runner:
                 },
             )
             return
-        prompt = self.render_prompt("efg.txt" if launch == "OC-E/F/G" else "h.txt", payload)
+        template_name = {
+            "OC-E/F/G": "efg.txt",
+            "OC-H": "h.txt",
+            "OC-I/J": "ij.txt",
+        }[launch]
+        prompt = self.render_prompt(template_name, payload)
+        prompt_bytes = len(prompt.encode("utf-8"))
+        if prompt_bytes > self.prompt_max_bytes:
+            self.events.append(
+                {
+                    "type": "PROMPT-TOO-LARGE",
+                    "repo_id": repo["id"],
+                    "launch": launch,
+                    "bytes": prompt_bytes,
+                    "limit": self.prompt_max_bytes,
+                }
+            )
+            for check_id in active:
+                self.set_cell_result(
+                    check_id,
+                    repo["id"],
+                    {
+                        "status": "NOT-RUN",
+                        "reason": "prompt-too-large",
+                        "fresh": False,
+                        "metrics": self.l2_metrics(payload, check_id),
+                    },
+                )
+            return
         seat_status, stdout, stderr = self.invoke_seat(prompt)
         self.events.append(
             {
@@ -2117,6 +2333,8 @@ class Runner:
                 return
         by_check: dict[str, dict[str, dict[str, Any]]] = {check_id: {} for check_id in active}
         for raw in raw_findings:
+            if raw["check_id"] == "OC-J" and raw["score"] > 2:
+                continue
             finding = self.l2_finding(repo, raw)
             by_check[raw["check_id"]][finding["fingerprint"]] = finding
         for check_id in active:
@@ -2134,7 +2352,7 @@ class Runner:
                 result.update({"status": "STALE-INPUT", "reason": "targets-stale", "fresh": False})
             self.set_cell_result(check_id, repo["id"], result)
         if self.target_status == "FRESH":
-            self.mark_l2_complete(repo, launch)
+            self.mark_launch_complete(repo, launch)
 
     def run_layer_two(self) -> None:
         target_by_id = {repo["id"]: repo for repo in self.targets}
@@ -2159,6 +2377,22 @@ class Runner:
             self.publish_report(complete=False)
         for repo_id in h_repo_ids:
             self.run_l2_launch(target_by_id[repo_id], "OC-H", {"OC-H"})
+            self.publish_report(complete=False)
+
+    def run_layer_three(self) -> None:
+        target_by_id = {repo["id"]: repo for repo in self.targets}
+        repo_ids = sorted(
+            {
+                cell["repo_id"]
+                for cell in self.plan["cells"]
+                if cell["check_id"] in LAYER_THREE_CHECK_IDS
+                and cell.get("deferred") is not True
+                and not isinstance(cell.get("result"), dict)
+            }
+        )
+        for repo_id in repo_ids:
+            # OC-I and OC-J deliberately share exactly one seat launch per repo.
+            self.run_l2_launch(target_by_id[repo_id], "OC-I/J", set(LAYER_THREE_CHECK_IDS))
             self.publish_report(complete=False)
 
     def set_cell_result(
@@ -2313,7 +2547,7 @@ class Runner:
             if streak >= self.zero_streak_nights:
                 self.emit_self_health(
                     f"zero-streak:{check_id}",
-                    f"{check_id} {metric_name} zero candidates for {streak} consecutive nights",
+                    f"{check_id} {metric_name} zero candidates for {streak} consecutive scheduled runs",
                 )
         mirror_stale = any(not synced for synced, _meta in self.mirror_results.values())
         stale = self.target_status != "FRESH" or mirror_stale or any(
@@ -2373,7 +2607,11 @@ class Runner:
             if entry["check_id"] == "self-health":
                 new_fp = self.self_health_fingerprint(str(entry["claim_kind"]))
             else:
-                identity_file = "README.md" if entry["check_id"] == "OC-E" else str(entry["file"])
+                identity_file = (
+                    "README.md"
+                    if entry["check_id"] in {"OC-E", "OC-I", "OC-J"}
+                    else str(entry["file"])
+                )
                 new_fp = fingerprint(
                     self.fp_spec_version,
                     str(entry["check_id"]),
@@ -2547,7 +2785,11 @@ class Runner:
                     if check_id == "self-health"
                     else f"org-consistency/{check_id}"
                 ),
-                "confirm_cost": "1分" if check_id in LAYER_TWO_CHECK_IDS else "即断",
+                "confirm_cost": (
+                    "3分"
+                    if check_id in LAYER_THREE_CHECK_IDS
+                    else "1分" if check_id in LAYER_TWO_CHECK_IDS else "即断"
+                ),
                 "date": self.night_id,
                 "evidence": [evidence],
             }
@@ -2604,9 +2846,11 @@ class Runner:
             return 2
         self.sync_inputs()
         self.append_layer_two_plan()
+        self.append_layer_three_plan()
         self.publish_report(complete=False)
         self.run_cells()
         self.run_layer_two()
+        self.run_layer_three()
         self.update_self_health()
         self.reconcile_findings()
         self.write_proposals()
