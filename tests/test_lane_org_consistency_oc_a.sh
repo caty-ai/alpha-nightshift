@@ -88,6 +88,10 @@ jq -e '.cells[0].reason == "git-url-rewrite-refused" and .check_metrics["OC-A"].
 oc_case_init degraded
 case_roots="$case_roots $OC_CASE_ROOT"
 oc_make_remote family-os main degraded
+mkdir -p "$OC_WORK/family-os/registry"
+printf '%s\n' '{"version":1,"modules":[]}' > "$OC_WORK/family-os/registry/modules.json"
+oc_commit "$OC_WORK/family-os" add-registry
+oc_push_work family-os main
 oc_write_single_api 703 family-os main
 oc_run 2026-08-01
 [ "$(oc_status 2026-08-01 703)" = STALE-INPUT ] || fail 'degraded OC-A output was not STALE-INPUT'

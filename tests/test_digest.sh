@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC1091
 set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -6,10 +7,11 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 . "$TEST_DIR/helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/ledger.sh"
+. "$ROOT/lib/digest.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-digest.XXXXXX")
 trap 'rm -rf "$TEST_TMP"' EXIT
-NIGHT_ID=$(date -v-8H '+%F')
+NIGHT_ID=$(date -v-8H '+%F' 2>/dev/null || date -d '-8 hours' '+%F')
 
 write_digest_config() {
   config_path=$1
@@ -19,6 +21,18 @@ write_digest_config() {
     "LANE_CMD_1=':'" \
     "LANE_HOME_LINKS=''" \
     > "$config_path"
+}
+
+append_freshness_config() {
+  config_path=$1
+  report_dir=$2
+  enforce=$3
+  max_age_days=$4
+  printf '%s\n' \
+    "OC_FRESHNESS_ENFORCE='$enforce'" \
+    "OC_REPORT_DIR='$report_dir'" \
+    "OC_REPORT_MAX_AGE_DAYS='$max_age_days'" \
+    >> "$config_path"
 }
 
 run_digest() {
@@ -32,6 +46,13 @@ seed_record() {
   STATE_DIR=$state_path
   mkdir -p "$STATE_DIR/ledger"
   ledger_append "$record"
+}
+
+write_report_fixture() {
+  report_dir=$1
+  report_name=$2
+  mkdir -p "$report_dir"
+  printf '%s\n' '{}' > "$report_dir/$report_name.json"
 }
 
 assert_zero_kpi() {
@@ -53,6 +74,7 @@ dead_digest="$dead_state/digests/$NIGHT_ID.md"
 assert_file_exists "$dead_digest"
 assert_contains DEAD_MAN "$dead_digest"
 assert_contains '夜番は起きなかった' "$dead_digest"
+assert_contains 'org-consistency freshness: disabled' "$dead_digest"
 assert_zero_kpi "$dead_digest"
 printf '%s\n' 'sentinel-that-must-be-overwritten' >> "$dead_digest"
 run_digest "$dead_config"
@@ -181,5 +203,83 @@ skipped_digest="$skipped_state/digests/$NIGHT_ID.md"
 assert_contains SKIPPED "$skipped_digest"
 assert_contains 'budget_exhausted' "$skipped_digest"
 assert_zero_kpi "$skipped_digest"
+
+fresh_state="$TEST_TMP/fresh-state"
+fresh_config="$TEST_TMP/fresh.conf"
+fresh_report_dir="$fresh_state/org-consistency/report"
+write_digest_config "$fresh_config" "$fresh_state"
+append_freshness_config "$fresh_config" "$fresh_report_dir" 1 3
+write_report_fixture "$fresh_report_dir" "$NIGHT_ID"
+run_digest "$fresh_config"
+fresh_digest="$fresh_state/digests/$NIGHT_ID.md"
+assert_contains "org-consistency freshness: OK ($NIGHT_ID age 0d)" "$fresh_digest"
+assert_not_contains 'WARNING: org-consistency has never published a report' "$fresh_digest"
+assert_not_contains 'WARNING: org-consistency latest report is' "$fresh_digest"
+
+stale_state="$TEST_TMP/stale-state"
+stale_config="$TEST_TMP/stale.conf"
+stale_report_dir="$stale_state/org-consistency/report"
+write_digest_config "$stale_config" "$stale_state"
+append_freshness_config "$stale_config" "$stale_report_dir" 1 3
+write_report_fixture "$stale_report_dir" "$NIGHT_ID"
+touch -t "$(date -v-5d '+%Y%m%d0000' 2>/dev/null || date -d '-5 days' '+%Y%m%d0000')" "$stale_report_dir/$NIGHT_ID.json"
+run_digest "$stale_config"
+stale_digest="$stale_state/digests/$NIGHT_ID.md"
+assert_contains 'WARNING: org-consistency latest report is 5 days old (>3 days)' "$stale_digest"
+
+boundary_state="$TEST_TMP/boundary-state"
+boundary_config="$TEST_TMP/boundary.conf"
+boundary_report_dir="$boundary_state/org-consistency/report"
+write_digest_config "$boundary_config" "$boundary_state"
+append_freshness_config "$boundary_config" "$boundary_report_dir" 1 3
+write_report_fixture "$boundary_report_dir" "$NIGHT_ID"
+boundary_now=1800000000
+boundary_mtime=$((boundary_now - 3 * 86400))
+touch -t "$(date -r "$boundary_mtime" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/boundary.out"
+assert_contains "org-consistency freshness: OK ($NIGHT_ID age 3d)" "$TEST_TMP/boundary.out"
+assert_not_contains 'WARNING: org-consistency latest report is' "$TEST_TMP/boundary.out"
+
+over_boundary_mtime=$((boundary_now - 3 * 86400 - 3600))
+touch -t "$(date -r "$over_boundary_mtime" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$over_boundary_mtime" '+%Y%m%d%H%M.%S')" "$boundary_report_dir/$NIGHT_ID.json"
+digest_org_consistency_freshness 1 "$boundary_report_dir" 3 "$boundary_now" > "$TEST_TMP/over-boundary.out"
+assert_contains 'WARNING: org-consistency latest report is 3 days old (>3 days)' "$TEST_TMP/over-boundary.out"
+
+missing_state="$TEST_TMP/missing-state"
+missing_config="$TEST_TMP/missing.conf"
+missing_report_dir="$missing_state/org-consistency/report"
+write_digest_config "$missing_config" "$missing_state"
+append_freshness_config "$missing_config" "$missing_report_dir" 1 3
+run_digest "$missing_config"
+missing_digest="$missing_state/digests/$NIGHT_ID.md"
+assert_contains 'WARNING: org-consistency has never published a report' "$missing_digest"
+mkdir -p "$missing_report_dir"
+run_digest "$missing_config"
+assert_contains 'WARNING: org-consistency has never published a report' "$missing_digest"
+
+invalid_state="$TEST_TMP/invalid-state"
+invalid_config="$TEST_TMP/invalid.conf"
+invalid_report_dir="$invalid_state/org-consistency/report"
+write_digest_config "$invalid_config" "$invalid_state"
+append_freshness_config "$invalid_config" "$invalid_report_dir" 1 invalid
+if run_digest "$invalid_config"; then
+  fail 'digest should fail when OC_REPORT_MAX_AGE_DAYS is invalid'
+fi
+
+invalid_disabled_state="$TEST_TMP/invalid-disabled-state"
+invalid_disabled_config="$TEST_TMP/invalid-disabled.conf"
+write_digest_config "$invalid_disabled_config" "$invalid_disabled_state"
+append_freshness_config "$invalid_disabled_config" "$invalid_disabled_state/report" 0 invalid
+if run_digest "$invalid_disabled_config"; then
+  fail 'digest accepted invalid OC_REPORT_MAX_AGE_DAYS while freshness enforcement was disabled'
+fi
+
+invalid_enforce_state="$TEST_TMP/invalid-enforce-state"
+invalid_enforce_config="$TEST_TMP/invalid-enforce.conf"
+write_digest_config "$invalid_enforce_config" "$invalid_enforce_state"
+append_freshness_config "$invalid_enforce_config" "$invalid_enforce_state/report" maybe 3
+if run_digest "$invalid_enforce_config"; then
+  fail 'digest accepted OC_FRESHNESS_ENFORCE outside 0/1'
+fi
 
 printf 'test_digest: PASS\n'

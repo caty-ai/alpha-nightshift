@@ -21,5 +21,8 @@
 レーン統計:
 {{LANE_STATS}}
 
+org-consistency freshness:
+{{ORG_CONSISTENCY_FRESHNESS}}
+
 累積 KPI:
 {{KPI_BLOCK}}

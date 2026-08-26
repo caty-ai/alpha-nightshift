@@ -12,6 +12,15 @@ test:
 lint:
 	command -v shellcheck
 	for f in guard/*.sh lanes/**/*.sh tests/*.sh; do bash -n "$$f" || exit 1; done
+	bash -n bin/oc-suggest
+	bash -n lanes/org-consistency/seat.sh
+	bash -n tests/fixtures/org-consistency/fake-gh.sh
+	bash -n tests/fixtures/org-consistency/fake-seat.sh
+	bash -n tests/test_lane_org_consistency_layer2.sh
+	bash -n tests/test_lane_org_consistency_layer3.sh
+	bash -n tests/test_lane_org_consistency_oc_bcd.sh
+	bash -n tests/test_lane_org_consistency_s4_residuals.sh
+	bash -n tests/test_lane_org_consistency_suggest.sh
 	shellcheck -e SC2015 \
 		guard/common.sh \
 		guard/broker.sh \
@@ -21,6 +30,7 @@ lint:
 		guard/publisher-lib.sh \
 		guard/publisher-askpass.sh \
 		guard/remote-preflight.sh \
+		bin/oc-suggest \
 		tests/test_guard_publisher.sh \
 		tests/test_guard_drift_monitor.sh \
 		tests/test_guard_revocation_runbook.sh \
@@ -28,11 +38,19 @@ lint:
 		tests/test_publication_gate_repo.sh \
 		tests/test_publication_denylist.sh \
 		lanes/org-consistency/run.sh \
+		lanes/org-consistency/seat.sh \
 		tests/test_lane_org_consistency_core.sh \
 		tests/test_lane_org_consistency_lifecycle.sh \
+		tests/test_lane_org_consistency_layer2.sh \
+		tests/test_lane_org_consistency_layer3.sh \
 		tests/test_lane_org_consistency_mutation.sh \
 		tests/test_lane_org_consistency_oc_a.sh \
+		tests/test_lane_org_consistency_oc_bcd.sh \
+		tests/test_lane_org_consistency_s4_residuals.sh \
+		tests/test_lane_org_consistency_suggest.sh \
 		tests/test_lane_org_consistency_targets_mirrors.sh \
 		tests/test_lane_org_consistency_timebox.sh \
+		tests/fixtures/org-consistency/fake-gh.sh \
+		tests/fixtures/org-consistency/fake-seat.sh \
 		tests/fixtures/org-consistency/lib.sh \
 		tests/run_tests.sh

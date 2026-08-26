@@ -1,0 +1,56 @@
+{
+  "name": "meetmate",
+  "version": "8.1.1",
+  "description": "Bring your own AI agent into Google Meet & Zoom, as a real voice participant.",
+  "keywords": [
+    "ai-agent",
+    "google-meet",
+    "zoom",
+    "voice-assistant",
+    "mcp"
+  ],
+  "homepage": "https://github.com/caty-ai/meetmate#readme",
+  "bugs": {
+    "url": "https://github.com/caty-ai/meetmate/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caty-ai/meetmate.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "assets/avatar.png",
+    "assets/fillers/",
+    "config.json.example",
+    ".env.example",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "docs/i18n/"
+  ],
+  "bin": {
+    "meetmate": "bin/ai-meet.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "test:meet:repro": "node --test test/meet-multi-participant-repro.test.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "4.7.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.0.0",
+    "ws": "^8.18.3",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "license": "MIT"
+}

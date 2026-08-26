@@ -48,7 +48,9 @@ PY
 # The parsed path is preferred, with a fixed unknown fallback when no path exists.
 /usr/bin/env OC_TEST_MUTATE= /usr/bin/python3 - "$OC_CORE" <<'PY'
 import importlib.util
+import pathlib
 import sys
+import tempfile
 
 spec = importlib.util.spec_from_file_location("org_consistency_core", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -63,6 +65,35 @@ assert without_path["claim_kind"].startswith("regcheck:unknown:unknown:")
 assert with_path["claim"] == "unstructured README.md failure detail"
 assert without_path["claim"] == "unstructured failure detail"
 assert runner.parse_checker_failures("FAILED (2):\n  - first\n\nOK\n  - ghost") == ["first"]
+with tempfile.TemporaryDirectory() as root:
+    root_path = pathlib.Path(root)
+    mirror = root_path / "mirror"
+    mirror.mkdir()
+    inside = mirror / "README.md"
+    inside.write_text("inside", encoding="utf-8")
+    outside = root_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    linked = mirror / "AGENTS.md"
+    linked.symlink_to(outside)
+    assert runner.safe_mirror_file(mirror, inside)
+    assert not runner.safe_mirror_file(mirror, linked)
+runner.night_id = "2026-08-01"
+empty_metrics = {check: {"scanned": 0, "extracted": 0, "flagged": 0} for check in module.CHECK_IDS}
+markdown = runner.report_markdown({
+    "targets_label": "TARGETS-FRESH",
+    "complete": True,
+    "scope": {
+        "target_repos": 0, "excluded": [], "renamed": [], "branch_changed": [],
+        "left_scope": [], "left_scope_expired": 0, "no_input": 0, "not_run": 1,
+        "stale_input": 0, "invalid_output": 0, "deferred": 0,
+    },
+    "digest_mapping": {"not_run_many": "ABORTED-equivalent", "all_run_zero_findings": "ZERO-equivalent"},
+    "effective_settings": {},
+    "check_metrics": empty_metrics,
+    "cells": [{"check_id": "OC-A", "repo_id": None, "repo": "family-os", "status": "NOT-RUN", "reason": "absent"}],
+    "findings": {"new": [], "resolved_candidates": []},
+})
+assert "| OC-A | - | family-os |" in markdown
 PY
 
 oc_case_init core
@@ -86,8 +117,10 @@ assert_contains 'OC_API_FIXTURE requires OC_TEST_MODE=1' "$OC_CASE_ROOT/test-mod
 oc_make_remote family-os main fail
 oc_make_remote other main none
 oc_write_two_api 101 family-os 202 other
+issues_fixture="$OC_CASE_ROOT/issues.json"
+printf '%s\n' '[]' > "$issues_fixture"
 
-oc_run 2026-08-02
+oc_run 2026-08-02 OC_TEST_ISSUES_FIXTURE="$issues_fixture"
 report_one="$OC_STATE/report/2026-08-02.json"
 plan_one="$OC_STATE/plan-2026-08-02.json"
 journal_one="$OC_STATE/journal/2026-08-02.json"
@@ -95,12 +128,19 @@ assert_file_exists "$report_one"
 assert_file_exists "$OC_STATE/report/2026-08-02.md"
 assert_file_exists "$plan_one"
 assert_file_exists "$journal_one"
-jq -e '.complete == true and .scope.target_repos == 2 and .scope.no_input == 0 and .scope.not_run == 0' "$report_one" >/dev/null || fail 'scope summary did not expose the OC-A plan'
+jq -e '.night_id == "2026-08-02" and .issues == []' "$OC_STATE/issues/family-os-open.json" >/dev/null || fail 'issues snapshot did not persist its capture night'
+jq -e '.complete == true and .scope.target_repos == 2 and .scope.no_input == 2 and .scope.not_run == 0' "$report_one" >/dev/null || fail 'scope summary did not expose the expanded layer-1 plan'
 jq -e '.check_metrics["OC-A"] == {extracted:2,flagged:2,scanned:1}' "$report_one" >/dev/null || fail 'OC-A coverage counters are wrong'
-jq -e '.cells[] | select(.repo_id == 101) | .status == "RUN" and .fresh == true' "$report_one" >/dev/null || fail 'FAILED claim text containing skipped incorrectly degraded OC-A'
-jq -e '(.cells | length) == 1 and .cells[0].repo_id == 101 and .cells[0].status == "RUN"' "$report_one" >/dev/null || fail 'OC-A planned a non-family-os cell'
-jq -e '(.cells | length) == 1 and .cells[0].repo_id == 101 and all(.cells[]; has("result"))' "$plan_one" >/dev/null || fail 'final plan did not retain the family-os result'
-[ ! -e "$OC_STATE/mirrors/202" ] || fail 'OC-A fetched a non-family-os target'
+jq -e '[.cells[] | select(.check_id == "OC-A" and .repo_id == 101 and .status == "RUN" and .fresh == true)] | length == 1' "$report_one" >/dev/null || fail 'FAILED claim text containing skipped incorrectly degraded OC-A'
+jq -e '
+  (.cells | length) == 6 and
+  ([.cells[] | select(.check_id == "OC-A" and .repo_id == 101 and .status == "RUN")] | length) == 1 and
+  ([.cells[] | select(.check_id == "OC-B" and .repo_id == 202)] | length) == 1 and
+  ([.cells[] | select(.check_id == "OC-C")] | length) == 2 and
+  ([.cells[] | select(.check_id == "OC-D")] | length) == 2
+' "$report_one" >/dev/null || fail 'expanded OC-A/B/C/D target matrix is wrong'
+jq -e '(.cells | length) == 6 and all(.cells[]; has("result"))' "$plan_one" >/dev/null || fail 'final plan did not retain every layer-1 result'
+[ -d "$OC_STATE/mirrors/202" ] || fail 'S2 did not mirror the non-family-os target'
 jq -e '.findings | length == 2 and all(.[]; .baseline == true and .status == "open")' "$OC_STATE/findings.json" >/dev/null || fail 'baseline findings were not added to the open set'
 jq -e '(.findings.new | length) == 2 and (.findings.baseline | length) == 2' "$report_one" >/dev/null || fail 'baseline inventory section is incomplete'
 jq -e '.effective_settings.OC_API_MODE == "fixture" and .effective_settings.OC_GIT_TRANSPORT == "fixture" and .effective_settings.OC_FP_SPEC_VERSION == "2"' "$report_one" >/dev/null || fail 'effective settings were not echoed'
@@ -119,6 +159,9 @@ jq -e --arg fp "$first_fp" '.findings[] | select(.fingerprint == $fp) | .last_se
 assert_contains 'dispatcher stops scanning at the first missing LANE_CMD_n' "$ROOT/config/nightshift.conf.example"
 assert_contains '# LANE_CMD_3="OC_STATE_DIR=' "$ROOT/config/nightshift.conf.example"
 assert_contains "OC_SEAT_CMD='codex exec --sandbox read-only --ignore-rules --ignore-user-config --ephemeral --disable multi_agent --skip-git-repo-check -'" "$ROOT/config/nightshift.conf.example"
+if grep -Eq '^OC_SEAT_TIMEOUT_SEC=' "$ROOT/config/nightshift.conf.example"; then
+  fail 'OC_SEAT_TIMEOUT_SEC remained as an inert top-level setting outside LANE_CMD_3'
+fi
 lane_cmd_numbers=$(grep -Eo 'LANE_CMD_[0-9]+' "$ROOT/config/nightshift.conf.example" | sed 's/.*_//' | sort -nu)
 lane_cmd_max=$(printf '%s\n' "$lane_cmd_numbers" | tail -n 1)
 expected_lane_cmd_numbers=$(seq 1 "$lane_cmd_max")

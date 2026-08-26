@@ -71,6 +71,10 @@ flowchart LR
 
   A triage template turns the night's findings into accept/reject decisions you can make over coffee.
 
+- 🧭 **Keeps public repositories aligned**
+
+  A read-only org-consistency lane spots drift between the family map, public READMEs, and agent instructions, then leaves every follow-up decision to daytime review.
+
 ---
 
 <a id="requirements"></a>
