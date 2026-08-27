@@ -23,6 +23,9 @@
 🔧 [工程文档](docs/engineering.md) ｜ 📘 [完整参考文档](docs/reference.md)
 
 </div>
+<!-- repo-state:begin (generated; do not edit) -->
+<p align="center"><sub>generation: <code>c37da39</code> (2026-08-26T19:54:02Z) · verify: <a href="https://api.github.com/repos/caty-ai/alpha-nightshift/commits/feat/repo-state-caller-5">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<!-- repo-state:end -->
 
 ---
 
