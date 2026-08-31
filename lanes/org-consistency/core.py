@@ -2318,23 +2318,24 @@ class Runner:
                     / self.night_id
                     / f"{repo['id']}-{launch_slug}.txt"
                 )
-                quarantine_relative = quarantine_path.relative_to(self.state_dir).as_posix()
+                quarantine_relative = None
                 try:
                     bounded_stdout = (
                         stdout.encode("utf-8")[:2_000_000].decode("utf-8", "ignore")
                     )
                     atomic_write_text(quarantine_path, bounded_stdout)
+                    quarantine_relative = quarantine_path.relative_to(self.state_dir).as_posix()
                 except (OSError, UnicodeError):
                     pass
-                self.events.append(
-                    {
-                        "type": "INVALID-OUTPUT",
-                        "repo_id": repo["id"],
-                        "launch": launch,
-                        "detail": self.sanitize_claim(str(exc), 300),
-                        "quarantine": quarantine_relative,
-                    }
-                )
+                event = {
+                    "type": "INVALID-OUTPUT",
+                    "repo_id": repo["id"],
+                    "launch": launch,
+                    "detail": self.sanitize_claim(str(exc), 300),
+                }
+                if quarantine_relative is not None:
+                    event["quarantine"] = quarantine_relative
+                self.events.append(event)
                 for check_id in active:
                     metrics = self.l2_metrics(payload, check_id)
                     self.set_cell_result(

@@ -11,6 +11,8 @@ seat_cmd="/bin/bash '$FAKE_SEAT'"
 for prompt_file in efg.txt h.txt; do
   grep -F '[A-Za-z0-9_./+@=-]' "$TEST_DIR/../lanes/org-consistency/prompts/$prompt_file" >/dev/null ||
     fail "$prompt_file does not state the target_token charset"
+  grep -F 'Strip or rewrite' "$TEST_DIR/../lanes/org-consistency/prompts/$prompt_file" >/dev/null ||
+    fail "$prompt_file does not state the Strip or rewrite target_token rule"
 done
 case_roots=()
 cleanup() {
@@ -217,6 +219,12 @@ for mode in invalid-json extra-field huge-claim fake-fingerprint non-utf8 deep-n
     printf '%s\n' blocked > "$OC_STATE/quarantine/$night_id"
   fi
   oc_run "$night_id" OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE="$mode" OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
+  if [ "$mode" = extra-field ]; then
+    jq -e '
+      ([.events[] | select(.type == "INVALID-OUTPUT" and .repo_id == 1301 and .launch == "OC-E/F/G")] | length) == 1 and
+      ([.events[] | select(.type == "INVALID-OUTPUT" and .repo_id == 1301 and .launch == "OC-E/F/G" and has("quarantine"))] | length) == 0
+    ' "$OC_STATE/report/$night_id.json" >/dev/null || fail 'blocked quarantine write still emitted a quarantine path on the INVALID-OUTPUT event'
+  fi
   if [ "$mode" = extra-field ]; then
     [ -f "$OC_STATE/quarantine/$night_id" ] || fail 'quarantine write failure did not stay isolated'
     rm "$OC_STATE/quarantine/$night_id"
