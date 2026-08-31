@@ -326,6 +326,7 @@ class Runner:
             self.state_dir / "report",
             self.state_dir / "snapshots",
             self.state_dir / "diffs",
+            self.state_dir / "quarantine",
             self.state_dir / "issues",
         ):
             if path.is_symlink() or (path.exists() and not path.is_dir()):
@@ -2310,14 +2311,31 @@ class Runner:
             if os.environ.get("OC_TEST_MUTATE") == "invalid-output-guard":
                 raw_findings = []
             else:
-                self.events.append(
-                    {
-                        "type": "INVALID-OUTPUT",
-                        "repo_id": repo["id"],
-                        "launch": launch,
-                        "detail": self.sanitize_claim(str(exc), 300),
-                    }
+                launch_slug = launch.replace("/", "-")
+                quarantine_path = (
+                    self.state_dir
+                    / "quarantine"
+                    / self.night_id
+                    / f"{repo['id']}-{launch_slug}.txt"
                 )
+                quarantine_relative = None
+                try:
+                    bounded_stdout = (
+                        stdout.encode("utf-8")[:2_000_000].decode("utf-8", "ignore")
+                    )
+                    atomic_write_text(quarantine_path, bounded_stdout)
+                    quarantine_relative = quarantine_path.relative_to(self.state_dir).as_posix()
+                except (OSError, UnicodeError):
+                    pass
+                event = {
+                    "type": "INVALID-OUTPUT",
+                    "repo_id": repo["id"],
+                    "launch": launch,
+                    "detail": self.sanitize_claim(str(exc), 300),
+                }
+                if quarantine_relative is not None:
+                    event["quarantine"] = quarantine_relative
+                self.events.append(event)
                 for check_id in active:
                     metrics = self.l2_metrics(payload, check_id)
                     self.set_cell_result(
@@ -2818,6 +2836,7 @@ class Runner:
             ("*.json", self.state_dir / "journal"),
             ("repos-*.json", self.state_dir / "snapshots"),
             ("*", self.state_dir / "diffs"),
+            ("*", self.state_dir / "quarantine"),
         )
         for pattern, directory in collections:
             paths = sorted(directory.glob(pattern))
