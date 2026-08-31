@@ -12,7 +12,9 @@ check_id,file,rule_id,target_token,claim,evidence,confidence
 check_id must be OC-H. rule_id must be copied from the supplied handbook index.
 confidence is high, medium, or low. claim is at most 500 characters and evidence
 at most 1000. file must name a supplied agent-doc input. target_token is one
-bounded token with no whitespace. Report only concrete contradictions; otherwise
+token of 1 to 300 characters using only [A-Za-z0-9_./+@=-]. Strip or rewrite $, ~,
+:, #, backticks, and whitespace while keeping the target recognizable: $HOME ->
+HOME; make test:unit -> test.unit. Report only concrete contradictions; otherwise
 return {"findings":[]}.
 
 INPUT JSON:

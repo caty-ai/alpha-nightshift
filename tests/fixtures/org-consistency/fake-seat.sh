@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 prompt=$(/bin/cat)
@@ -143,6 +144,13 @@ PY
     ;;
   deep-nest)
     /usr/bin/python3 -c 'print("[" * 100000)'
+    ;;
+  bad-target-token)
+    if [ "$(seat_launch)" = OC-H ]; then
+      printf '%s\n' '{"findings":[{"check_id":"OC-H","file":"AGENTS.md","rule_id":"A1","target_token":"$HOME","claim":"handbook procedure drift","evidence":"fixture","confidence":"medium"}]}'
+    else
+      printf '%s\n' '{"findings":[{"check_id":"OC-F","file":"README.md","claim_type":"environment","target_token":"$HOME","claim":"environment variable drift","evidence":"fixture","confidence":"high"}]}'
+    fi
     ;;
   timeout)
     sleep 3

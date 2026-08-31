@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC1091
+# shellcheck disable=SC1091,SC2016
 set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -8,6 +8,10 @@ TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 
 FAKE_SEAT="$TEST_DIR/fixtures/org-consistency/fake-seat.sh"
 seat_cmd="/bin/bash '$FAKE_SEAT'"
+for prompt_file in efg.txt h.txt; do
+  grep -F '[A-Za-z0-9_./+@=-]' "$TEST_DIR/../lanes/org-consistency/prompts/$prompt_file" >/dev/null ||
+    fail "$prompt_file does not state the target_token charset"
+done
 case_roots=()
 cleanup() {
   rm -rf "${case_roots[@]}"
@@ -207,9 +211,16 @@ oc_commit "$OC_WORK/demo" changed-head
 oc_push_work demo main
 
 invalid_day=2
-for mode in invalid-json extra-field huge-claim fake-fingerprint non-utf8 deep-nest; do
+for mode in invalid-json extra-field huge-claim fake-fingerprint non-utf8 deep-nest bad-target-token; do
   night_id=$(printf '2026-08-%02d' "$invalid_day")
+  if [ "$mode" = extra-field ]; then
+    printf '%s\n' blocked > "$OC_STATE/quarantine/$night_id"
+  fi
   oc_run "$night_id" OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE="$mode" OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
+  if [ "$mode" = extra-field ]; then
+    [ -f "$OC_STATE/quarantine/$night_id" ] || fail 'quarantine write failure did not stay isolated'
+    rm "$OC_STATE/quarantine/$night_id"
+  fi
   jq -e '
     .complete == true and
     ([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "INVALID-OUTPUT" and .fresh == false)] | length) == 4 and
@@ -217,19 +228,27 @@ for mode in invalid-json extra-field huge-claim fake-fingerprint non-utf8 deep-n
     ([.findings.self_health[] | select(.claim_kind == "invalid-output")] | length) == 1
   ' "$OC_STATE/report/$night_id.json" >/dev/null || fail "$mode was not rejected as INVALID-OUTPUT with self-health"
   jq -e 'all(.findings[]; if .check_id == "self-health" then true else .status == "open" end)' "$OC_STATE/findings.json" >/dev/null || fail "$mode resolved an open finding"
+  if [ "$mode" = bad-target-token ]; then
+    quarantine_file="$OC_STATE/quarantine/$night_id/1301-OC-E-F-G.txt"
+    [ -f "$quarantine_file" ] || fail 'bad target_token stdout was not quarantined'
+    grep -F '$HOME' "$quarantine_file" >/dev/null || fail 'quarantine did not preserve the violating target_token'
+    jq -e --arg path "quarantine/$night_id/1301-OC-E-F-G.txt" '
+      ([.events[] | select(.type == "INVALID-OUTPUT" and .repo_id == 1301 and .launch == "OC-E/F/G" and .quarantine == $path)] | length) == 1
+    ' "$OC_STATE/report/$night_id.json" >/dev/null || fail 'INVALID-OUTPUT event did not link the quarantine file'
+  fi
   invalid_day=$((invalid_day + 1))
 done
 
-oc_run 2026-08-08 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=timeout OC_SEAT_TIMEOUT_SEC=1 OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
-jq -e '([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "NOT-RUN" and .reason == "seat-timeout" and .fresh == false)] | length) == 4' "$OC_STATE/report/2026-08-08.json" >/dev/null || fail 'per-launch timeout was not a non-fresh NOT-RUN result'
+oc_run 2026-08-09 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=timeout OC_SEAT_TIMEOUT_SEC=1 OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
+jq -e '([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "NOT-RUN" and .reason == "seat-timeout" and .fresh == false)] | length) == 4' "$OC_STATE/report/2026-08-09.json" >/dev/null || fail 'per-launch timeout was not a non-fresh NOT-RUN result'
 
-oc_run 2026-08-09 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=valid OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
+oc_run 2026-08-10 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=valid OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
 jq -e '
   ([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "RUN" and .fresh == true)] | length) == 4 and
   ([.findings.new[] | select(.check_id == "OC-E" and .confidence == "high")] | length) == 0 and
   ([.findings.new[] | select(.check_id == "OC-H" and .confidence == "medium")] | length) == 0 and
   ([.findings.self_health[] | select(.claim_kind == "invalid-output")] | length) == 0
-' "$OC_STATE/report/2026-08-09.json" >/dev/null || fail 'valid retry was not accepted or invalid-output self-health did not clear'
+' "$OC_STATE/report/2026-08-10.json" >/dev/null || fail 'valid retry was not accepted or invalid-output self-health did not clear'
 jq -e 'all(.findings[]; (.fingerprint | test("^[0-9a-f]{64}$")) and .fingerprint != "forged")' "$OC_STATE/findings.json" >/dev/null || fail 'seat-supplied fake fingerprint entered the findings ledger'
 
 # Migration quietness must not consume a changed HEAD from the diff ledger;
@@ -237,11 +256,11 @@ jq -e 'all(.findings[]; (.fingerprint | test("^[0-9a-f]{64}$")) and .fingerprint
 printf '%s\n' '' 'Changed during fingerprint migration.' >> "$OC_WORK/demo/README.md"
 oc_commit "$OC_WORK/demo" migration-head
 oc_push_work demo main
-oc_run 2026-08-10 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=valid OC_FP_SPEC_VERSION=3 OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
-jq -e '.migration_mode == true and .quiet_mode == "migration"' "$OC_STATE/report/2026-08-10.json" >/dev/null || fail 'layer-2 migration night was not quiet'
-[ ! -s "$OC_CASE_ROOT/lanes/2026-08-10/findings.jsonl" ] || fail 'layer-2 migration night leaked proposals'
 oc_run 2026-08-11 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=valid OC_FP_SPEC_VERSION=3 OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
-jq -e '([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "RUN")] | length) == 4' "$OC_STATE/report/2026-08-11.json" >/dev/null || fail 'migration night consumed the changed layer-2 HEAD'
+jq -e '.migration_mode == true and .quiet_mode == "migration"' "$OC_STATE/report/2026-08-11.json" >/dev/null || fail 'layer-2 migration night was not quiet'
+[ ! -s "$OC_CASE_ROOT/lanes/2026-08-11/findings.jsonl" ] || fail 'layer-2 migration night leaked proposals'
+oc_run 2026-08-12 OC_TEST_DISABLE_L2=0 OC_SEAT_CMD="$seat_cmd" OC_FAKE_SEAT_MODE=valid OC_FP_SPEC_VERSION=3 OC_L2_MAX_REPOS=10 OC_H_MAX_REPOS=10 OC_ZERO_STREAK_NIGHTS=99
+jq -e '([.cells[] | select(.repo_id == 1301 and .layer == 2 and .status == "RUN")] | length) == 4' "$OC_STATE/report/2026-08-12.json" >/dev/null || fail 'migration night consumed the changed layer-2 HEAD'
 
 # A stale-target night may report all checks as NO-INPUT, but it must not consume
 # the changed HEAD. The next FRESH night retries and then records completion.
