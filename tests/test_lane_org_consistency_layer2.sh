@@ -320,6 +320,26 @@ runner.mark_l2_complete(repo, "OC-H")
 assert layer2["h_handbook_head"] == "handbook-new"
 PY
 
+# OC-E recognizes the top-level org-profile record without mutating the
+# registry, while unrelated repositories still have no registry entry.
+/usr/bin/python3 -B - "$OC_CORE" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("org_consistency_core", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+runner = module.Runner.__new__(module.Runner)
+profile = {"repo": "caty-ai/.github", "files": {"en": "profile/README.md"}}
+runner.registry = {"modules": [], "org_profile": profile}
+entry = runner.registry_entry_for_repo({"full_name": "CATY-AI/.GITHUB"})
+assert entry == {"org_profile": True, **profile}
+assert entry is not profile
+assert "org_profile" not in profile
+assert runner.registry_entry_for_repo({"full_name": "caty-ai/unregistered"}) is None
+PY
+
 assert_contains 'registry/modules.json for registry_entry' "$OC_REPO_ROOT/lanes/org-consistency/prompts/efg.txt"
 
 printf 'test_lane_org_consistency_layer2: PASS\n'
