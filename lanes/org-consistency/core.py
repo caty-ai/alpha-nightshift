@@ -1595,13 +1595,19 @@ class Runner:
         elif isinstance(modules, list):
             items = modules
         else:
-            return None
+            items = []
         for item in items:
             if (
                 isinstance(item, dict)
                 and normalize(str(item.get("repo", ""))) == normalize(repo["full_name"])
             ):
                 return item
+        profile = self.registry.get("org_profile")
+        if (
+            isinstance(profile, dict)
+            and normalize(str(profile.get("repo", ""))) == normalize(repo["full_name"])
+        ):
+            return {"org_profile": True, **profile}
         return None
 
     def deterministic_tree(self, mirror: pathlib.Path) -> list[str]:
