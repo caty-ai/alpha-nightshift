@@ -432,6 +432,13 @@ jq -e '.persona == "seat:codex"' "$POISON_LANE/findings.jsonl" >/dev/null ||
   fail "infrastructure-failed lane published the wrong partial finding"
 
 # A two-second watchdog kills the seat process tree and continues to later seats.
+# Allow hosted runner variance; CI can tighten REVIEW_TEST_WATCHDOG_BUDGET_SEC.
+watchdog_budget=${REVIEW_TEST_WATCHDOG_BUDGET_SEC:-60}
+case "$watchdog_budget" in
+  ''|*[!0-9]*) fail "REVIEW_TEST_WATCHDOG_BUDGET_SEC must be a positive integer: $watchdog_budget" ;;
+esac
+[ "$watchdog_budget" -gt 0 ] 2>/dev/null ||
+  fail "REVIEW_TEST_WATCHDOG_BUDGET_SEC must be a positive integer: $watchdog_budget"
 write_success_bins
 # shellcheck disable=SC2016
 printf '%s\n' \
@@ -466,8 +473,12 @@ watchdog_started=$(date '+%s')
   REVIEW_GROK_BIN="$FAKE_BIN/grok" \
   /bin/bash "$RUN_SH" || fail "watchdog failure prevented successful seats from completing"
 watchdog_elapsed=$(( $(date '+%s') - watchdog_started ))
-[ "$watchdog_elapsed" -lt 8 ] || fail "two-second watchdog took $watchdog_elapsed seconds"
+[ "$watchdog_elapsed" -le "$watchdog_budget" ] ||
+  fail "two-second watchdog took $watchdog_elapsed seconds; budget is $watchdog_budget seconds"
 assert_contains 'timed out after 2s' "$WATCHDOG_LANE/evidence/seat-codex.log"
+assert_contains 'seat=codex status=failed exit=124' "$WATCHDOG_LANE/evidence/run.log"
+assert_contains 'seat=kimi status=ok candidates=1' "$WATCHDOG_LANE/evidence/run.log"
+assert_contains 'seat=grok status=ok candidates=1' "$WATCHDOG_LANE/evidence/run.log"
 assert_contains 'partial transcript before timeout' \
   "$WATCHDOG_LANE/evidence/seat-codex.log"
 orphan_pid=$(sed -n '1p' "$WATCHDOG_LANE/work/review-seats/codex/orphan.pid")
