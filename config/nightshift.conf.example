@@ -99,6 +99,16 @@ REVIEW_GLM_MAX_TOKENS=4096
 # permanently missing mirror burns one slot and fails once per rotation cycle.
 # LANE_CMD_2="REVIEW_ROTATION_TARGETS='caty-agent-harness=/abs/mirrors/caty-agent-harness sitter=/abs/mirrors/sitter ...' REVIEW_ROTATION_STATE='$REPO_ROOT/state/lanes/review-rotation.json' REVIEW_ROTATION_REFRESH=1 REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/rotate.sh'"
 
+# Generic health lane: number it AFTER the review rotation lane. This example
+# assumes rotation is LANE_CMD_1 (move the rotation command above to that slot).
+# Settings must be embedded in LANE_CMD because lanes run under env -i.
+# HEALTH_TARGET_SOURCE='/absolute/path/to/non-bare-checkout' overrides rotation.
+# HEALTH_TEST_CMD / HEALTH_SUITE_GLOB override runner detection; choose only one.
+# HEALTH_ROTATION_LANE='lane_1'
+# HEALTH_ROTATION_STATE="$REPO_ROOT/state/lanes/review-rotation.json"
+# HEALTH_TIMEBOX_SEC=1800
+# LANE_CMD_2="HEALTH_ROTATION_LANE='$HEALTH_ROTATION_LANE' HEALTH_ROTATION_STATE='$HEALTH_ROTATION_STATE' HEALTH_TIMEBOX_SEC='$HEALTH_TIMEBOX_SEC' /bin/bash '$REPO_ROOT/lanes/health/run.sh'"
+
 # Org-wide public consistency lane. LANE_CMD numbers must remain contiguous:
 # the dispatcher stops scanning at the first missing LANE_CMD_n. Its anonymous
 # GitHub API reads share the 60 requests/hour/IP allowance with other tools.
