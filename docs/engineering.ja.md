@@ -143,6 +143,21 @@ suites: declared=N executed=M skipped=K
 /bin/bash bin/nightshift-dispatch status
 ```
 
+合成reporterでレーンステータスセクションを試すには、絶対パスの一時ラッパーを作り、ダイジェストにだけ渡します:
+
+```sh
+fake_reporter=$(mktemp /tmp/lane-status-reporter.XXXXXX)
+trap 'rm -f "$fake_reporter"' EXIT
+{
+  printf '%s\n' '#!/bin/bash'
+  printf '%s\n' 'printf '\''%s\n'\'' '\''{"ci_red":[],"lanes":[],"roster":{"repos":["example/alpha"]}}'\'''
+} > "$fake_reporter"
+chmod 0700 "$fake_reporter"
+LANE_STATUS_CMD="$fake_reporter" /bin/bash bin/nightshift-dispatch digest
+```
+
+生成されたダイジェストには`## Lane status`が入り、フッター末尾は`lane status: ok (...)`になります。`LANE_STATUS_CMD`を付けずにもう一度実行するとセクションは省略され、フッターは`lane status: not configured`になります。完全な契約と隔離の詳細は[レーンステータス設定](reference.ja.md#lane-status-settings)を参照してください。
+
 SIGINT（Ctrl+C）は、現在の実行を中断する合図として処理されます。単純なPOSIXのバックグラウンドジョブはSIGINTを無視した状態を引き継ぐことがあるため、その種の起動を止めるにはSIGTERMを使用してください。
 
 ---
