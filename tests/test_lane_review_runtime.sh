@@ -433,7 +433,7 @@ jq -e '.persona == "seat:codex"' "$POISON_LANE/findings.jsonl" >/dev/null ||
 
 # A two-second watchdog kills the seat process tree and continues to later seats.
 # Allow hosted runner variance; CI can tighten REVIEW_TEST_WATCHDOG_BUDGET_SEC.
-watchdog_budget=${REVIEW_TEST_WATCHDOG_BUDGET_SEC:-60}
+watchdog_budget=${REVIEW_TEST_WATCHDOG_BUDGET_SEC-60}
 case "$watchdog_budget" in
   ''|*[!0-9]*) fail "REVIEW_TEST_WATCHDOG_BUDGET_SEC must be a positive integer: $watchdog_budget" ;;
 esac
