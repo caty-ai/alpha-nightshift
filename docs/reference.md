@@ -214,6 +214,21 @@ Neither success nor denial emits the proposed text itself.
 
 ---
 
+<a id="review-lane-rotation-settings"></a>
+
+## Review-lane rotation settings
+
+| Setting | Scope and example value | Meaning |
+|---|---|---|
+| `REVIEW_ROTATION_TARGETS` | lane; required whitespace-separated `name=/abs/path` entries | Ordered review target list. Each name must be unique and exactly match the basename of its whitespace-free absolute mirror path; mirrors must be non-bare worktree clones. |
+| `REVIEW_ROTATION_STATE` | lane; required absolute path | JSON state file used to record each target's latest attempt and result (`run`, `missing-mirror`, or `refresh-failed`); its parent directory must already exist. |
+| `REVIEW_ROTATION_REFRESH` | lane; `1` | Set to `1` to run `GIT_TERMINAL_PROMPT=0 git pull --ff-only --quiet` before review, or `0` to use the current mirror HEAD without refreshing. |
+| `REVIEW_ROTATION_RUN` | lane; `lanes/review/run.sh` | Review-lane script invoked after target selection; primarily useful for testing or an operator-controlled wrapper. |
+
+Because lane commands run under `env -i`, every rotation and review setting must be embedded in the `LANE_CMD_2` string, as shown in `config/nightshift.conf.example`. Operators must use whitespace-free paths to non-bare worktree clones and run `mkdir -p "$REPO_ROOT/state/lanes"` before enabling rotation: `rotate.sh` does not create the state parent. Targets with no attempt sort first, then targets rotate by oldest lexicographic `NIGHT_ID`, with list order breaking ties; state is written ahead of the review exec, so a same-night rerun consumes its second slot and an interrupted lane still consumes its turn. A selected missing or invalid mirror is recorded as `missing-mirror`, burns its slot, and fails the lane once per rotation cycle without silently selecting another repository. A stalled refresh is bounded only by the lane timebox, and its turn has already been consumed.
+
+---
+
 <a id="org-consistency-settings"></a>
 
 ## Org-consistency settings

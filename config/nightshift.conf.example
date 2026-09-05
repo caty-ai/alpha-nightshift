@@ -83,6 +83,13 @@ REVIEW_CURL_BIN='/usr/bin/curl'
 GLM_KEY_FILE='/absolute/path/to/glm-api-key'
 REVIEW_GLM_MAX_TOKENS=4096
 # LANE_CMD_2="REVIEW_TARGET_SOURCE='$REVIEW_TARGET_SOURCE' REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/run.sh'"
+# Rotation variant: mirror directory names must equal their GitHub repository
+# names so the review lane emits the correct findings repo field. Use
+# whitespace-free paths to non-bare worktree clones. Before enabling rotation,
+# run `mkdir -p "$REPO_ROOT/state/lanes"`: rotate.sh does not create this state
+# parent. Write-ahead means a same-night rerun consumes its next slot; a
+# permanently missing mirror burns one slot and fails once per rotation cycle.
+# LANE_CMD_2="REVIEW_ROTATION_TARGETS='caty-agent-harness=/abs/mirrors/caty-agent-harness sitter=/abs/mirrors/sitter ...' REVIEW_ROTATION_STATE='$REPO_ROOT/state/lanes/review-rotation.json' REVIEW_ROTATION_REFRESH=1 REVIEW_SEAT_ROSTER='$REVIEW_SEAT_ROSTER' REVIEW_SEATS_PER_NIGHT='$REVIEW_SEATS_PER_NIGHT' REVIEW_SEAT_TIMEOUT_SEC='$REVIEW_SEAT_TIMEOUT_SEC' REVIEW_OPUS_ENABLED='$REVIEW_OPUS_ENABLED' REVIEW_CODEX_BIN='$REVIEW_CODEX_BIN' REVIEW_KIMI_BIN='$REVIEW_KIMI_BIN' REVIEW_GROK_BIN='$REVIEW_GROK_BIN' REVIEW_CURL_BIN='$REVIEW_CURL_BIN' REVIEW_CLAUDE_BIN='$REVIEW_CLAUDE_BIN' REVIEW_CLAUDE_CONFIG_DIR='$REVIEW_CLAUDE_CONFIG_DIR' GLM_KEY_FILE='$GLM_KEY_FILE' REVIEW_GLM_MAX_TOKENS='$REVIEW_GLM_MAX_TOKENS' /bin/bash '$REPO_ROOT/lanes/review/rotate.sh'"
 
 # Org-wide public consistency lane. LANE_CMD numbers must remain contiguous:
 # the dispatcher stops scanning at the first missing LANE_CMD_n. Its anonymous
