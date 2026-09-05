@@ -267,6 +267,53 @@ Lane commands are intentionally launched under `env -i`. A top-level assignment 
 
 ---
 
+<a id="lane-status-settings"></a>
+
+## Lane status settings
+
+The morning digest can call an operator-controlled lane-status reporter and render its JSON result. Positive-integer settings fail closed when malformed. Reporter acquisition and contract failures remain visible in the digest but do not make the digest fail.
+
+| Setting | Scope and example value | Meaning |
+|---|---|---|
+| `LANE_STATUS_CMD` | daytime digest; unset | Shell command run by `/bin/bash -c`. Use an absolute path to an operator-controlled wrapper. Unset or empty omits the section and prints `lane status: not configured` in the footer. |
+| `LANE_STATUS_TIMEOUT_SEC` | daytime digest; `120` | Positive timeout in seconds, limited to seven digits. |
+| `LANE_STATUS_MAX_ROWS` | daytime digest; `10` | Positive per-list row cap, limited to seven digits. Header counts remain uncapped. |
+
+The reporter must print exactly one JSON object to stdout and exit zero. Unknown fields are ignored. `errors` and `truncated` are optional and count as empty arrays when absent:
+
+```json
+{
+  "ci_red": [{"repo":"example/alpha","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T01:00:00Z"}],
+  "lanes": [{"repo":"example/alpha","kind":"issue","number":42,"title":"Choose rollout","owner":"human","stale":false,"reason":"decision needed","state":"hold"}],
+  "roster": {"repos":["example/alpha"]},
+  "errors": [{"repo":"example/alpha","message":"synthetic error"}],
+  "truncated": ["LIST TRUNCATED: example/alpha pulls"]
+}
+```
+
+The top-level object requires array-valued `ci_red` and `lanes`, plus `roster.repos` as an array of strings. When present, `errors` and `truncated` must be arrays. A top-level failure makes the section unavailable. Rows are checked independently against this closed contract; malformed rows are excluded and counted before filtering or capping:
+
+| Array | Field | Type | Closed values | Printed |
+|---|---|---|---|---|
+| `ci_red` | `repo` | string | — | yes |
+| `ci_red` | `scope` | string | `main`, `pr`, `branch` | no; selects default-branch rows with `main` |
+| `ci_red` | `branch` | string | — | yes |
+| `ci_red` | `workflow` | string | — | yes |
+| `ci_red` | `conclusion` | string | — | no |
+| `ci_red` | `since` | string | — | yes |
+| `lanes` | `repo` | string | — | yes |
+| `lanes` | `kind` | string | `pr`, `issue` | no |
+| `lanes` | `number` | integer JSON number | — | yes |
+| `lanes` | `title` | string | — | yes |
+| `lanes` | `owner` | string | `human`, `alpha`, `unknown` | no; selects the human-owned list |
+| `lanes` | `stale` | boolean | — | no; selects the stale list |
+| `lanes` | `reason` | string | — | yes |
+| `lanes` | `state` | optional string | — | no |
+
+The command runs from per-run scratch space under the night's state directory with `env -i`. Its only environment variables are a minimal `PATH`, quarantined `HOME`, scratch `TMPDIR`, `LANG`, `TERM=dumb`, `NIGHT_ID`, `GIT_CEILING_DIRECTORIES`, and `GH_CONFIG_DIR`. File-based `gh` authentication is available only through `GH_CONFIG_DIR`; `GH_TOKEN`, `GITHUB_TOKEN`, and other caller variables are not passed. The minimal `PATH` excludes version-manager shims, so use an absolute wrapper that establishes any required interpreter environment. The reporter contract permits no network access except through `gh` and no writes outside the state directory; this is an operator contract, not an operating-system sandbox boundary.
+
+---
+
 ## Local gateway interface
 
 The gateway accepts only these operations:
