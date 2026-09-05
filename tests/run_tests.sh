@@ -88,9 +88,7 @@ if [ "$declared" -ne "$expected_suite_count" ]; then
   exit 1
 fi
 
-suite_output=$(mktemp "${TMPDIR:-/tmp}/run-tests.XXXXXX")
-trap 'rm -f "$suite_output"' EXIT
-
+exec 3>&1
 for test_file in "${test_files[@]}"; do
   test_name=$(basename "$test_file")
   required_contracts=$(suite_contracts "$test_name")
@@ -109,10 +107,12 @@ for test_file in "${test_files[@]}"; do
   fi
 
   executed=$((executed + 1))
-  # PASS requires both exit 0 and a verdict line; stream all suite output.
-  if /bin/bash "$test_file" 2>&1 | tee "$suite_output"; then
-    if grep -Fxq "${test_name%.sh}: PASS" "$suite_output" ||
-       grep -Eq '^PASS([[:space:]]|$)' "$suite_output"; then
+  # PASS requires exit 0 and either exact '<suite basename without .sh>: PASS'
+  # or a line starting with 'PASS ('; stream all suite output to stdout.
+  if suite_out=$(/bin/bash "$test_file" 2>&1 | tee /dev/fd/3); then
+    # Read all output so an early grep match cannot cause SIGPIPE with pipefail.
+    if printf '%s\n' "$suite_out" | grep -Fx "${test_name%.sh}: PASS" >/dev/null ||
+       printf '%s\n' "$suite_out" | grep -E '^PASS [(]' >/dev/null; then
       printf 'PASS %s\n' "$test_name"
       passed=$((passed + 1))
     else
@@ -124,6 +124,7 @@ for test_file in "${test_files[@]}"; do
     failed=$((failed + 1))
   fi
 done
+exec 3>&-
 
 printf '\nTests: %s passed, %s failed\n' "$passed" "$failed"
 printf 'suites: declared=%s executed=%s skipped=%s\n' "$declared" "$executed" "$skipped"
