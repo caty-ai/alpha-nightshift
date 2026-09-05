@@ -43,6 +43,7 @@ write_success_bins() {
     'cat > "$prompt"' \
     'out=$(sed -n '\''/\/candidates\.jsonl$/p'\'' "$prompt" | sed -n '\''1p'\'')' \
     '[ -n "$out" ]' \
+    'printf "%s\n" "$@" > "$(dirname "$out")/codex-argv.txt"' \
     "printf '%s\\n' '$candidate' > \"\$out\"" \
     > "$FAKE_BIN/codex"
   # shellcheck disable=SC2016
@@ -156,6 +157,12 @@ mkdir -p "$DEGRADED_LANE"
 run_review "$DEGRADED_LANE" || fail "one failed seat made the whole lane fail"
 [ "$(wc -l < "$DEGRADED_LANE/findings.jsonl" | tr -d '[:space:]')" -eq 2 ] ||
   fail "degraded lane did not retain findings from two successful seats"
+CODEX_ARGV="$DEGRADED_LANE/work/review-seats/codex/codex-argv.txt"
+awk 'previous == "--sandbox" && $0 == "read-only" { found = 1 } { previous = $0 } END { exit !found }' \
+  "$CODEX_ARGV" || fail "Codex did not receive --sandbox read-only"
+if grep -E -x -- '--full-auto|--approve-for-me' "$CODEX_ARGV" >/dev/null; then
+  fail "Codex received a removed or incompatible approval flag"
+fi
 assert_file_exists "$DEGRADED_LANE/evidence/seat-kimi.log"
 assert_contains 'seat=kimi status=failed' "$DEGRADED_LANE/evidence/run.log"
 assert_not_contains canary-not-real "$DEGRADED_LANE/evidence/seat-codex.log" \
@@ -205,10 +212,11 @@ printf '%s\n' \
   'case "$*" in *glm-canary-key*) exit 82 ;; esac' \
   'config_file="$TMPDIR/glm-curl-config.txt"' \
   'cat > "$config_file"' \
+  'cp glm-request.json "$TMPDIR/glm-curl-request.json"' \
   'grep -F -x '\''header = "x-api-key: glm-canary-key"'\'' "$config_file" >/dev/null || exit 83' \
   'grep -F -x '\''header = "anthropic-version: 2023-06-01"'\'' "$config_file" >/dev/null || exit 84' \
   'grep -F -x '\''data-binary = "@glm-request.json"'\'' "$config_file" >/dev/null || exit 85' \
-  'jq -e '\''.model == "glm-5.2" and .max_tokens == 4096 and (.messages | length == 1) and .messages[0].role == "user" and (.messages[0].content | type == "string")'\'' glm-request.json >/dev/null || exit 86' \
+  'jq -e '\''.model == (env.REVIEW_GLM_MODEL // "glm-5.3") and .max_tokens == 4096 and (.messages | length == 1) and .messages[0].role == "user" and (.messages[0].content | type == "string")'\'' glm-request.json >/dev/null || exit 86' \
   "jq -n --arg text '$candidate' '{id:\"msg_test\",type:\"message\",role:\"assistant\",model:\"glm-5.2\",content:[{type:\"text\",text:\$text}],stop_reason:\"end_turn\",usage:{input_tokens:12,output_tokens:34}}'" \
   > "$GLM_CURL_BIN"
 chmod +x "$GLM_CURL_BIN"
@@ -243,6 +251,54 @@ jq -e '.persona == "seat:glm" and .target == "README.md"' \
 assert_contains 'seat=glm status=ok candidates=1' "$GLM_LANE/evidence/run.log"
 assert_contains 'header = "x-api-key: glm-canary-key"' \
   "$GLM_LANE/tmp/glm-curl-config.txt"
+
+# Direct adapter calls preserve the three-argument contract and isolate each
+# request so rejected inputs cannot pass by reusing an earlier curl capture.
+run_glm_adapter() {
+  local case_name=$1 key_line=$2 model_override=$3 expected_rc=$4 diagnostic=$5
+  local case_dir="$TEST_TMP/glm-direct-$case_name" rc=0
+  mkdir -p "$case_dir/out" "$case_dir/tmp"
+  printf '%s\n' "$key_line" > "$GLM_KEY_CANARY"
+  printf '%s\n' 'Review the fixture.' > "$case_dir/prompt.txt"
+  local -a model_env=()
+  if [ "$model_override" != default ]; then
+    model_env=("REVIEW_GLM_MODEL=$model_override")
+  fi
+  /usr/bin/env -i PATH="$PATH" TMPDIR="$case_dir/tmp" \
+    GLM_KEY_FILE="$GLM_KEY_CANARY" REVIEW_CURL_BIN="$GLM_CURL_BIN" \
+    "${model_env[@]}" /bin/bash "$ROOT/lanes/review/adapters/glm.sh" \
+    "$case_dir/prompt.txt" "$SOURCE_REPO" "$case_dir/out" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -eq "$expected_rc" ] || fail "GLM $case_name returned $rc, expected $expected_rc"
+  assert_not_contains glm-canary-key "$case_dir/stderr" "$case_dir/stdout"
+  if [ "$expected_rc" -eq 0 ]; then
+    assert_file_exists "$case_dir/tmp/glm-curl-request.json"
+    grep -F -x 'header = "x-api-key: glm-canary-key"' \
+      "$case_dir/tmp/glm-curl-config.txt" >/dev/null || fail "GLM $case_name sent the wrong key"
+    local expected_model=glm-5.3
+    if [ "$model_override" != default ]; then expected_model=$model_override; fi
+    jq -e --arg model "$expected_model" '.model == $model' \
+      "$case_dir/tmp/glm-curl-request.json" >/dev/null || fail "GLM $case_name sent the wrong model"
+    [ "$(cat "$case_dir/out/candidates.jsonl")" = "$candidate" ] ||
+      fail "GLM $case_name did not extract the response"
+  else
+    [ ! -e "$case_dir/tmp/glm-curl-config.txt" ] || fail "GLM $case_name called curl"
+    [ ! -e "$case_dir/tmp/glm-curl-request.json" ] || fail "GLM $case_name sent a request"
+    assert_contains "$diagnostic" "$case_dir/stderr"
+  fi
+}
+
+run_glm_adapter assignment 'ZHIPU_API_KEY=glm-canary-key' default 0 ''
+run_glm_adapter bare 'glm-canary-key' default 0 ''
+run_glm_adapter export 'export ZHIPU_API_KEY=glm-canary-key' default 2 'must not use an export prefix'
+run_glm_adapter double-quoted 'ZHIPU_API_KEY="glm-canary-key"' default 2 'must not use a quoted value'
+run_glm_adapter single-quoted "ZHIPU_API_KEY='glm-canary-key'" default 2 'must not use a quoted value'
+run_glm_adapter empty 'ZHIPU_API_KEY=' default 2 'has an empty value'
+run_glm_adapter multiple-equals 'ZHIPU_API_KEY=glm-canary-key=extra' default 2 'more than one equals sign'
+run_glm_adapter invalid-name 'bad-name=glm-canary-key' default 2 'NAME must match'
+run_glm_adapter invalid-value 'ZHIPU_API_KEY=glm-canary-key!' default 2 'contains unsupported characters'
+run_glm_adapter model-override 'glm-canary-key' glm-5.2 0 ''
+run_glm_adapter invalid-model 'glm-canary-key' 'bad value' 2 'REVIEW_GLM_MODEL contains unsupported characters'
 
 GLM_EMPTY_CURL_BIN="$FAKE_BIN/glm-empty-curl"
 # shellcheck disable=SC2016
