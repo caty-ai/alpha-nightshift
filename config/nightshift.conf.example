@@ -12,6 +12,14 @@ LANE_TIMEBOX_MIN=60
 NIGHT_BUDGET_TOKENS=0
 BUDGET_PROBE_CMD="$REPO_ROOT/bin/budget-probe-stub"
 
+# Optional morning-digest lane status. The operator-controlled reporter must
+# make no network calls except through gh, make no writes outside the state
+# directory, and print exactly one JSON object matching the documented contract.
+# Use an absolute wrapper path; environment-token authentication is not passed.
+# LANE_STATUS_CMD='/absolute/path/to/lane-status-reporter-wrapper'
+# LANE_STATUS_TIMEOUT_SEC=120
+# LANE_STATUS_MAX_ROWS=10
+
 # Daytime verdict-sync settings. These are not exported into lane processes.
 NIGHT_BOT_LOGIN='night-bot'
 VERDICT_GH_BIN='gh'

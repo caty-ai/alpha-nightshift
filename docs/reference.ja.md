@@ -290,6 +290,53 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 
 ---
 
+<a id="lane-status-settings"></a>
+
+## レーンステータス設定
+
+朝ダイジェストは、運用者が管理するlane-status reporterを呼び出し、そのJSON結果を表示できます。正の整数を要求する設定は不正な値でフェイルクローズします。reporterの取得失敗や契約違反はダイジェスト内に表示されますが、ダイジェスト自体を失敗させません。
+
+| 設定 | スコープと例値 | 意味 |
+|---|---|---|
+| `LANE_STATUS_CMD` | 日中ダイジェスト、未設定 | `/bin/bash -c`で実行するシェルコマンド。運用者管理ラッパーの絶対パスを指定します。未設定または空の場合はセクションを省略し、フッターに`lane status: not configured`を表示します。 |
+| `LANE_STATUS_TIMEOUT_SEC` | 日中ダイジェスト、`120` | 7桁以内の正のタイムアウト秒数。 |
+| `LANE_STATUS_MAX_ROWS` | 日中ダイジェスト、`10` | 7桁以内の正のリスト別行数上限。ヘッダーの件数は上限適用前の値です。 |
+
+reporterはstdoutへJSONオブジェクトをちょうど1つ出力し、終了コード0で終了する必要があります。実行はすべての子孫プロセスが終了した場合にのみ完了し、`LANE_STATUS_TIMEOUT_SEC`を過ぎてもバックグラウンドの子プロセスを残すreporterは、有効なJSONを出力していても`timeout`として報告されるため、バックグラウンドプロセスを残してはいけません。未知のフィールドは無視されます。`errors`と`truncated`は省略可能で、省略時は空配列として数えます:
+
+```json
+{
+  "ci_red": [{"repo":"example/alpha","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T01:00:00Z"}],
+  "lanes": [{"repo":"example/alpha","kind":"issue","number":42,"title":"Choose rollout","owner":"human","stale":false,"reason":"decision needed","state":"hold"}],
+  "roster": {"repos":["example/alpha"]},
+  "errors": [{"repo":"example/alpha","message":"synthetic error"}],
+  "truncated": ["LIST TRUNCATED: example/alpha pulls"]
+}
+```
+
+トップレベルには配列の`ci_red`と`lanes`、および文字列配列の`roster.repos`が必須です。`errors`と`truncated`は、存在する場合は配列でなければなりません。トップレベル違反はセクション全体をunavailableにします。各行は次の閉じた契約で独立に検査され、不正行はフィルターや上限適用の前に除外・集計されます:
+
+| 配列 | フィールド | 型 | 閉じた値 | 表示 |
+|---|---|---|---|---|
+| `ci_red` | `repo` | string | — | はい |
+| `ci_red` | `scope` | string | `main`, `pr`, `branch` | いいえ。`main`だけをデフォルトブランチ一覧へ選択 |
+| `ci_red` | `branch` | string | — | はい |
+| `ci_red` | `workflow` | string | — | はい |
+| `ci_red` | `conclusion` | string | — | いいえ |
+| `ci_red` | `since` | string | — | はい |
+| `lanes` | `repo` | string | — | はい |
+| `lanes` | `kind` | string | `pr`, `issue` | いいえ |
+| `lanes` | `number` | integerのJSON number | — | はい |
+| `lanes` | `title` | string | — | はい |
+| `lanes` | `owner` | string | `human`, `alpha`, `unknown` | いいえ。human-owned一覧を選択 |
+| `lanes` | `stale` | boolean | — | いいえ。stale一覧を選択 |
+| `lanes` | `reason` | string | — | はい |
+| `lanes` | `state` | 省略可能なstring | — | いいえ |
+
+コマンドはその夜のstateディレクトリ下にある実行別scratchから`env -i`で動きます。環境変数は最小`PATH`、隔離された`HOME`、scratchの`TMPDIR`、`LANG`、`TERM=dumb`、`NIGHT_ID`、`GIT_CEILING_DIRECTORIES`、`GH_CONFIG_DIR`だけです。ファイルベースの`gh`認証は`GH_CONFIG_DIR`経由でのみ利用でき、`GH_TOKEN`、`GITHUB_TOKEN`、その他の呼び出し元変数は渡りません。最小`PATH`にはバージョンマネージャーのshimがないため、必要なinterpreter環境を準備する絶対パスのラッパーを使ってください。reporter契約では`gh`以外のネットワークアクセスとstateディレクトリ外への書き込みを禁止しますが、これは運用契約でありOS sandbox境界ではありません。
+
+---
+
 ## ローカルゲートウェイインターフェース
 
 ゲートウェイが受け付けるのは、次の操作のみです:
