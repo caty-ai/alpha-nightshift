@@ -188,7 +188,7 @@ printf '%s\n' \
   '#!/bin/bash' \
   'set -euo pipefail' \
   'args=" $* "' \
-  'for required in "--ignore-user-config" "--ignore-rules" "--disable multi_agent" "--profile sol" "--full-auto" "--skip-git-repo-check" "--ephemeral"; do' \
+  'for required in "--ignore-user-config" "--ignore-rules" "--disable multi_agent" "--profile sol" "--sandbox workspace-write" "--skip-git-repo-check" "--ephemeral"; do' \
   '  case "$args" in *" $required "*) ;; *) exit 81 ;; esac' \
   'done' \
   'if [ -n "${FAKE_CODEX_ARGV_FILE:-}" ] && [ ! -e "$FAKE_CODEX_ARGV_FILE" ]; then' \
@@ -475,13 +475,18 @@ printf '%s\n' \
   multi_agent \
   --profile \
   sol \
-  --full-auto \
+  --sandbox \
+  workspace-write \
   --skip-git-repo-check \
   --ephemeral \
   - \
   > "$TEST_TMP/expected-codex-argv.txt"
 cmp -s "$TEST_TMP/expected-codex-argv.txt" "$CASE_LANE/codex-argv.txt" ||
   fail "default seat Codex argv changed"
+! grep -qx -- '--full-auto' "$CASE_LANE/codex-argv.txt" ||
+  fail "default seat Codex argv contains removed --full-auto flag"
+[ "$(grep -A1 -x -- '--sandbox' "$CASE_LANE/codex-argv.txt" | sed -n '2p')" = workspace-write ] ||
+  fail "default seat Codex sandbox must be workspace-write"
 codex_first_cwd=$(sed -n '1p' "$CASE_LANE/codex-cwd.txt")
 codex_persona_dir=$(find "$CASE_LANE/codex-work" -maxdepth 1 -type d \
   -name 'persona-beginner.*' | sed -n '1p')

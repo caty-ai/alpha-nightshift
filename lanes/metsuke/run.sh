@@ -515,7 +515,7 @@ run_model_prompt() {
           --ignore-rules \
           --disable multi_agent \
           --profile sol \
-          --full-auto \
+          --sandbox workspace-write \
           --skip-git-repo-check \
           --ephemeral \
           - < "$prompt_path"
