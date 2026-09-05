@@ -13,6 +13,8 @@
 
 {{FINDINGS_BLOCK}}
 
+{{LANE_STATUS_SECTION}}
+
 ## Footer
 
 予算スナップショット:
@@ -26,3 +28,5 @@ org-consistency freshness:
 
 累積 KPI:
 {{KPI_BLOCK}}
+
+{{LANE_STATUS_FOOTER}}
