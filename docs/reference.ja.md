@@ -236,6 +236,29 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 
 ---
 
+<a id="health-lane-settings"></a>
+
+## ヘルスレーン設定
+
+`lanes/health/run.sh`は選択したリポジトリのコミット済みHEADをローカルにクローンしてテストし、元のチェックアウトには書き込みません。必須の`LANE_DIR`と`NIGHT_ID`はディスパッチャーが渡します。レーンは`env -i`下で動くため、すべての`HEALTH_*`設定を`LANE_CMD_n`文字列に埋め込んでください。
+
+| 設定 | 既定値 | 意味 |
+|---|---|---|
+| `HEALTH_TARGET_SOURCE` | 未設定 | ベアでないGitチェックアウトの絶対パス。ローテーション指定より優先します。パスのbasenameがfindingの`repo`になります。 |
+| `HEALTH_ROTATION_LANE` | 未設定 | `lane_1`など、`^lane_[0-9]+$`に一致する兄弟レーン名。明示的なsourceがない場合は必須です。そのレーン直下の`rotation.json`を読み、当夜の`NIGHT_ID`、空でない`selected`、絶対パスの`path`を要求します。`refresh`の値は`health.json`に記録しますが判定には使いません。 |
+| `HEALTH_ROTATION_STATE` | 未設定 | レビューローテーションstate JSONの任意の絶対パス。ローテーション経由の場合に`.targets[selected].last_attempt == NIGHT_ID`を要求し、`.targets[selected].last_result == "missing-mirror"`なら`rotation-missing-mirror`を報告しますを検証します。このファイルは読み取り専用です。 |
+| `HEALTH_TEST_CMD` | 未設定 | クローン内で`/bin/bash -c`に渡す明示的なコマンド。`HEALTH_SUITE_GLOB`との同時指定は禁止です。 |
+| `HEALTH_SUITE_GLOB` | 未設定 | `tests/*.test.sh`など、クローンルートからの相対glob。一致する通常ファイルをそれぞれ`/bin/bash`で実行します。`HEALTH_TEST_CMD`との同時指定は禁止です。 |
+| `HEALTH_TIMEBOX_SEC` | `1800` | コマンド・スイートごとの制限秒数（正の整数）。超過時はコマンドのプロセスツリー全体を停止し、タイムアウトしたコマンドのfindingは生成しません。 |
+
+コマンドもsuite globも未指定の場合、行頭が`test:`の行を含む`Makefile`（`make test`）、`tests/run.sh`、`tests/run_tests.sh`の順に検出します。後者2つは`/bin/bash`で実行します。失敗したコマンド・スイートごとに`findings.jsonl`へ`test-failure`を1件記録し、再実行時にはこのファイルを空にします。ログは`evidence/`に置き、全ログのSHA-256とバイト数を`evidence/manifest.json`へ記録します。
+
+終了コード`0`はテスト実行済みを意味し、失敗が見つかった場合も同じです。`3`はNO-INPUTで、`health: NO-INPUT reason=...`を出力します。理由は`no-test-runner`、`no-suites-matched`、`rotation-evidence-missing`（不正な証跡や別の夜の証跡を含む）、`rotation-missing-mirror`（stateファイルが当夜を`missing-mirror`と記録している、または選択されたパスが存在しない・Gitリポジトリでない・ベアである）、`rotation-state-mismatch`です。`1`は設定・基盤エラーまたはタイムアウトです。`refresh=skipped`だけでは失敗になりません。`rotate.sh`はミラー欠落時だけでなく`REVIEW_ROTATION_REFRESH=0`でも`skipped`を書くため、更新なしの正常な夜は通常どおり実行します。ヘルスレーンはローテーションレーンより**後の番号**に配置します。`HEALTH_ROTATION_LANE=lane_1`なら`LANE_CMD_2`以降を使い、レーン番号は連番にしてください。
+
+`LANE_DIR`が判明した後は、NO-INPUT、設定エラー、タイムアウトでも`health.json`を書き出します。構造は`{night_id, repo, source, commit, selection, runner, result, reason, refresh, suites, failures, elapsed_sec, commands}`です。`selection`は`explicit`または`rotation`、`runner`は`explicit-cmd`、`suite-glob`、`make-test`、`tests-run`、`tests-run_tests`または`null`、`result`は`ran`、`no-input`、`timeout`または`error`、`reason`は文字列または`null`、`refresh`はローテーション証跡の`refresh`文字列（明示的なsourceでは`null`）です。`commands`の各要素は`{target, exit_code, elapsed_sec, log}`です。
+
+---
+
 <a id="org-consistency-settings"></a>
 
 ## Org-consistency設定
