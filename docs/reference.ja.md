@@ -214,6 +214,21 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 
 ---
 
+<a id="review-lane-rotation-settings"></a>
+
+## レビューレーンのローテーション設定
+
+| 設定 | スコープと例値 | 意味 |
+|---|---|---|
+| `REVIEW_ROTATION_TARGETS` | レーン、空白区切りの`name=/abs/path`指定が必須 | 順序付きのレビュー対象一覧。各nameは一意で、空白を含まない絶対ミラーパスのbasenameと完全に一致する必要があります。ミラーはベアでない作業ツリー付きクローンにします。 |
+| `REVIEW_ROTATION_STATE` | レーン、絶対パス必須 | 各対象の最新試行日と結果（`run`、`missing-mirror`、`refresh-failed`）を記録するJSON stateファイル。親ディレクトリは事前に存在している必要があります。 |
+| `REVIEW_ROTATION_REFRESH` | レーン、`1` | レビュー前に`GIT_TERMINAL_PROMPT=0 git pull --ff-only --quiet`を実行する場合は`1`、更新せず現在のミラーHEADを使う場合は`0`にします。 |
+| `REVIEW_ROTATION_RUN` | レーン、`lanes/review/run.sh` | 対象選択後に起動するレビューレーンスクリプト。主にテストまたは運用者管理のラッパーで使用します。 |
+
+レーンコマンドは`env -i`下で動くため、ローテーション設定とレビュー設定はすべて`config/nightshift.conf.example`の例のように`LANE_CMD_2`文字列内へ埋め込む必要があります。空白を含まないパスのベアでない作業ツリー付きクローンを使い、事前に`mkdir -p "$REPO_ROOT/state/lanes"`を実行してください。`rotate.sh`はstate親ディレクトリを作成しません。未試行の対象を最優先し、その後は`NIGHT_ID`の辞書順で最終試行が古い対象からローテーションし、同値なら一覧の先頭を選びます。また、レビューをexecする前にstateを書き込むため、同じ夜に再実行すると次のスロットを消費し、中断されたレーンでもその順番は消費されます。選ばれたミラーが存在しないかGitリポジトリとして無効な場合は`missing-mirror`を記録し、そのスロットを消費してローテーション周期ごとに一度レーンを失敗させ、別のリポジトリへ黙って切り替えません。停止した更新処理はレーンのタイムボックスだけで制限され、そのターンはすでに消費済みです。
+
+---
+
 <a id="org-consistency-settings"></a>
 
 ## Org-consistency設定
