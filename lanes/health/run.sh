@@ -25,7 +25,7 @@ active_pid=
 active_known=
 
 # Keep evidence available for all exits after the lane directory is known.
-# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap (SC2317 on older shellcheck).
 finish() {
   finish_rc=$?
   trap - EXIT
