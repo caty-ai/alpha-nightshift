@@ -11,6 +11,7 @@ response_file="$out_dir/glm-response.json"
 key_file=${GLM_KEY_FILE:-}
 api_url=https://api.z.ai/api/anthropic/v1/messages
 max_tokens=${REVIEW_GLM_MAX_TOKENS:-4096}
+model=${REVIEW_GLM_MODEL:-glm-5.3}
 curl_bin=${REVIEW_CURL_BIN:-/usr/bin/curl}
 
 [ -d "$out_dir" ] && [ ! -L "$out_dir" ] || exit 2
@@ -26,6 +27,10 @@ case "$key_file" in
 esac
 [ -f "$key_file" ] && [ ! -L "$key_file" ] || {
   printf '%s\n' 'glm: GLM_KEY_FILE must be a regular non-symlink file' >&2
+  exit 2
+}
+[[ "$model" =~ ^[A-Za-z0-9._-]+$ ]] || {
+  printf '%s\n' 'glm: REVIEW_GLM_MODEL contains unsupported characters' >&2
   exit 2
 }
 case "$max_tokens" in
@@ -57,11 +62,32 @@ case "$group_digit$world_digit" in
 esac
 
 glm_key=$(sed -n '1p' "$key_file")
+case "$glm_key" in
+  'export '*)
+    printf '%s\n' 'glm: GLM_KEY_FILE must not use an export prefix' >&2
+    exit 2
+    ;;
+  *=*=*)
+    printf '%s\n' 'glm: GLM_KEY_FILE must not contain more than one equals sign' >&2
+    exit 2
+    ;;
+  *=*)
+    [[ "${glm_key%%=*}" =~ ^[A-Z][A-Z0-9_]*$ ]] || {
+      printf '%s\n' 'glm: GLM_KEY_FILE NAME must match ^[A-Z][A-Z0-9_]*$' >&2
+      exit 2
+    }
+    glm_key=${glm_key#*=}
+    ;;
+esac
 [ -n "$glm_key" ] || {
-  printf '%s\n' 'glm: GLM_KEY_FILE is empty' >&2
+  printf '%s\n' 'glm: GLM_KEY_FILE has an empty value' >&2
   exit 2
 }
 case "$glm_key" in
+  *\"*|*\'*)
+    printf '%s\n' 'glm: GLM_KEY_FILE must not use a quoted value' >&2
+    exit 2
+    ;;
   *[!A-Za-z0-9._-]*)
     printf '%s\n' 'glm: GLM_KEY_FILE contains unsupported characters' >&2
     exit 2
@@ -69,7 +95,7 @@ case "$glm_key" in
 esac
 
 jq -n \
-  --arg model glm-5.2 \
+  --arg model "$model" \
   --arg prompt "$(cat "$prompt_file")" \
   --argjson max_tokens "$max_tokens" \
   '{model:$model,max_tokens:$max_tokens,messages:[{role:"user",content:$prompt}]}' \
