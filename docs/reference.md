@@ -214,6 +214,13 @@ Neither success nor denial emits the proposed text itself.
 
 ---
 
+## Review-lane adapter settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `GLM_KEY_FILE` | Required for GLM | Absolute path to a regular non-symlink file that is not group- or world-readable. Line 1 is either a bare key or `NAME=value` (no `export`, no quotes). A bare key must not contain `=`; use the `NAME=value` form otherwise. NAME must match `^[A-Z][A-Z0-9_]*$`; the nonempty key uses only letters, digits, `.`, `_`, and `-`. |
+| `REVIEW_GLM_MODEL` | `glm-5.3` | GLM adapter model; must match `^[A-Za-z0-9._-]+$`. Set in the adapter environment; `run.sh` currently does not forward this override. |
+
 <a id="review-lane-rotation-settings"></a>
 
 ## Review-lane rotation settings

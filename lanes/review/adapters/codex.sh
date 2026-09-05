@@ -24,7 +24,7 @@ set +e
     --ignore-rules \
     --disable multi_agent \
     --profile sol \
-    --full-auto \
+    --sandbox read-only \
     --skip-git-repo-check \
     --ephemeral \
     - < "$prompt_file"
