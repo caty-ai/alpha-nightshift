@@ -88,7 +88,6 @@ if [ "$declared" -ne "$expected_suite_count" ]; then
   exit 1
 fi
 
-exec 3>&1
 for test_file in "${test_files[@]}"; do
   test_name=$(basename "$test_file")
   required_contracts=$(suite_contracts "$test_name")
@@ -108,8 +107,10 @@ for test_file in "${test_files[@]}"; do
 
   executed=$((executed + 1))
   # PASS requires exit 0 and either exact '<suite basename without .sh>: PASS'
-  # or a line starting with 'PASS ('; stream all suite output to stdout.
-  if suite_out=$(/bin/bash "$test_file" 2>&1 | tee /dev/fd/3); then
+  # or a line starting with 'PASS ('. Output is captured and replayed after
+  # each suite; live streaming is intentionally not provided for portability.
+  if suite_out=$(/bin/bash "$test_file" 2>&1); then
+    [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
     # Read all output so an early grep match cannot cause SIGPIPE with pipefail.
     if printf '%s\n' "$suite_out" | grep -Fx "${test_name%.sh}: PASS" >/dev/null ||
        printf '%s\n' "$suite_out" | grep -E '^PASS [(]' >/dev/null; then
@@ -120,11 +121,11 @@ for test_file in "${test_files[@]}"; do
       failed=$((failed + 1))
     fi
   else
+    [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
     printf 'FAIL %s\n' "$test_name"
     failed=$((failed + 1))
   fi
 done
-exec 3>&-
 
 printf '\nTests: %s passed, %s failed\n' "$passed" "$failed"
 printf 'suites: declared=%s executed=%s skipped=%s\n' "$declared" "$executed" "$skipped"

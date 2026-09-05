@@ -60,12 +60,23 @@ assert_contains 'Tests: 3 passed, 3 failed' "$tmp/output"
 assert_contains 'suites: declared=6 executed=6 skipped=0' "$tmp/output"
 assert_contains 'stdout remains visible' "$tmp/output"
 assert_contains 'stderr remains visible' "$tmp/output"
+assert_contains 'test_a: PASS' "$tmp/output"
 assert_contains 'test_c: PASS' "$tmp/output"
 assert_contains 'PASS (paren form)' "$tmp/output"
 assert_contains 'test_e: PASS' "$tmp/output"
 assert_contains 'PASS test_other.sh' "$tmp/output"
 assert_contains 'FAIL: real assertion blew up' "$tmp/output"
 [ ! -s "$tmp/error" ] || fail 'suite output must stay on harness stdout'
+awk '
+  $0 == "stdout remains visible" { stdout_line = NR }
+  $0 == "stderr remains visible" { stderr_line = NR }
+  $0 == "test_a: PASS" { suite_line = NR }
+  $0 == "PASS test_a.sh" { verdict_line = NR }
+  END {
+    exit !(stdout_line > 0 && stdout_line < stderr_line &&
+           stderr_line < suite_line && suite_line < verdict_line)
+  }
+' "$tmp/output" || fail 'suite output must precede its harness verdict in order'
 
 rm "$tmp/tests/test_b.sh" "$tmp/tests/test_c.sh" "$tmp/tests/test_e.sh" "$tmp/tests/test_f.sh"
 printf '2\n' > "$tmp/tests/expected_suite_count"
@@ -86,5 +97,21 @@ status=0
 [ "$status" -eq 1 ] || fail "invalid verdict run exited $status instead of 1"
 assert_contains 'FAIL test_b.sh (no verdict line)' "$tmp/output"
 assert_contains 'Tests: 2 passed, 1 failed' "$tmp/output"
+
+# Suites must not inherit a descriptor opened by the harness for output routing.
+rm "$tmp/tests/test_b.sh"
+cat > "$tmp/tests/test_f.sh" <<'EOF'
+#!/bin/bash
+if { true >&3; } 2>/dev/null; then echo 'fd3 leaked'; fi
+printf 'test_f: PASS\n'
+EOF
+status=0
+/bin/bash "$tmp/tests/run_tests.sh" > "$tmp/output" 2> "$tmp/error" || status=$?
+[ "$status" -eq 0 ] || fail "fd isolation run exited $status instead of 0"
+assert_not_contains 'fd3 leaked' "$tmp/output" "$tmp/error"
+assert_contains 'test_f: PASS' "$tmp/output"
+assert_contains 'PASS test_f.sh' "$tmp/output"
+assert_contains 'Tests: 3 passed, 0 failed' "$tmp/output"
+[ ! -s "$tmp/error" ] || fail 'fd isolation run must keep harness stderr empty'
 
 printf 'test_run_tests_harness: PASS\n'
