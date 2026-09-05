@@ -4,14 +4,14 @@
   "generator_version": "repo-state-gen v1",
   "repo": "caty-ai/alpha-nightshift",
   "stamp_mode": "auto",
-  "generated_at": "2026-09-05T17:00:54Z",
-  "describes_commit": "7d8d1b20ac5f9ef2889db4e590c63b27495f9fb5",
-  "describes_commit_date": "2026-09-05T17:00:54Z",
+  "generated_at": "2026-09-05T17:58:49Z",
+  "describes_commit": "c62a54945a75ca4c0b4124091f31d203cc4d0878",
+  "describes_commit_date": "2026-09-05T17:58:49Z",
   "branch": "main",
   "latest_tag": "v0.6.2",
   "latest_release_url": "https://github.com/caty-ai/alpha-nightshift/releases/tag/v0.6.2",
   "agents_entry": null,
   "canonical_api": "https://api.github.com/repos/caty-ai/alpha-nightshift/commits/main",
-  "canonical_raw": "https://raw.githubusercontent.com/caty-ai/alpha-nightshift/7d8d1b20ac5f9ef2889db4e590c63b27495f9fb5/status.json",
+  "canonical_raw": "https://raw.githubusercontent.com/caty-ai/alpha-nightshift/c62a54945a75ca4c0b4124091f31d203cc4d0878/status.json",
   "freshness_contract": "SHA comparison only; dates may only ever trigger distrust. Protocol: docs/repo-state/spec.md, section 'Reader protocol'."
 }
