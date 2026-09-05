@@ -99,6 +99,18 @@ assert_contains '観測項目は0件' "$zero_digest"
 assert_not_contains '夜番は起きなかった' "$zero_digest"
 assert_zero_kpi "$zero_digest"
 
+# Exact pre-#70 main layout, including the one blank line after statistics.
+assert_artifact_free_paragraph() {
+  printf '%s\n' 'レーン統計:
+lanes_run=1, findings=0, wallclock_sec=2
+
+org-consistency freshness:' > "$TEST_TMP/expected-paragraph"
+  sed -n '/^レーン統計:$/,/^org-consistency freshness:$/p' "$zero_digest" > "$TEST_TMP/actual-paragraph"
+  cmp -s "$TEST_TMP/expected-paragraph" "$TEST_TMP/actual-paragraph" ||
+    fail 'artifact-free paragraph must be byte-identical to main'
+}
+assert_artifact_free_paragraph
+
 # Reuse the zero-findings night: artifacts must identify work even with no findings.
 assert_not_contains 'review rotation:' "$zero_digest"
 assert_not_contains 'health:' "$zero_digest"
@@ -125,6 +137,40 @@ run_digest "$zero_config"
 assert_artifact_paragraph \
   'review rotation: alpha-nightshift-dev (previous none, refresh ok)' \
   'health: alpha-nightshift-dev runner=none result=skipped failures=0/0 reason=no-runner'
+
+# Exact producer key sets from the health lane and rotate.sh.
+jq -n --arg night "$NIGHT_ID" '{
+  night_id:$night, selected:"repo", path:"mirrors/repo", reason:"oldest-attempt",
+  previous_last_attempt:null, refresh:"ok", candidates:[]
+}' > "$artifact_dir/lane_1/rotation.json"
+jq -n --arg night "$NIGHT_ID" '{
+  night_id:$night, repo:"repo", source:"mirror", commit:"abc123", selection:"rotation",
+  runner:null, result:"no-input", reason:"no-test-runner", refresh:"ok",
+  suites:0, failures:0, elapsed_sec:0, commands:[]
+}' > "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  'review rotation: repo (previous none, refresh ok)' \
+  'health: repo runner=none result=no-input failures=0/0 reason=no-test-runner'
+
+# Each free-form string gets the lane-status 120-character cap and marker.
+long_text=$(jq -nr '"x" * 300')
+capped_text=$(jq -nr '"x" * 120 + "…"')
+jq -n --arg text "$long_text" \
+  '{selected:$text, previous_last_attempt:$text, refresh:"ok"}' > "$artifact_dir/lane_1/rotation.json"
+jq -n --arg text "$long_text" \
+  '{repo:$text, runner:$text, result:$text, reason:$text, failures:0, suites:0}' > "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  "review rotation: $capped_text (previous $capped_text, refresh ok)" \
+  "health: $capped_text runner=$capped_text result=$capped_text failures=0/0 reason=$capped_text"
+
+printf '%s\n' '{"selected":"","previous_last_attempt":null,"refresh":"ok"}' > "$artifact_dir/lane_1/rotation.json"
+printf '%s\n' '{"repo":"","runner":null,"result":"pass","failures":0,"suites":0}' > "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  'review rotation: unreadable (lane_1)' \
+  'health: unreadable (lane_2)'
 
 printf '%s\n' '{invalid' > "$artifact_dir/lane_1/rotation.json"
 mv "$artifact_dir/lane_2/health.json" "$TEST_TMP/health.json"
@@ -162,6 +208,22 @@ rm "$artifact_dir/lane_10/rotation.json" "$artifact_dir/lane_2/health.json"
 run_digest "$zero_config"
 assert_not_contains 'review rotation:' "$zero_digest"
 assert_not_contains 'health:' "$zero_digest"
+
+assert_artifact_free_paragraph
+
+# A symlinked lane with either artifact emits both warnings; an empty one is ignored.
+mkdir -p "$TEST_TMP/linked-lane"
+ln -s "$TEST_TMP/linked-lane" "$artifact_dir/lane_3"
+for kind in rotation health; do
+  printf '%s\n' '{}' > "$TEST_TMP/linked-lane/$kind.json"
+  run_digest "$zero_config"
+  assert_artifact_paragraph \
+    'review rotation: unreadable (lane_3)' \
+    'health: unreadable (lane_3)'
+  rm "$TEST_TMP/linked-lane/$kind.json"
+done
+run_digest "$zero_config"
+assert_artifact_free_paragraph
 
 normal_state="$TEST_TMP/normal-state"
 normal_config="$TEST_TMP/normal.conf"

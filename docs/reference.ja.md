@@ -269,7 +269,7 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 
 ## ダイジェストのレーン成果物
 
-朝ダイジェストは、各夜の`lane_*/rotation.json`と`lane_*/health.json`をレーン番号順に読み、レーン統計の直下に表示します。ローテーションは`review rotation: <selected> (previous <previous_last_attempt|none>, refresh <refresh>)`、ヘルスチェックは`health: <repo> runner=<runner|none> result=<result> failures=<failures>/<suites>`の形式で、`reason`が非nullなら` reason=<reason>`を付加します。前回実行日やrunnerがnullの場合は`none`と表示します。成果物が存在しない場合は行を追加しません。読み取り不能、不正なJSONやフィールド型、必須キーの欠落、シンボリックリンクの場合は、`review rotation: unreadable (<lane_name>)`または`health: unreadable (<lane_name>)`を表示します。
+朝ダイジェストは、各夜の`lane_*/rotation.json`と`lane_*/health.json`をレーン番号順に読み、レーン統計の直下に表示します。ローテーションは`review rotation: <selected> (previous <previous_last_attempt|none>, refresh <refresh>)`、ヘルスチェックは`health: <repo> runner=<runner|none> result=<result> failures=<failures>/<suites>`の形式で、`reason`が非nullなら` reason=<reason>`を付加します。前回実行日やrunnerがnullの場合は`none`と表示します。成果物が存在しない場合は行を追加しません。読み取り不能、不正なJSONやフィールド型、必須キーの欠落、シンボリックリンクの場合は、`review rotation: unreadable (<lane_name>)`または`health: unreadable (<lane_name>)`を表示します。 レーンディレクトリ自体がシンボリックリンクの場合、その配下にどちらかの成果物が存在すれば両種類の読み取り不能行を表示し、どちらも存在しなければ無視します。
 
 <a id="lane-status-settings"></a>
 

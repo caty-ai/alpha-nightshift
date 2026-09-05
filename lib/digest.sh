@@ -19,7 +19,12 @@ digest_render_template() {
 
   output_tmp="${output_file}.tmp.$$"
   if (
+    skip_artifact_blank=0
     while IFS= read -r template_line || [ -n "$template_line" ]; do
+      if [ "$skip_artifact_blank" -eq 1 ]; then
+        skip_artifact_blank=0
+        [ -n "$template_line" ] || continue
+      fi
       case "$template_line" in
         '{{NIGHT_ID}}') printf '%s\n' "$digest_night_id" ;;
         '{{GENERATED_AT}}') printf '%s\n' "$generated_at" ;;
@@ -27,7 +32,13 @@ digest_render_template() {
         '{{FINDINGS_BLOCK}}') printf '%s\n' "$findings_block" ;;
         '{{BUDGET_SNAPSHOT}}') printf '%s\n' "$budget_block" ;;
         '{{LANE_STATS}}') printf '%s\n' "$lane_stats" ;;
-        '{{LANE_ARTIFACTS}}') printf '%s\n' "$lane_artifacts" ;;
+        '{{LANE_ARTIFACTS}}')
+          if [ -n "$lane_artifacts" ]; then
+            printf '%s\n' "$lane_artifacts"
+          else
+            skip_artifact_blank=1
+          fi
+          ;;
         '{{KPI_BLOCK}}') printf '%s\n' "$kpi_block" ;;
         '{{ORG_CONSISTENCY_FRESHNESS}}') printf '%s\n' "$org_consistency_freshness" ;;
         '{{LANE_STATUS_SECTION}}') printf '%s\n' "$lane_status_section" ;;
@@ -56,6 +67,13 @@ digest_lane_artifacts_block() {
   [ -d "$night_lanes_dir" ] || return 0
   while IFS= read -r lane_name; do
     lane_dir="$night_lanes_dir/$lane_name"
+    if [ -L "$lane_dir" ]; then
+      if [ -e "$lane_dir/rotation.json" ] || [ -L "$lane_dir/rotation.json" ] ||
+        [ -e "$lane_dir/health.json" ] || [ -L "$lane_dir/health.json" ]; then
+        printf 'review rotation: unreadable (%s)\nhealth: unreadable (%s)\n' "$lane_name" "$lane_name"
+      fi
+      continue
+    fi
     for kind in rotation health; do
       artifact="$lane_dir/$kind.json"
       [ -e "$artifact" ] || [ -L "$artifact" ] || continue
@@ -63,11 +81,12 @@ digest_lane_artifacts_block() {
       [ "$kind" != rotation ] || label='review rotation'
       if [ ! -L "$artifact" ] && [ -f "$artifact" ] && [ -r "$artifact" ] &&
         line=$(jq -e -r -s --arg kind "$kind" '
-          def text: gsub("[\\r\\n\\t]+"; " ") | gsub("[\u0000-\u001f\u007f]"; "");
+          def text: gsub("[\\r\\n\\t]+"; " ") | gsub("[\u0000-\u001f\u007f]"; "")
+            | if length > 120 then .[0:120] + "…" else . end;
           select(length == 1) | .[0] | select(type == "object") |
           if $kind == "rotation" then
             select(
-              (.selected | type == "string") and
+              (.selected | type == "string" and length > 0) and
               has("previous_last_attempt") and
               (.previous_last_attempt | . == null or type == "string") and
               (.refresh == "ok" or .refresh == "failed" or .refresh == "skipped")
@@ -75,7 +94,7 @@ digest_lane_artifacts_block() {
             "review rotation: \(.selected | text) (previous \(.previous_last_attempt // "none" | text), refresh \(.refresh))"
           else
             select(
-              (.repo | type == "string") and has("runner") and
+              (.repo | type == "string" and length > 0) and has("runner") and
               (.runner | . == null or type == "string") and
               (.result | type == "string") and
               (.failures | type == "number" and . >= 0 and floor == .) and
