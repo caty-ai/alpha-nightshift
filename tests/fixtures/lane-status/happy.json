@@ -1,0 +1,18 @@
+{
+  "ci_red": [
+    {"repo":"example/beta","scope":"main","branch":"stable","workflow":"verify","conclusion":"failure","since":"2026-09-04T03:00:00Z"},
+    {"repo":"example/alpha","scope":"pr","branch":"feature/demo","workflow":"checks","conclusion":"failure","since":"2026-09-04T02:00:00Z"},
+    {"repo":"example/alpha","scope":"main","branch":"trunk","workflow":"build","conclusion":"failure","since":"2026-09-04T01:00:00Z"},
+    {"repo":"example/gamma","scope":"default","branch":"main","workflow":"test","conclusion":"failure","since":"2026-09-04T04:00:00Z"}
+  ],
+  "lanes": [
+    {"repo":"example/beta","kind":"issue","number":20,"title":"Waiting for review","owner":"human","stale":false,"reason":"decision needed","state":"hold"},
+    {"repo":"example/alpha","kind":"pr","number":12,"title":"Update parser","owner":"human","stale":true,"reason":"no activity"},
+    {"repo":"example/gamma","kind":"issue","number":4,"title":"Refresh fixtures","owner":"alpha","stale":true,"reason":"age threshold"},
+    {"repo":"example/alpha","kind":"issue","number":2,"title":"Choose rollout","owner":"human","stale":false,"reason":"approval needed"},
+    {"repo":"example/beta","kind":"pr","number":"21","title":"Malformed number","owner":"human","stale":true,"reason":"invalid contract"}
+  ],
+  "roster": {"repos":["example/alpha","example/beta","example/gamma"]},
+  "errors": [{"repo":"example/gamma","message":"synthetic lookup error"}],
+  "truncated": ["LIST TRUNCATED: example/beta pulls"]
+}

@@ -1,0 +1,33 @@
+{
+  "ci_red": [
+    {"repo":"example/repo-12","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T12:00:00Z"},
+    {"repo":"example/repo-11","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T11:00:00Z"},
+    {"repo":"example/repo-10","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T10:00:00Z"},
+    {"repo":"example/repo-09","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T09:00:00Z"},
+    {"repo":"example/repo-08","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T08:00:00Z"},
+    {"repo":"example/repo-07","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T07:00:00Z"},
+    {"repo":"example/repo-06","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T06:00:00Z"},
+    {"repo":"example/repo-05","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T05:00:00Z"},
+    {"repo":"example/repo-04","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T04:00:00Z"},
+    {"repo":"example/repo-03","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T03:00:00Z"},
+    {"repo":"example/repo-02","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T02:00:00Z"},
+    {"repo":"example/repo-01","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T01:00:00Z"}
+  ],
+  "lanes": [
+    {"repo":"example/repo-12","kind":"issue","number":12,"title":"Lane 12","owner":"human","stale":true,"reason":"stale 12"},
+    {"repo":"example/repo-11","kind":"issue","number":11,"title":"Lane 11","owner":"human","stale":true,"reason":"stale 11"},
+    {"repo":"example/repo-10","kind":"issue","number":10,"title":"Lane 10","owner":"human","stale":true,"reason":"stale 10"},
+    {"repo":"example/repo-09","kind":"issue","number":9,"title":"Lane 09","owner":"human","stale":true,"reason":"stale 09"},
+    {"repo":"example/repo-08","kind":"issue","number":8,"title":"Lane 08","owner":"human","stale":true,"reason":"stale 08"},
+    {"repo":"example/repo-07","kind":"issue","number":7,"title":"Lane 07","owner":"human","stale":true,"reason":"stale 07"},
+    {"repo":"example/repo-06","kind":"issue","number":6,"title":"Lane 06","owner":"human","stale":true,"reason":"stale 06"},
+    {"repo":"example/repo-05","kind":"issue","number":5,"title":"Lane 05","owner":"human","stale":true,"reason":"stale 05"},
+    {"repo":"example/repo-04","kind":"issue","number":4,"title":"Lane 04","owner":"human","stale":true,"reason":"stale 04"},
+    {"repo":"example/repo-03","kind":"issue","number":3,"title":"Lane 03","owner":"human","stale":true,"reason":"stale 03"},
+    {"repo":"example/repo-02","kind":"issue","number":2,"title":"Lane 02","owner":"human","stale":true,"reason":"stale 02"},
+    {"repo":"example/repo-01","kind":"issue","number":1,"title":"Lane 01","owner":"human","stale":true,"reason":"stale 01"}
+  ],
+  "roster": {"repos":["example/repo-01","example/repo-02","example/repo-03","example/repo-04","example/repo-05","example/repo-06","example/repo-07","example/repo-08","example/repo-09","example/repo-10","example/repo-11","example/repo-12"]},
+  "errors": [],
+  "truncated": []
+}

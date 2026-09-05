@@ -143,6 +143,21 @@ The dispatcher supports manual invocation for testing and diagnostics:
 /bin/bash bin/nightshift-dispatch status
 ```
 
+To try the lane-status section with a synthetic reporter, create a temporary absolute-path wrapper and pass it only to the digest:
+
+```sh
+fake_reporter=$(mktemp /tmp/lane-status-reporter.XXXXXX)
+trap 'rm -f "$fake_reporter"' EXIT
+{
+  printf '%s\n' '#!/bin/bash'
+  printf '%s\n' 'printf '\''%s\n'\'' '\''{"ci_red":[],"lanes":[],"roster":{"repos":["example/alpha"]}}'\'''
+} > "$fake_reporter"
+chmod 0700 "$fake_reporter"
+LANE_STATUS_CMD="$fake_reporter" /bin/bash bin/nightshift-dispatch digest
+```
+
+The resulting digest contains `## Lane status`; its footer ends with `lane status: ok (...)`. Run the command again without `LANE_STATUS_CMD` to omit the section and get `lane status: not configured` in the footer. The full contract and isolation details are in [Lane status settings](reference.md#lane-status-settings).
+
 SIGINT (Ctrl+C) is handled as a prompt to interrupt the current run. A plain POSIX background job may inherit SIGINT ignored; use SIGTERM to stop that kind of launch.
 
 ---

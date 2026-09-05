@@ -1,0 +1,9 @@
+{
+  "ci_red": [
+    {"repo":"example/alpha","scope":"main","branch":"main","workflow":"ci","conclusion":"failure","since":"2026-09-04T01:00:00Z"}
+  ],
+  "lanes": [
+    {"repo":"example/alpha","kind":"issue","number":1,"title":"One lane","owner":"human","stale":true,"reason":"one reason"}
+  ],
+  "roster": {"repos":["example/alpha"]}
+}

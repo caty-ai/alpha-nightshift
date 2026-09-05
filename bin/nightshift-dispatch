@@ -535,6 +535,20 @@ digest_command() {
     return 1
   fi
 
+  lane_status_cmd=${LANE_STATUS_CMD:-}
+  lane_status_timeout_sec=${LANE_STATUS_TIMEOUT_SEC:-120}
+  lane_status_max_rows=${LANE_STATUS_MAX_ROWS:-10}
+  if ! digest_lane_status_validate_config \
+    "$lane_status_timeout_sec" "$lane_status_max_rows"; then
+    nightshift_log ERROR "Cannot configure lane status digest section"
+    return 1
+  fi
+  digest_lane_status_block \
+    "$lane_status_cmd" \
+    "$lane_status_timeout_sec" \
+    "$lane_status_max_rows" \
+    "$STATE_DIR/digests/$NIGHT_ID"
+
   generated_at=$(nightshift_iso_now)
   digest_file="$STATE_DIR/digests/$NIGHT_ID.md"
   if ! digest_render_template \
@@ -547,7 +561,9 @@ digest_command() {
     "$budget_block" \
     "$lane_stats" \
     "$kpi_block" \
-    "$org_consistency_freshness"; then
+    "$org_consistency_freshness" \
+    "$DIGEST_LANE_STATUS_SECTION" \
+    "$DIGEST_LANE_STATUS_FOOTER"; then
     nightshift_log ERROR "Failed to write digest: $digest_file"
     return 1
   fi
