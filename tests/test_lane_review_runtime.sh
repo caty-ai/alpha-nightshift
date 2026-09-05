@@ -1,6 +1,27 @@
 #!/bin/bash
 set -euo pipefail
 
+SUITE_COMPLETED=0
+TEST_TMP=''
+cleanup() {
+  if [ -n "$TEST_TMP" ]; then
+    find "$TEST_TMP" -type d -name review-checkout -prune -exec chmod -R u+w {} \; 2>/dev/null || true
+    rm -rf "$TEST_TMP"
+  fi
+}
+suite_exit() {
+  local rc=$?
+  trap - EXIT
+  cleanup || true
+  # helpers.sh fail() already reports its error and exits nonzero.
+  if [ "$rc" -eq 0 ] && [ "$SUITE_COMPLETED" -ne 1 ]; then
+    printf 'FAIL: suite terminated before completion\n' >&2
+    rc=1
+  fi
+  exit "$rc"
+}
+trap suite_exit EXIT
+
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
 # shellcheck source=tests/helpers.sh
@@ -8,11 +29,6 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-review-runtime.XXXXXX")
 TEST_TMP=$(cd -P "$TEST_TMP" && pwd -P)
-cleanup() {
-  find "$TEST_TMP" -type d -name review-checkout -prune -exec chmod -R u+w {} \; 2>/dev/null || true
-  rm -rf "$TEST_TMP"
-}
-trap cleanup EXIT
 RUN_SH="$ROOT/lanes/review/run.sh"
 SOURCE_REPO="$TEST_TMP/source-repo"
 FAKE_BIN="$TEST_TMP/bin"
@@ -258,15 +274,16 @@ run_glm_adapter() {
   local case_name=$1 key_line=$2 model_override=$3 expected_rc=$4 diagnostic=$5
   local case_dir="$TEST_TMP/glm-direct-$case_name" rc=0
   mkdir -p "$case_dir/out" "$case_dir/tmp"
-  printf '%s\n' "$key_line" > "$GLM_KEY_CANARY"
+  printf '%s\n' "$key_line" > "$case_dir/glm-key"
+  chmod 600 "$case_dir/glm-key"
   printf '%s\n' 'Review the fixture.' > "$case_dir/prompt.txt"
   local -a model_env=()
   if [ "$model_override" != default ]; then
     model_env=("REVIEW_GLM_MODEL=$model_override")
   fi
   /usr/bin/env -i PATH="$PATH" TMPDIR="$case_dir/tmp" \
-    GLM_KEY_FILE="$GLM_KEY_CANARY" REVIEW_CURL_BIN="$GLM_CURL_BIN" \
-    "${model_env[@]}" /bin/bash "$ROOT/lanes/review/adapters/glm.sh" \
+    GLM_KEY_FILE="$case_dir/glm-key" REVIEW_CURL_BIN="$GLM_CURL_BIN" \
+    ${model_env[@]+"${model_env[@]}"} /bin/bash "$ROOT/lanes/review/adapters/glm.sh" \
     "$case_dir/prompt.txt" "$SOURCE_REPO" "$case_dir/out" \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   [ "$rc" -eq "$expected_rc" ] || fail "GLM $case_name returned $rc, expected $expected_rc"
@@ -460,4 +477,5 @@ fi
 [ "$(wc -l < "$WATCHDOG_LANE/findings.jsonl" | tr -d '[:space:]')" -eq 2 ] ||
   fail "watchdog lane did not continue through the remaining seats"
 
+SUITE_COMPLETED=1
 printf 'test_lane_review_runtime: PASS\n'
