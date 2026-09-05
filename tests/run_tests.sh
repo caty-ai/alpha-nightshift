@@ -88,6 +88,9 @@ if [ "$declared" -ne "$expected_suite_count" ]; then
   exit 1
 fi
 
+suite_output=$(mktemp "${TMPDIR:-/tmp}/run-tests.XXXXXX")
+trap 'rm -f "$suite_output"' EXIT
+
 for test_file in "${test_files[@]}"; do
   test_name=$(basename "$test_file")
   required_contracts=$(suite_contracts "$test_name")
@@ -106,9 +109,16 @@ for test_file in "${test_files[@]}"; do
   fi
 
   executed=$((executed + 1))
-  if /bin/bash "$test_file"; then
-    printf 'PASS %s\n' "$test_name"
-    passed=$((passed + 1))
+  # PASS requires both exit 0 and a verdict line; stream all suite output.
+  if /bin/bash "$test_file" 2>&1 | tee "$suite_output"; then
+    if grep -Fxq "${test_name%.sh}: PASS" "$suite_output" ||
+       grep -Eq '^PASS([[:space:]]|$)' "$suite_output"; then
+      printf 'PASS %s\n' "$test_name"
+      passed=$((passed + 1))
+    else
+      printf 'FAIL %s (no verdict line)\n' "$test_name"
+      failed=$((failed + 1))
+    fi
   else
     printf 'FAIL %s\n' "$test_name"
     failed=$((failed + 1))
