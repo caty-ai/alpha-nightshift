@@ -549,6 +549,7 @@ digest_command() {
     "$lane_status_max_rows" \
     "$STATE_DIR/digests/$NIGHT_ID"
 
+  lane_artifacts=$(digest_lane_artifacts_block "$STATE_DIR/lanes/$NIGHT_ID")
   generated_at=$(nightshift_iso_now)
   digest_file="$STATE_DIR/digests/$NIGHT_ID.md"
   if ! digest_render_template \
@@ -563,7 +564,8 @@ digest_command() {
     "$kpi_block" \
     "$org_consistency_freshness" \
     "$DIGEST_LANE_STATUS_SECTION" \
-    "$DIGEST_LANE_STATUS_FOOTER"; then
+    "$DIGEST_LANE_STATUS_FOOTER" \
+    "$lane_artifacts"; then
     nightshift_log ERROR "Failed to write digest: $digest_file"
     return 1
   fi
