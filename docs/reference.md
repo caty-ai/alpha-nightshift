@@ -236,6 +236,29 @@ Because lane commands run under `env -i`, every rotation and review setting must
 
 ---
 
+<a id="health-lane-settings"></a>
+
+## Health-lane settings
+
+`lanes/health/run.sh` tests a local clone of the selected repository's committed HEAD, without writing to the source checkout. The dispatcher supplies the required `LANE_DIR` and `NIGHT_ID`; embed every `HEALTH_*` setting in the `LANE_CMD_n` string because lanes run under `env -i`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `HEALTH_TARGET_SOURCE` | Unset | Absolute path to a non-bare Git checkout; takes precedence over rotation. The source path's basename becomes the findings' `repo`. |
+| `HEALTH_ROTATION_LANE` | Unset | Sibling lane name matching `^lane_[0-9]+$`, such as `lane_1`. Required unless an explicit source is supplied. Reads that lane's root `rotation.json`, requiring the current `NIGHT_ID`, a nonempty `selected`, and an absolute `path`; the `refresh` value is recorded in `health.json` but never used for decisions. |
+| `HEALTH_ROTATION_STATE` | Unset | Optional absolute path to the review-rotation state JSON. When selecting through rotation, requires `.targets[selected].last_attempt == NIGHT_ID` and reports `rotation-missing-mirror` when `.targets[selected].last_result == "missing-mirror"`; the file is read only. |
+| `HEALTH_TEST_CMD` | Unset | Explicit command executed with `/bin/bash -c` in the clone. Mutually exclusive with `HEALTH_SUITE_GLOB`. |
+| `HEALTH_SUITE_GLOB` | Unset | Glob relative to the clone root, for example `tests/*.test.sh`; each matching regular file runs separately with `/bin/bash`. Mutually exclusive with `HEALTH_TEST_CMD`. |
+| `HEALTH_TIMEBOX_SEC` | `1800` | Positive integer seconds per command or suite. Expiry terminates the whole command process tree and produces no finding for the timed-out command. |
+
+Without an explicit command or suite glob, detection tries a `Makefile` containing a line starting with `test:` (`make test`), then `tests/run.sh`, then `tests/run_tests.sh` (both via `/bin/bash`). Each failed command or suite emits one `test-failure` in `findings.jsonl`; reruns truncate that file. Logs live under `evidence/`, with SHA-256 and byte counts for every log in `evidence/manifest.json`.
+
+Exit `0` means tests ran, even when failures were found. Exit `3` means NO-INPUT, with a `health: NO-INPUT reason=...` summary: `no-test-runner`, `no-suites-matched`, `rotation-evidence-missing` (including invalid or other-night evidence), `rotation-missing-mirror` (the state file records `missing-mirror` for the night, or the selected path is absent, not a Git repository, or bare), or `rotation-state-mismatch`. Exit `1` means a configuration/infrastructure error or timeout. `refresh=skipped` alone is not a failure: `rotate.sh` writes it both for a missing mirror and for `REVIEW_ROTATION_REFRESH=0`, so a healthy unrefreshed night runs normally. The health lane must be numbered **after** its rotation lane; for `HEALTH_ROTATION_LANE=lane_1`, use `LANE_CMD_2` or later and keep lane numbers contiguous.
+
+Once `LANE_DIR` is known, `health.json` is written even for NO-INPUT, configuration errors, and timeouts. It contains `{night_id, repo, source, commit, selection, runner, result, reason, refresh, suites, failures, elapsed_sec, commands}`. `refresh` is the rotation evidence's `refresh` string, or `null` for an explicit source. `selection` is `explicit` or `rotation`; `runner` is `explicit-cmd`, `suite-glob`, `make-test`, `tests-run`, `tests-run_tests`, or `null`; `result` is `ran`, `no-input`, `timeout`, or `error`; `reason` is a string or `null`. Each `commands` entry is `{target, exit_code, elapsed_sec, log}`.
+
+---
+
 <a id="org-consistency-settings"></a>
 
 ## Org-consistency settings

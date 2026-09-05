@@ -12,7 +12,7 @@ suite_contracts() {
     test_budget_failclosed.sh|test_dispatch_failclosed.sh|test_digest.sh|test_digest_lane_status.sh|test_lock.sh|test_ledger_failclosed.sh|test_run_visibility.sh|test_process_inspection_failclosed.sh)
       printf '%s\n' 'darwin_userland'
       ;;
-    test_lane_env_credentials.sh|test_lane_review_runtime.sh|test_lane_review_selection.sh)
+    test_lane_env_credentials.sh|test_lane_health.sh|test_lane_review_runtime.sh|test_lane_review_selection.sh)
       printf '%s\n' 'darwin_userland'
       ;;
     test_triage_decisions.sh|test_triage_dedup.sh|test_triage_failclosed.sh|test_verdict_sync.sh)

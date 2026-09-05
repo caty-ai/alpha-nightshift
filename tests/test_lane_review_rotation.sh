@@ -312,4 +312,22 @@ env -u LC_ALL LANG=en_US.UTF-8 \
   /bin/bash "$ROTATE_SH" >/dev/null 2> "$case_twelve/stderr"
 [ "$(<"$case_twelve/lane/stub-output")" = "$B" ] || fail 'locale changed lexicographic LRU order'
 
+# 13. A bare repository is a missing mirror and never reaches the review lane.
+case_thirteen="$TEST_TMP/case-thirteen"
+mkdir -p "$case_thirteen/state"
+git -c core.hooksPath=/dev/null init --bare -q "$MIRRORS/bare-c"
+if run_rotation "$case_thirteen/lane" "$case_thirteen/state/rotation.json" \
+  "bare-c=$MIRRORS/bare-c" 2026-09-12 > "$case_thirteen/stdout" 2> "$case_thirteen/stderr"; then
+  fail 'bare mirror returned success'
+else
+  bare_rc=$?
+fi
+[ "$bare_rc" -eq 1 ] || fail "bare mirror returned $bare_rc, not 1"
+assert_contains 'NOT-RUN reason=missing-mirror target=bare-c' "$case_thirteen/stderr"
+jq -e '.targets["bare-c"].last_result == "missing-mirror" and .targets["bare-c"].last_attempt == "2026-09-12"' \
+  "$case_thirteen/state/rotation.json" >/dev/null || fail 'bare mirror state was not recorded'
+jq -e '.selected == "bare-c" and .night_id == "2026-09-12" and .refresh == "skipped"' \
+  "$case_thirteen/lane/rotation.json" >/dev/null || fail 'bare mirror evidence is incorrect'
+[ ! -e "$case_thirteen/lane/stub-output" ] || fail 'bare mirror invoked the lane stub'
+
 printf 'test_lane_review_rotation: PASS\n'

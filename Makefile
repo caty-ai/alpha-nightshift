@@ -37,6 +37,8 @@ lint:
 		tests/test_publication_gate_selftest.sh \
 		tests/test_publication_gate_repo.sh \
 		tests/test_publication_denylist.sh \
+		lanes/health/run.sh \
+		tests/test_lane_health.sh \
 		lanes/org-consistency/run.sh \
 		lanes/org-consistency/seat.sh \
 		tests/test_lane_org_consistency_core.sh \
