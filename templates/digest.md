@@ -23,6 +23,8 @@
 レーン統計:
 {{LANE_STATS}}
 
+{{LANE_ARTIFACTS}}
+
 org-consistency freshness:
 {{ORG_CONSISTENCY_FRESHNESS}}
 

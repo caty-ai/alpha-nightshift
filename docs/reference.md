@@ -290,6 +290,10 @@ Lane commands are intentionally launched under `env -i`. A top-level assignment 
 
 ---
 
+## Digest lane artifacts
+
+Directly below the lane statistics, the digest reads each night’s `lane_*/rotation.json` and `lane_*/health.json` in lane-number order. Rotation appears as `review rotation: <selected> (previous <previous_last_attempt|none>, refresh <refresh>)`; health appears as `health: <repo> runner=<runner|none> result=<result> failures=<failures>/<suites>`, with ` reason=<reason>` appended when non-null. Null previous attempts and runners display as `none`. Missing artifacts produce no lines; unreadable files, invalid JSON or field types, missing required keys, and symlinked files display `review rotation: unreadable (<lane_name>)` or `health: unreadable (<lane_name>)`. A symlinked lane directory displays both unreadable lines if either artifact exists beneath it; otherwise it is ignored.
+
 <a id="lane-status-settings"></a>
 
 ## Lane status settings
