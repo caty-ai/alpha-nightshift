@@ -260,17 +260,17 @@ missing_command_config="$TEST_TMP/missing-command.conf"
 write_digest_config "$missing_command_config" "$missing_command_state" \
   "$TEST_TMP/does-not-exist"
 run_digest "$missing_command_config"
-assert_unavailable "$missing_command_state" 'command-not-found'
+assert_unavailable "$missing_command_state" 'command not found'
 assert_contains 'lane-status stderr:' \
   "$missing_command_state/logs/digest-$NIGHT_ID.log"
 
 timeout_reporter="$TEST_TMP/timeout-reporter"
 {
   printf '%s\n' '#!/bin/bash'
-  printf '%s\n' '/bin/sleep 5 &'
+  printf '%s\n' '/bin/sleep 30 &'
   printf '%s\n' 'child=$!'
   printf '%s\n' 'printf '\''timeout-child=%s\n'\'' "$child" >&2'
-  printf '%s\n' 'wait "$child"'
+  printf '%s\n' 'while kill -0 "$child" 2>/dev/null; do /bin/sleep 1; done'
   printf 'exec /bin/cat %q\n' "$FIXTURES/happy.json"
 } > "$timeout_reporter"
 chmod 0700 "$timeout_reporter"
@@ -281,11 +281,19 @@ timeout_started=$(/bin/date '+%s')
 PATH="$process_ok_bin:$PATH" NIGHTSHIFT_CONFIG="$timeout_config" \
   /bin/bash "$ROOT/bin/nightshift-dispatch" digest >/dev/null
 timeout_elapsed=$(( $(/bin/date '+%s') - timeout_started ))
-[ "$timeout_elapsed" -lt 4 ] ||
+[ "$timeout_elapsed" -lt 20 ] ||
   fail "[set-m timeout mutation] timeout exceeded the bounded deadline: ${timeout_elapsed}s"
 assert_unavailable "$timeout_state" 'timeout after 1s'
 assert_contains 'lane-status stderr: timeout-child=' \
   "$timeout_state/logs/digest-$NIGHT_ID.log"
+timeout_child=$(sed -n 's/.*timeout-child=\([0-9][0-9]*\).*/\1/p' \
+  "$timeout_state/logs/digest-$NIGHT_ID.log" | head -n 1)
+case "$timeout_child" in
+  ''|*[!0-9]*) fail '[set-m timeout mutation] could not read reporter child pid' ;;
+esac
+if kill -0 "$timeout_child" 2>/dev/null; then
+  fail "[set-m timeout mutation] reporter child remained alive: $timeout_child"
+fi
 assert_not_contains 'timeout-child=' "$(digest_path_for "$timeout_state")"
 assert_no_run_dirs "$(night_dir_for "$timeout_state")"
 
@@ -333,6 +341,17 @@ empty_config="$TEST_TMP/empty.conf"
 write_digest_config "$empty_config" "$empty_state" "$empty_reporter"
 run_digest "$empty_config"
 assert_unavailable "$empty_state" 'empty output'
+
+whitespace_reporter="$TEST_TMP/whitespace-reporter"
+{
+  printf '%s\n' '#!/bin/bash' "printf ' \\n\\t \\n'"
+} > "$whitespace_reporter"
+chmod 0700 "$whitespace_reporter"
+whitespace_state="$TEST_TMP/whitespace-state"
+whitespace_config="$TEST_TMP/whitespace.conf"
+write_digest_config "$whitespace_config" "$whitespace_state" "$whitespace_reporter"
+run_digest "$whitespace_config"
+assert_unavailable "$whitespace_state" 'empty output'
 
 multiple_reporter="$TEST_TMP/multiple-reporter"
 {
@@ -464,13 +483,15 @@ jq -n \
   --arg newline_title "line one
 line two" \
   --arg long_title "$long_title" \
+  --arg control_title "$(printf 'escape\033[31m bell\007 del\177 end')" \
   '{
     ci_red: [],
     lanes: [
       {repo:"example/alpha",kind:"issue",number:1,title:$newline_title,owner:"human",stale:false,reason:"needs\taction"},
       {repo:"example/alpha",kind:"issue",number:2,title:$long_title,owner:"human",stale:false,reason:"long"},
       {repo:"example/alpha",kind:"issue",number:3,title:"{{FINDINGS_BLOCK}}",owner:"human",stale:false,reason:"literal"},
-      {repo:"example/alpha",kind:"issue",number:"4\n",title:"bad number",owner:"human",stale:false,reason:"invalid"}
+      {repo:"example/alpha",kind:"issue",number:4,title:$control_title,owner:"human",stale:false,reason:"controls"},
+      {repo:"example/alpha",kind:"issue",number:"5\n",title:"bad number",owner:"human",stale:false,reason:"invalid"}
     ],
     roster: {repos:["example/alpha"]},
     errors: [],
@@ -487,8 +508,12 @@ assert_contains 'malformed rows 1' "$sanitized_digest"
 assert_contains 'example/alpha#1 · line one line two · needs action' "$sanitized_digest"
 assert_contains "example/alpha#2 · ${long_expected}… · long" "$sanitized_digest"
 assert_contains 'example/alpha#3 · {{FINDINGS_BLOCK}} · literal' "$sanitized_digest"
+assert_contains 'example/alpha#4 · escape[31m bell del end · controls' "$sanitized_digest"
 assert_not_contains 'bad number' "$sanitized_digest"
-iconv -f UTF-8 -t UTF-8 "$sanitized_digest" >/dev/null ||
+assert_not_contains "$(printf '\033')" "$sanitized_digest"
+assert_not_contains "$(printf '\007')" "$sanitized_digest"
+assert_not_contains "$(printf '\177')" "$sanitized_digest"
+iconv -f UTF-8 -t UTF-8 "$sanitized_digest" > "$TEST_TMP/sanitized-utf8-check" ||
   fail 'multibyte sanitizer emitted invalid UTF-8'
 
 contract_file="$TEST_TMP/contract.json"

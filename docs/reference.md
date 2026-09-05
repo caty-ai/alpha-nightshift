@@ -279,7 +279,7 @@ The morning digest can call an operator-controlled lane-status reporter and rend
 | `LANE_STATUS_TIMEOUT_SEC` | daytime digest; `120` | Positive timeout in seconds, limited to seven digits. |
 | `LANE_STATUS_MAX_ROWS` | daytime digest; `10` | Positive per-list row cap, limited to seven digits. Header counts remain uncapped. |
 
-The reporter must print exactly one JSON object to stdout and exit zero. Unknown fields are ignored. `errors` and `truncated` are optional and count as empty arrays when absent:
+The reporter must print exactly one JSON object to stdout and exit zero. The run completes only when every descendant process has exited; a reporter that leaves a background child running past `LANE_STATUS_TIMEOUT_SEC` is reported as `timeout` even if it printed valid JSON, so reporters must not leave background processes. Unknown fields are ignored. `errors` and `truncated` are optional and count as empty arrays when absent:
 
 ```json
 {

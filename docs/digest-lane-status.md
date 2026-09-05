@@ -1,10 +1,10 @@
-# digest-lane-status design v1.1 — "Lane status" section from an external reporter (#16)
+# digest-lane-status design v1.3 — "Lane status" section from an external reporter (#16)
 
 - Origin: caty-ai/alpha-nightshift #16 (size **L**: crosses a tool boundary and adds an input contract to a published component)
 - Author: Alpha (design only; implementation writer = Codex GPT-5.6 Sol) · 2026-09-05 · owner mode: hands-off (push, then review)
 - Upstream design: `DESIGN.md` §9 (morning digest), §2 principle 7 ("reflex = machine / deliberation = LLM"); [`docs/morning-triage.md`](morning-triage.md) for the digest → triage → report clock
 - Owner decisions already taken (clarify batch 2026-09-05): **D-1** acquisition = a configured CLI command, not HTTP; **D-2** content = essentials only (counts + three short lists), full JSON saved to state
-- Status: **v1.2 — FROZEN after L1-9 upstream review r1 + Grok delta** (3 heterogeneous seats; §13). Change log in §14.
+- Status: **v1.3 — FROZEN (v1.2 + implementation-review r1 corrections)** (3 heterogeneous seats; §13). Change log in §14.
 
 ## 0. In one sentence
 
@@ -38,7 +38,7 @@ Every morning the digest runs one operator-configured command under a minimal en
 2. **Never silent.** The footer **always** carries one line `lane status: ok (…)` / `lane status: unavailable (<reason>)` / `lane status: not configured`; there is no state in which the digest says nothing about lane status.
 3. **stderr never reaches the digest.** The reporter's stderr is captured to a file; its first three lines (each cut at 200 bytes, control characters stripped) are re-emitted via `nightshift_log WARN` into the digest log. The digest body is built only from validated, whitelisted JSON fields, each sanitized (§7) — including `number`.
 4. **Tool-agnostic contract.** The renderer depends on the §4 shape only. No option, file, or name of the reporter is baked into `lib/digest.sh`; `nightshift.conf.example` shows a placeholder absolute path.
-5. **Bounded at write time.** One command; one timeout (`LANE_STATUS_TIMEOUT_SEC`, default 120); stdout and stderr files bounded **while the reporter runs** by `ulimit -f 4096` (512-byte blocks = 2 MiB) inside the launch subshell — an oversize write gets `SIGXFSZ`, the run ends non-zero, and a stdout file of ≥ 2 MiB renders `unavailable (output too large)`; row cap per list (`LANE_STATUS_MAX_ROWS`, default 10) with a visible `… +N more` line; stderr excerpt 3 × 200 bytes. Nothing is retried.
+5. **Bounded at write time.** One command; one timeout (`LANE_STATUS_TIMEOUT_SEC`, default 120); stdout and stderr files bounded **while the reporter runs** by `ulimit -f 2048` (bash 3.2 on macOS counts 1 KiB blocks = 2 MiB) inside the launch subshell — an oversize write gets `SIGXFSZ`, the run ends non-zero, and a stdout file of ≥ 2 MiB renders `unavailable (output too large)`; row cap per list (`LANE_STATUS_MAX_ROWS`, default 10) with a visible `… +N more` line; stderr excerpt 3 × 200 bytes. Nothing is retried.
 6. **Operator-trusted configuration fails closed.** Malformed `LANE_STATUS_TIMEOUT_SEC` / `LANE_STATUS_MAX_ROWS` (non-integer, zero, > 7 digits) make the digest fail with an ERROR log line, exactly like `OC_REPORT_MAX_AGE_DAYS` today. This is a **pre-runtime** path (§8 row 0), deliberately outside Done when (3)'s six runtime paths (D-4).
 7. **bash 3.2 / POSIX userland**: no `timeout(1)`, no associative arrays, no `mapfile`, `${11}`-style positional references; `jq` is the only parser. Fractional `sleep` is already relied upon by `lib/budget.sh`.
 8. **Concurrency-safe by construction.** The digest takes no lock today; every working path this feature creates is unique per run (`mktemp -d` under the night dir), and only the two final files have fixed names (last writer wins, like the digest itself).
@@ -129,7 +129,7 @@ The reporter prints **exactly one JSON value** — an object — to stdout and e
   set -m
   (
     exec 3>&- 4>&-                        # do not inherit the pre-logging stdout/stderr of the dispatcher
-    ulimit -f 4096                        # 2 MiB on every file this process writes (stdout/stderr included)
+    ulimit -f 2048                        # bash 3.2 on macOS counts 1 KiB blocks: 2048 = 2 MiB (v1.3; measured)
     cd "$run_dir/work" || exit 125
     exec env -i \
       PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin \
@@ -221,7 +221,7 @@ state/digests/<night>/lane-status.json   0600 — written only on success, byte-
 state/digests/<night>/lane-status.stderr 0600 — copied on every run that launched the command (may be empty)
 ```
 
-Retention: identical to the digest itself (no automatic pruning). A re-run for the same night overwrites the two fixed-name files (last writer wins); concurrent runs cannot corrupt each other's scratch (invariant 8).
+Retention: identical to the digest itself (no automatic pruning). A re-run for the same night overwrites the two fixed-name files (last writer wins); concurrent runs cannot corrupt each other's scratch (invariant 8). The previous night's `lane-status.json` is removed **before** the reporter runs so a stale raw file can never sit next to a failed run; with two concurrent digests for one night this means run A's digest may link a raw file that run B has just replaced — accepted under last-writer-wins (v1.3).
 
 ## 10. Tests (`tests/test_digest_lane_status.sh`, counted suite; `tests/expected_suite_count` 42 → 43; `tests/run_tests.sh` `suite_contracts` gets the same contract as `test_digest.sh`)
 
@@ -280,4 +280,5 @@ Grok delta on v1.1 (same seat, whole-design re-read): **cumulative GO-WITH-CHANG
 
 - v1.0 (2026-09-05): first draft for upstream review.
 - v1.1 (2026-09-05, after r1): rc contract (invariant 1, §3), verbatim `budget_check` launch frame with `set -m`, absolute redirections, `ulimit -f`, fd 3/4 closed, quarantined `HOME` + `GH_CONFIG_DIR` (D-3), per-run `mktemp -d` scratch (invariant 8), closed contract table with `scope` / `kind` / `owner` enums and integer `number` (§4.2), optional `errors` / `truncated` (D-10), single-JSON-value check, outcome precedence, two template placeholders (D-7), state-relative `raw:` path, codepoint cut, cap-header pin and overflow semantics, §8 rows 0 / 7 / 8, Done when (5) test, `docs/engineering.ja.md` in the file set, Done-when amendments (a)(b) recorded for owner ratification.
+- v1.3 (2026-09-05, after implementation review r1): `ulimit -f` value corrected to the bash 3.2 / macOS unit (1 KiB blocks → `2048` for 2 MiB; writer measured, seats confirmed); the timeout test proves the process-tree kill by checking the reporter's forked child is dead after the digest returns, with a generous wall-clock bound (a hosted macOS runner needed > 4 s for the normal path); `LANG` passed as `${LANG:-C}`.
 - v1.2 (2026-09-05, after the Grok delta): *output too large* outranks `exit <rc>` and is keyed on size or SIGXFSZ wait status (§5); `HOME` claim softened and `GH_CONFIG_DIR` default expanded before `env -i` (§5); §8 row 7 test added (§10). Frozen.

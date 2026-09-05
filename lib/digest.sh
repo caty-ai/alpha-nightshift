@@ -128,15 +128,14 @@ digest_lane_status_run() {
   set -m
   (
     exec 3>&- 4>&-
-    ulimit -f 4096 || exit 125
-    # Bash 3.2 measures this limit in KiB on macOS; narrow it to 2 MiB.
+    # bash 3.2 on macOS counts 1 KiB blocks: 2048 = 2 MiB
     ulimit -f 2048 || exit 125
     cd "$DIGEST_LANE_STATUS_RUN_DIR/work" || exit 125
     exec env -i \
       PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin \
       HOME="$DIGEST_LANE_STATUS_RUN_DIR/home" \
       TMPDIR="$DIGEST_LANE_STATUS_RUN_DIR/tmp" \
-      LANG="$LANG" TERM=dumb NIGHT_ID="$NIGHT_ID" \
+      LANG="${LANG:-C}" TERM=dumb NIGHT_ID="$NIGHT_ID" \
       GIT_CEILING_DIRECTORIES="$DIGEST_LANE_STATUS_RUN_DIR" \
       GH_CONFIG_DIR="$lane_status_operator_gh_config_dir" \
       /bin/bash -c "$lane_status_cmd"
@@ -253,8 +252,7 @@ digest_lane_status_render() {
       tostring
       | gsub("[\\r\\n\\t]"; " ")
       | [explode[] | select(. >= 32 and . != 127)]
-      | implode
-      | if length > 120 then .[0:120] + "…" else . end;
+      | if length > 120 then (.[0:120] | implode) + "…" else implode end;
     def valid_ci:
       type == "object" and
       (.repo | type == "string") and
@@ -430,6 +428,17 @@ EOF
     fi
 
     if [ -z "$lane_status_reason" ]; then
+      if lane_status_stdout_non_whitespace_size=$(LC_ALL=C tr -d '[:space:]' \
+        < "$DIGEST_LANE_STATUS_STDOUT" | wc -c); then
+        lane_status_stdout_non_whitespace_size=$(printf '%s' \
+          "$lane_status_stdout_non_whitespace_size" | tr -d '[:space:]')
+      else
+        lane_status_reason='state: stdout size failed'
+        lane_status_level=ERROR
+      fi
+    fi
+
+    if [ -z "$lane_status_reason" ]; then
       if [ "$NIGHTSHIFT_PROCESS_INSPECTION_FAILED" = true ]; then
         lane_status_reason='process inspection unavailable'
         lane_status_level=ERROR
@@ -439,10 +448,10 @@ EOF
         [ "$DIGEST_LANE_STATUS_RC" -eq "$lane_status_sigxfsz" ]; then
         lane_status_reason='output too large'
       elif [ "$DIGEST_LANE_STATUS_RC" -eq 127 ]; then
-        lane_status_reason='command-not-found'
+        lane_status_reason='command not found'
       elif [ "$DIGEST_LANE_STATUS_RC" -ne 0 ]; then
         lane_status_reason="exit $DIGEST_LANE_STATUS_RC"
-      elif [ "$lane_status_stdout_size" -eq 0 ]; then
+      elif [ "$lane_status_stdout_non_whitespace_size" -eq 0 ]; then
         lane_status_reason='empty output'
       elif digest_lane_status_check "$DIGEST_LANE_STATUS_STDOUT"; then
         if mv "$DIGEST_LANE_STATUS_STDOUT" "$lane_status_raw" &&
