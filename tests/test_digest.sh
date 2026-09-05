@@ -99,6 +99,70 @@ assert_contains '観測項目は0件' "$zero_digest"
 assert_not_contains '夜番は起きなかった' "$zero_digest"
 assert_zero_kpi "$zero_digest"
 
+# Reuse the zero-findings night: artifacts must identify work even with no findings.
+assert_not_contains 'review rotation:' "$zero_digest"
+assert_not_contains 'health:' "$zero_digest"
+artifact_dir="$zero_state/lanes/$NIGHT_ID"
+mkdir -p "$artifact_dir/lane_1" "$artifact_dir/lane_2"
+printf '%s\n' '{"selected":"alpha-nightshift-dev","previous_last_attempt":null,"refresh":"ok"}' > "$artifact_dir/lane_1/rotation.json"
+printf '%s\n' '{"repo":"alpha-nightshift-dev","runner":null,"result":"skipped","failures":0,"suites":0,"reason":"no-runner"}' > "$artifact_dir/lane_2/health.json"
+
+assert_artifact_paragraph() {
+  local expected_rotation=$1
+  local expected_health=$2
+  local actual_paragraph
+  actual_paragraph=$(sed -n '/^レーン統計:$/,/^org-consistency freshness:$/p' "$zero_digest")
+  [ "$actual_paragraph" = "レーン統計:
+lanes_run=1, findings=0, wallclock_sec=2
+
+$expected_rotation
+$expected_health
+
+org-consistency freshness:" ] || fail 'artifact lines must be their own paragraph under lane statistics'
+}
+
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  'review rotation: alpha-nightshift-dev (previous none, refresh ok)' \
+  'health: alpha-nightshift-dev runner=none result=skipped failures=0/0 reason=no-runner'
+
+printf '%s\n' '{invalid' > "$artifact_dir/lane_1/rotation.json"
+mv "$artifact_dir/lane_2/health.json" "$TEST_TMP/health.json"
+ln -s "$TEST_TMP/health.json" "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  'review rotation: unreadable (lane_1)' \
+  'health: unreadable (lane_2)'
+
+# Missing required keys, wrong types, and multiple JSON values fail closed too.
+rm "$artifact_dir/lane_2/health.json"
+for invalid_rotation in \
+  '{"selected":"repo","refresh":"ok"}' \
+  '{"selected":false,"previous_last_attempt":null,"refresh":"ok"}' \
+  '{"selected":"repo","previous_last_attempt":null,"refresh":"unknown"}' \
+  '{} {}'; do
+  printf '%s\n' "$invalid_rotation" > "$artifact_dir/lane_1/rotation.json"
+  printf '%s\n' '{"repo":"repo","runner":null,"result":"pass","failures":"0","suites":1}' > "$artifact_dir/lane_2/health.json"
+  run_digest "$zero_config"
+  assert_artifact_paragraph \
+    'review rotation: unreadable (lane_1)' \
+    'health: unreadable (lane_2)'
+done
+
+# Numeric ordering, non-null fields, and null reason use the same render path.
+mv "$artifact_dir/lane_1" "$artifact_dir/lane_10"
+printf '%s\n' '{"selected":"repo","previous_last_attempt":"2026-09-04","refresh":"failed"}' > "$artifact_dir/lane_10/rotation.json"
+printf '%s\n' '{"repo":"repo","runner":"tests/run_tests.sh","result":"failed","failures":1,"suites":4,"reason":null}' > "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_artifact_paragraph \
+  'health: repo runner=tests/run_tests.sh result=failed failures=1/4' \
+  'review rotation: repo (previous 2026-09-04, refresh failed)'
+
+rm "$artifact_dir/lane_10/rotation.json" "$artifact_dir/lane_2/health.json"
+run_digest "$zero_config"
+assert_not_contains 'review rotation:' "$zero_digest"
+assert_not_contains 'health:' "$zero_digest"
+
 normal_state="$TEST_TMP/normal-state"
 normal_config="$TEST_TMP/normal.conf"
 write_digest_config "$normal_config" "$normal_state"
