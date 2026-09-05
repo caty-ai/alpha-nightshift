@@ -168,6 +168,8 @@ assert_contains 'example/beta · verify · stable · 2026-09-04T03:00:00Z' "$hap
 assert_before '- example/alpha · build' '- example/beta · verify' "$happy_digest"
 assert_not_contains 'feature/demo' "$happy_digest"
 assert_not_contains 'example/gamma · test' "$happy_digest"
+assert_not_contains 'synthetic lookup error' "$happy_digest"
+assert_not_contains 'LIST TRUNCATED: example/beta pulls' "$happy_digest"
 assert_contains 'example/alpha#2 · Choose rollout · approval needed' "$happy_digest"
 assert_contains 'example/alpha#12 · Update parser · no activity' "$happy_digest"
 assert_contains 'example/beta#20 · Waiting for review · decision needed' "$happy_digest"
