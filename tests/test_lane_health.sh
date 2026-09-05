@@ -211,6 +211,28 @@ for scenario in valid stale skipped state-mismatch state-missing-mirror bare-pat
   esac
 done
 
+# 5b. Rotation selection works without a state file (state is optional).
+parent="$TEST_TMP/rotation-no-state"
+mkdir -p "$parent/lane_1"
+jq -n --arg night "$TEST_NIGHT" --arg source "$source_repo" \
+  '{night_id:$night,selected:"detection",path:$source,refresh:"skipped"}' > "$parent/lane_1/rotation.json"
+lane="$parent/lane_2"
+run_health "$lane" 0 'HEALTH_ROTATION_LANE=lane_1'
+assert_result "$lane" ran 1 0
+jq -e '.selection == "rotation" and .repo == "detection" and .refresh == "skipped"' "$lane/health.json" >/dev/null || fail 'rotation without state'
+
+# 5c. A very long command must still run (evidence filename is capped) and a
+# finding is emitted only for a command that really ran.
+long_cmd="exit 9 # $(printf 'x%.0s' $(seq 1 300))"
+lane="$TEST_TMP/long-command"
+run_health "$lane" 0 "HEALTH_TARGET_SOURCE=$empty_repo" "HEALTH_TEST_CMD=$long_cmd"
+assert_result "$lane" ran 1 1
+long_log=$(jq -r '.commands[0].log' "$lane/health.json")
+assert_file_exists "$lane/$long_log"
+[ "${#long_log}" -lt 160 ] || fail "evidence log name not capped: ${#long_log}"
+jq -e --arg log "$long_log" '.evidence[0] == $log' "$lane/findings.jsonl" >/dev/null || fail 'long-command finding evidence'
+jq -e --arg log "$long_log" '.files[$log].bytes >= 0' "$lane/evidence/manifest.json" >/dev/null || fail 'long-command log missing from manifest'
+
 # 6. A timebox kills the background child, records evidence, and emits no finding.
 lane="$TEST_TMP/timebox"
 run_health "$lane" 1 "HEALTH_TARGET_SOURCE=$empty_repo" HEALTH_TIMEBOX_SEC=2 \

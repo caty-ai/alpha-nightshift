@@ -246,7 +246,7 @@ MIMEの許可リストは意図的に狭く設定されています。受け入�
 |---|---|---|
 | `HEALTH_TARGET_SOURCE` | 未設定 | ベアでないGitチェックアウトの絶対パス。ローテーション指定より優先します。パスのbasenameがfindingの`repo`になります。 |
 | `HEALTH_ROTATION_LANE` | 未設定 | `lane_1`など、`^lane_[0-9]+$`に一致する兄弟レーン名。明示的なsourceがない場合は必須です。そのレーン直下の`rotation.json`を読み、当夜の`NIGHT_ID`、空でない`selected`、絶対パスの`path`を要求します。`refresh`の値は`health.json`に記録しますが判定には使いません。 |
-| `HEALTH_ROTATION_STATE` | 未設定 | レビューローテーションstate JSONの任意の絶対パス。ローテーション経由の場合に`.targets[selected].last_attempt == NIGHT_ID`を要求し、`.targets[selected].last_result == "missing-mirror"`なら`rotation-missing-mirror`を報告しますを検証します。このファイルは読み取り専用です。 |
+| `HEALTH_ROTATION_STATE` | 未設定 | レビューローテーションstate JSONの任意の絶対パス。ローテーション経由の場合に`.targets[selected].last_attempt == NIGHT_ID`を要求し、`.targets[selected].last_result == "missing-mirror"`なら`rotation-missing-mirror`を報告します。このファイルは読み取り専用です。 |
 | `HEALTH_TEST_CMD` | 未設定 | クローン内で`/bin/bash -c`に渡す明示的なコマンド。`HEALTH_SUITE_GLOB`との同時指定は禁止です。 |
 | `HEALTH_SUITE_GLOB` | 未設定 | `tests/*.test.sh`など、クローンルートからの相対glob。一致する通常ファイルをそれぞれ`/bin/bash`で実行します。`HEALTH_TEST_CMD`との同時指定は禁止です。 |
 | `HEALTH_TIMEBOX_SEC` | `1800` | コマンド・スイートごとの制限秒数（正の整数）。超過時はコマンドのプロセスツリー全体を停止し、タイムアウトしたコマンドのfindingは生成しません。 |

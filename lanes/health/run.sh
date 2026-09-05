@@ -209,7 +209,15 @@ run_command() {
   target=$1
   shift
   slug=$(printf '%s' "$target" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-')
+  # Keep the evidence filename well under the 255-byte component limit; a
+  # long HEALTH_TEST_CMD would otherwise fail the log redirection and the
+  # command would never start. Pre-create the log so that any unwritable
+  # path is an error (exit 1, no finding) rather than a fabricated failure.
+  if [ "${#slug}" -gt 120 ]; then
+    slug="${slug:0:120}-$(printf '%s' "$target" | shasum -a 256 | cut -c1-12)"
+  fi
   log_ref="evidence/health-$slug.log"
+  : > "$LANE_DIR/$log_ref" || error "cannot open evidence log for $target"
   command_started=$(date +%s)
   timed_out=false
   active_known=
@@ -246,7 +254,8 @@ run_command() {
   fi
   if [ "$rc" -ne 0 ]; then
     failures=$((failures + 1))
-    jq -nc --arg id "health-$repo-$slug-$commit" --arg repo "$repo" --arg target "$target" \
+    repo_slug=$(printf '%s' "$repo" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-')
+    jq -nc --arg id "health-$repo_slug-$slug-$commit" --arg repo "$repo" --arg target "$target" \
       --arg symptom "Test command '$target' exited $rc in ${elapsed}s at commit $commit under the credential-free lane environment" \
       --arg date "$night_id" --arg evidence "$log_ref" \
       '{id:$id,repo:$repo,target:$target,symptom:$symptom,kind:"test-failure",
