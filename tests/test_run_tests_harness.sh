@@ -106,12 +106,20 @@ if { true >&3; } 2>/dev/null; then echo 'fd3 leaked'; fi
 printf 'test_f: PASS\n'
 EOF
 status=0
-/bin/bash "$tmp/tests/run_tests.sh" > "$tmp/output" 2> "$tmp/error" || status=$?
+# Close the caller's fd 3 so only descriptors opened by the harness are tested.
+/bin/bash "$tmp/tests/run_tests.sh" 3>&- > "$tmp/output" 2> "$tmp/error" || status=$?
 [ "$status" -eq 0 ] || fail "fd isolation run exited $status instead of 0"
 assert_not_contains 'fd3 leaked' "$tmp/output" "$tmp/error"
 assert_contains 'test_f: PASS' "$tmp/output"
 assert_contains 'PASS test_f.sh' "$tmp/output"
 assert_contains 'Tests: 3 passed, 0 failed' "$tmp/output"
 [ ! -s "$tmp/error" ] || fail 'fd isolation run must keep harness stderr empty'
+
+# Negative control: the fixture must detect an fd 3 opened by the harness itself.
+awk 'NR == 2 { print "exec 3>&1" } { print }' "$tmp/tests/run_tests.sh" > "$tmp/tests/run_tests-leaky.sh"
+status=0
+/bin/bash "$tmp/tests/run_tests-leaky.sh" 3>&- > "$tmp/output" 2>&1 || status=$?
+[ "$status" -eq 0 ] || fail "fd leak control exited $status instead of 0"
+assert_contains 'fd3 leaked' "$tmp/output"
 
 printf 'test_run_tests_harness: PASS\n'
