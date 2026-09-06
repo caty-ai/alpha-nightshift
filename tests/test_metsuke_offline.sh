@@ -956,14 +956,41 @@ while [ ! -e "$publication_order_started" ] &&
   sleep 0.02
   publication_order_ticks=$((publication_order_ticks + 1))
 done
-[ -e "$publication_order_started" ] || {
+publication_order_fail() {
+  local staging_file
+  local staging_exists=false
+  printf 'findings.jsonl line count: %s\n' "$publication_order_count" >&2
+  for staging_file in "$publication_order_lane"/.accepted-findings.*; do
+    [ -e "$staging_file" ] || continue
+    staging_exists=true
+    printf 'staging file: %s\n' "$staging_file" >&2
+  done
+  printf 'staging file exists: %s\n' "$staging_exists" >&2
+  kill -TERM "$publication_order_pid" 2>/dev/null || true
   rm -f "$publication_order_block"
   wait "$publication_order_pid" 2>/dev/null || true
+  printf '%s\n' 'lane stderr:' >&2
   cat "$publication_order_lane/stderr" >&2
-  fail "blocking cleanup seam never began"
+  printf '%s\n' 'lane stdout:' >&2
+  cat "$publication_order_lane/stdout" >&2
+  printf '%s\n' 'lane metrics.json:' >&2
+  if [ -f "$publication_order_lane/metrics.json" ]; then
+    cat "$publication_order_lane/metrics.json" >&2
+  else
+    printf '%s\n' '(missing)' >&2
+  fi
+  fail "$1"
 }
-[ "$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
-  fail "accepted finding was not atomically published before cleanup began"
+# Snapshot immediately at the cleanup seam: waiting for publication here would
+# hide a regression that publishes findings after cleanup has already begun.
+publication_order_count=missing
+if [ -f "$publication_order_lane/findings.jsonl" ]; then
+  publication_order_count=$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')
+fi
+[ -e "$publication_order_started" ] ||
+  publication_order_fail "blocking cleanup seam never began"
+[ "$publication_order_count" = 1 ] ||
+  publication_order_fail "accepted finding was not atomically published before cleanup began"
 kill -TERM "$publication_order_pid" 2>/dev/null || true
 rm -f "$publication_order_block"
 wait "$publication_order_pid" 2>/dev/null || true
