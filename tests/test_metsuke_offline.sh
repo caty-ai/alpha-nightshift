@@ -10,13 +10,39 @@ TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-metsuke.XXXXXX")
 PLAYWRIGHT_MARKER="$ROOT/lanes/metsuke/node_modules/playwright"
 CREATED_PLAYWRIGHT_MARKER=false
 cleanup() {
-  rm -rf "$TEST_TMP"
+  if [ "${METSUKE_TEST_KEEP_TMP:-0}" = 1 ]; then
+    printf 'METSUKE_TEST_KEEP_TMP=1: %s\n' "$TEST_TMP" >&2
+  else
+    rm -rf "$TEST_TMP"
+  fi
   if [ "$CREATED_PLAYWRIGHT_MARKER" = true ]; then
     rmdir "$PLAYWRIGHT_MARKER" 2>/dev/null || true
     rmdir "$ROOT/lanes/metsuke/node_modules" 2>/dev/null || true
   fi
 }
+# Set METSUKE_TEST_KEEP_TMP=1 to retain test evidence and print its path on exit.
 trap cleanup EXIT
+
+dump_lane_and_fail() {
+  local lane_dir=$1
+  local message=$2
+  local log_file
+  # Diagnostics are best-effort even when this function is the RHS of ||.
+  {
+    for log_file in stderr stdout; do
+      printf 'lane %s:\n' "$log_file"
+      [ -f "$lane_dir/$log_file" ] && cat "$lane_dir/$log_file" ||
+        printf '%s\n' '(missing)'
+    done
+    printf 'findings.jsonl line count: '
+    [ -f "$lane_dir/findings.jsonl" ] && wc -l < "$lane_dir/findings.jsonl" ||
+      printf '%s\n' '(missing)'
+    printf '%s\n' 'lane metrics.json:'
+    [ -f "$lane_dir/metrics.json" ] && cat "$lane_dir/metrics.json" ||
+      printf '%s\n' '(missing)'
+  } >&2 || true
+  fail "$message"
+}
 
 RUN_SH="$ROOT/lanes/metsuke/run.sh"
 SERVE_SH="$ROOT/lanes/metsuke/serve-lp.sh"
@@ -515,7 +541,7 @@ jq -e '
   .stages.analysis == {attempted:true,status:"succeeded"} and
   .stages.goals == {attempted:true,status:"succeeded"}
 ' "$metrics" >/dev/null ||
-  fail "metrics did not record explicit successful stage/persona status"
+  dump_lane_and_fail "$CASE_LANE" "metrics did not record explicit successful stage/persona status"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 3 ] ||
   fail "stubbed persona findings were not merged"
 jq -e -s 'all(.[]; .persona | test("^(beginner|expert|impatient)@seat:codex$"))' \
@@ -633,7 +659,7 @@ jq -e '
   .stages.analysis.status == "succeeded" and
   .stages.goals.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "direct dispatcher forgery made metrics dishonest"
+  dump_lane_and_fail "$CASE_LANE" "direct dispatcher forgery made metrics dishonest"
 
 run_lane_case total-failure-direct-forge "beginner" beginner valid valid 0 0 "" both
 [ "$CASE_RC" -ne 0 ] ||
@@ -647,7 +673,7 @@ jq -e '
   .stages.analysis.status == "failed" and
   .stages.goals.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "total failure cleanup did not retain honest metrics"
+  dump_lane_and_fail "$CASE_LANE" "total failure cleanup did not retain honest metrics"
 
 run_lane_case staging-contract-tamper "beginner" "" valid valid 0 0 "" "" 1
 [ "$CASE_RC" -ne 0 ] ||
@@ -660,7 +686,7 @@ jq -e '
   .personas_succeeded == 1 and
   .stages.analysis.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "staging contract tamper was not recorded honestly"
+  dump_lane_and_fail "$CASE_LANE" "staging contract tamper was not recorded honestly"
 
 run_lane_case consistent-staging-forge "beginner" "" valid valid 0 0 "" "" 0 1
 [ "$CASE_RC" -ne 0 ] ||
@@ -686,7 +712,7 @@ jq -e '
   .persona_failures == ["beginner"] and
   .stages.analysis.status == "degraded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "one persona failure was not recorded as degraded"
+  dump_lane_and_fail "$CASE_LANE" "one persona failure was not recorded as degraded"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 2 ] ||
   fail "remaining personas did not continue after one failure"
 
@@ -699,7 +725,7 @@ jq -e '
   .stages.analysis.status == "failed" and
   .stages.goals.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "all persona failure did not finish goals with honest status"
+  dump_lane_and_fail "$CASE_LANE" "all persona failure did not finish goals with honest status"
 
 run_lane_case valid-empty "beginner" "" valid valid 0 0 beginner
 [ "$CASE_RC" -eq 0 ] || fail "valid empty persona output was treated as failure"
@@ -709,7 +735,7 @@ jq -e '
   .personas_failed == 0 and
   .stages.analysis.status == "succeeded"
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "valid empty persona output was not recorded as success"
+  dump_lane_and_fail "$CASE_LANE" "valid empty persona output was not recorded as success"
 [ ! -s "$CASE_LANE/findings.jsonl" ] ||
   fail "valid empty persona output unexpectedly created a finding"
 
@@ -717,7 +743,7 @@ run_lane_case goals-fail "beginner expert impatient" "" valid valid 1
 [ "$CASE_RC" -eq 0 ] || fail "goals failure was incorrectly fatal after persona success"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "goals failure was not recorded"
+  dump_lane_and_fail "$CASE_LANE" "goals failure was not recorded"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 3 ] ||
   fail "goals failure discarded findings"
 
@@ -729,13 +755,13 @@ jq -e '
   .stages.analysis == {attempted:false,status:"not_attempted"} and
   .stages.goals == {attempted:false,status:"not_attempted"}
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "capture process failure metrics were dishonest"
+  dump_lane_and_fail "$CASE_LANE" "capture process failure metrics were dishonest"
 
 run_lane_case malformed-manifest "beginner" "" valid malformed
 [ "$CASE_RC" -ne 0 ] || fail "malformed capture manifest did not fail closed"
 jq -e '.capture_failed == true and .stages.capture.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "malformed manifest was not recorded as capture failure"
+  dump_lane_and_fail "$CASE_LANE" "malformed manifest was not recorded as capture failure"
 
 for negative_mode in unmanifested invented cross console-cross; do
   run_lane_case "negative-$negative_mode" "beginner" "" "$negative_mode"
@@ -746,7 +772,7 @@ for negative_mode in unmanifested invented cross console-cross; do
     .personas_succeeded == 0 and
     .personas_failed == 1
   ' "$CASE_LANE/metrics.json" >/dev/null ||
-    fail "$negative_mode finding was not rejected"
+    dump_lane_and_fail "$CASE_LANE" "$negative_mode finding was not rejected"
 done
 
 run_lane_case shared-console "beginner" "" console
@@ -780,7 +806,7 @@ jq -e '
   .goals_failed == false and
   .stages.goals == {attempted:true,status:"succeeded"}
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "backup cleanup failure made GOALS publication status dishonest"
+  dump_lane_and_fail "$CASE_LANE" "backup cleanup failure made GOALS publication status dishonest"
 assert_file_exists "$CASE_STATE/goals/GOALS-draft.md"
 assert_file_exists "$CASE_STATE/goals/feature-map.md"
 assert_file_exists "$CASE_STATE/goals/range-map.md"
@@ -810,7 +836,7 @@ run_lane_case publication-fail "beginner" "" valid valid 0 1
 [ "$CASE_RC" -eq 0 ] || fail "goals publication failure was incorrectly fatal"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "goals publication failure was not recorded"
+  dump_lane_and_fail "$CASE_LANE" "goals publication failure was not recorded"
 cmp -s "$TEST_TMP/goals-before-publication-fail" "$CASE_STATE/goals/GOALS-draft.md" ||
   fail "publication failure did not restore the previous GOALS draft"
 cmp -s "$TEST_TMP/feature-before-publication-fail" "$CASE_STATE/goals/feature-map.md" ||
@@ -832,7 +858,7 @@ run_lane_case unsafe-goals-symlink "beginner"
 assert_contains "# protected target" "$unsafe_goals_state/protected-feature-map"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "unsafe goals destination refusal was not recorded"
+  dump_lane_and_fail "$CASE_LANE" "unsafe goals destination refusal was not recorded"
 
 unsafe_goals_dir_state="$TEST_TMP/cases/unsafe-goals-directory/state"
 mkdir -p "$unsafe_goals_dir_state/protected-goals"
@@ -857,7 +883,7 @@ jq -e '
   .stages.analysis.status == "succeeded" and
   .stages.goals == {attempted:true,status:"failed"}
 ' "$CASE_LANE/metrics.json" >/dev/null ||
-  fail "unsafe goals directory was not isolated to the goals stage"
+  dump_lane_and_fail "$CASE_LANE" "unsafe goals directory was not isolated to the goals stage"
 
 serve_failure_state="$TEST_TMP/cases/serve-failure/state"
 serve_failure_night=2026-07-29-serve-failure
@@ -883,7 +909,7 @@ jq -e '
   .stages.analysis == {attempted:false,status:"not_attempted"} and
   .stages.goals == {attempted:false,status:"not_attempted"}
 ' "$serve_failure_lane/metrics.json" >/dev/null ||
-  fail "early serve failure reported later stages as successful"
+  dump_lane_and_fail "$serve_failure_lane" "early serve failure reported later stages as successful"
 
 cleanup_failure_state="$TEST_TMP/cases/cleanup-failure/state"
 cleanup_failure_night=2026-07-29-cleanup-failure
@@ -916,11 +942,7 @@ jq -e '
   .stages.capture.status == "succeeded" and
   .stages.analysis.status == "succeeded"
 ' "$cleanup_failure_lane/metrics.json" >/dev/null ||
-  {
-    jq . "$cleanup_failure_lane/metrics.json" >&2
-    cat "$cleanup_failure_lane/stderr" >&2
-    fail "server cleanup failure was absent from metrics"
-  }
+  dump_lane_and_fail "$cleanup_failure_lane" "server cleanup failure was absent from metrics"
 [ "$(wc -l < "$cleanup_failure_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "server cleanup failure prevented honest final findings publication"
 rm -f "$cleanup_failure_port_state"
@@ -957,29 +979,26 @@ while [ ! -e "$publication_order_started" ] &&
   publication_order_ticks=$((publication_order_ticks + 1))
 done
 publication_order_fail() {
+  local message=$1
+  local count=$2
   local staging_file
   local staging_exists=false
-  printf 'findings.jsonl line count: %s\n' "$publication_order_count" >&2
-  for staging_file in "$publication_order_lane"/.accepted-findings.*; do
-    [ -e "$staging_file" ] || continue
-    staging_exists=true
-    printf 'staging file: %s\n' "$staging_file" >&2
-  done
-  printf 'staging file exists: %s\n' "$staging_exists" >&2
+  local rc=0
+  {
+    printf 'findings.jsonl line count at cleanup seam: %s\n' "$count"
+    printf 'cleanup-marker ticks: %s/500\n' "$publication_order_ticks"
+    for staging_file in "$publication_order_lane"/.accepted-findings.*; do
+      [ -e "$staging_file" ] || continue
+      staging_exists=true
+      printf 'staging file: %s\n' "$staging_file"
+    done
+    printf 'staging file exists: %s\n' "$staging_exists"
+  } >&2 || true
   kill -TERM "$publication_order_pid" 2>/dev/null || true
-  rm -f "$publication_order_block"
-  wait "$publication_order_pid" 2>/dev/null || true
-  printf '%s\n' 'lane stderr:' >&2
-  cat "$publication_order_lane/stderr" >&2
-  printf '%s\n' 'lane stdout:' >&2
-  cat "$publication_order_lane/stdout" >&2
-  printf '%s\n' 'lane metrics.json:' >&2
-  if [ -f "$publication_order_lane/metrics.json" ]; then
-    cat "$publication_order_lane/metrics.json" >&2
-  else
-    printf '%s\n' '(missing)' >&2
-  fi
-  fail "$1"
+  rm -f "$publication_order_block" || kill -KILL "$publication_order_pid" 2>/dev/null || true
+  wait "$publication_order_pid" 2>/dev/null || rc=$?
+  printf 'lane exit status: %s\n' "$rc" >&2 || true
+  dump_lane_and_fail "$publication_order_lane" "$message"
 }
 # Snapshot immediately at the cleanup seam: waiting for publication here would
 # hide a regression that publishes findings after cleanup has already begun.
@@ -988,9 +1007,9 @@ if [ -f "$publication_order_lane/findings.jsonl" ]; then
   publication_order_count=$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')
 fi
 [ -e "$publication_order_started" ] ||
-  publication_order_fail "blocking cleanup seam never began"
+  publication_order_fail "blocking cleanup seam never began" "$publication_order_count"
 [ "$publication_order_count" = 1 ] ||
-  publication_order_fail "accepted finding was not atomically published before cleanup began"
+  publication_order_fail "accepted finding was not atomically published before cleanup began" "$publication_order_count"
 kill -TERM "$publication_order_pid" 2>/dev/null || true
 rm -f "$publication_order_block"
 wait "$publication_order_pid" 2>/dev/null || true
