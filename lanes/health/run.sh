@@ -111,8 +111,7 @@ stop_seat_tree() {
   done
 }
 
-# Avoid signalling a reaped group (whose pid could be reused) when no members
-# remain. If process inspection is unavailable, retain the full fail-closed stop.
+# Signal groups only while members remain, retaining per-pid cleanup and the fail-closed stop when process inspection is unavailable.
 stop_remaining_tree() {
   local remaining_root=$1 remaining_known=$2 members alive='' pid group_rc=0
   if ! command -v pgrep >/dev/null 2>&1 ||
@@ -130,12 +129,17 @@ stop_remaining_tree() {
     if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; fi
   done
   [ -n "$alive" ] || return 0
-  /bin/kill -TERM "-$remaining_root" 2>/dev/null || true
+  if [ -n "$members" ]; then
+    /bin/kill -TERM "-$remaining_root" 2>/dev/null || true
+  fi
   for pid in $alive; do kill -TERM "$pid" 2>/dev/null || true; done
   sleep 0.5
   collect_descendants "$remaining_root" "$alive" || true
   alive="$alive $COLLECTED_DESCENDANTS"
-  /bin/kill -KILL "-$remaining_root" 2>/dev/null || true
+  members=$(pgrep -g "$remaining_root" 2>/dev/null) || true
+  if [ -n "$members" ]; then
+    /bin/kill -KILL "-$remaining_root" 2>/dev/null || true
+  fi
   for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
 }
 
@@ -317,8 +321,8 @@ if [ -n "$cmd" ]; then
 elif [ -n "${HEALTH_SUITE_GLOB:-}" ]; then
   runner="suite-glob"
 elif [ -f "$clone_dir/Makefile" ] && grep -Eq '^test:([^=]|$)' "$clone_dir/Makefile"; then
-  runner=make-test
   command -v make >/dev/null 2>&1 || error runner-unavailable 'make is unavailable'
+  runner=make-test
   cmd='make test'
 elif [ -f "$clone_dir/tests/run.sh" ]; then
   runner=tests-run

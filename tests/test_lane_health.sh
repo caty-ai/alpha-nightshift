@@ -127,7 +127,7 @@ done
 lane="$TEST_TMP/make-unavailable"
 run_health "$lane" 1 --path "$nomake_bin" "HEALTH_TARGET_SOURCE=$make_repo"
 assert_result "$lane" error 0 0
-jq -e '.reason == "runner-unavailable" and .commands == []' "$lane/health.json" >/dev/null || fail 'unavailable make was run'
+jq -e '.reason == "runner-unavailable" and .runner == null and .commands == []' "$lane/health.json" >/dev/null || fail 'unavailable make was run'
 
 # 3. Independent failures retain the exact ledger schema and hashed evidence.
 suites_repo=$(init_source suite-fixture)
