@@ -9,7 +9,7 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-health.XXXXXX")
 TEST_TMP=$(cd -P "$TEST_TMP" && pwd -P)
-trap 'rm -rf "$TEST_TMP"' EXIT
+trap 'chmod -R u+rwX "$TEST_TMP"; rm -rf "$TEST_TMP"' EXIT
 HEALTH_SH="$ROOT/lanes/health/run.sh"
 TEST_NIGHT=2026-09-05
 mkdir -p "$TEST_TMP/repos" "$TEST_TMP/home"
@@ -32,10 +32,11 @@ commit_source() {
 }
 
 run_health() {
-  local lane=$1 expected_rc=$2 rc=0
+  local lane=$1 expected_rc=$2 rc=0 lane_path=$PATH
   shift 2
+  if [ "${1:-}" = --path ]; then lane_path=$2; shift 2; fi
   mkdir -p "$lane"
-  env -i PATH="$PATH" HOME="$TEST_TMP/home" TMPDIR="$TEST_TMP" LANG=C TERM=dumb \
+  env -i PATH="$lane_path" HOME="$TEST_TMP/home" TMPDIR="$TEST_TMP" LANG=C TERM=dumb \
     NIGHT_ID="$TEST_NIGHT" LANE_DIR="$lane" GIT_CEILING_DIRECTORIES="$TEST_TMP" \
     "$@" /bin/bash "$HEALTH_SH" > "$lane/stdout" 2> "$lane/stderr" || rc=$?
   [ "$rc" -eq "$expected_rc" ] || {
@@ -45,6 +46,10 @@ run_health() {
   assert_file_exists "$lane/findings.jsonl"
   jq -e 'keys == ["commands","commit","elapsed_sec","failures","night_id","reason","refresh","repo","result","runner","selection","source","suites"] and (.elapsed_sec >= 0) and (.commands | type == "array")' \
     "$lane/health.json" >/dev/null || fail "$lane has invalid health.json"
+  if [ "$expected_rc" -eq 1 ]; then
+    jq -e '.reason | test("^[a-z0-9-]+$")' "$lane/health.json" >/dev/null ||
+      fail "$lane has a non-token error reason"
+  fi
 }
 
 assert_result() {
@@ -98,6 +103,31 @@ lane="$TEST_TMP/no-runner"
 run_health "$lane" 3 "HEALTH_TARGET_SOURCE=$empty_repo"
 assert_no_input "$lane" no-test-runner
 jq -e '.runner == null' "$lane/health.json" >/dev/null || fail 'missing runner was invented'
+
+# A make variable assignment is not a test target.
+assignment_repo=$(init_source make-assignment)
+printf 'test:=nothing\n' > "$assignment_repo/Makefile"
+commit_source "$assignment_repo"
+lane="$TEST_TMP/make-assignment"
+run_health "$lane" 3 "HEALTH_TARGET_SOURCE=$assignment_repo"
+assert_no_input "$lane" no-test-runner
+jq -e '.runner == null and .commands == []' "$lane/health.json" >/dev/null || fail 'make assignment selected a runner'
+
+# A selected runner must exist before any command/finding is recorded.
+make_repo=$(init_source make-unavailable)
+printf 'test:\n\t@exit 0\n' > "$make_repo/Makefile"
+commit_source "$make_repo"
+nomake_bin="$TEST_TMP/nomake-bin"
+mkdir -p "$nomake_bin"
+for tool in bash git jq shasum awk wc tr date basename dirname sleep ps kill cut grep rm mkdir cat printf pgrep env sed perl; do
+  tool_path=$(enable -n "$tool" 2>/dev/null || true; command -v "$tool")
+  [ -x "$tool_path" ] || fail "missing fixture tool $tool"
+  ln -s "$tool_path" "$nomake_bin/$tool"
+done
+lane="$TEST_TMP/make-unavailable"
+run_health "$lane" 1 --path "$nomake_bin" "HEALTH_TARGET_SOURCE=$make_repo"
+assert_result "$lane" error 0 0
+jq -e '.reason == "runner-unavailable" and .runner == null and .commands == []' "$lane/health.json" >/dev/null || fail 'unavailable make was run'
 
 # 3. Independent failures retain the exact ledger schema and hashed evidence.
 suites_repo=$(init_source suite-fixture)
@@ -249,6 +279,18 @@ if kill -0 "$orphan_pid" 2>/dev/null; then
   fail 'timeout left its descendant alive'
 fi
 
+# Normal completion must also reap a child born just before its parent exits.
+lane="$TEST_TMP/normal-orphan"
+run_health "$lane" 0 "HEALTH_TARGET_SOURCE=$empty_repo" \
+  'HEALTH_TEST_CMD=sleep 300 & echo $! > orphan.pid; exit 0'
+assert_result "$lane" ran 1 0
+jq -e '.commands[0].exit_code == 0' "$lane/health.json" >/dev/null || fail 'normal orphan command status'
+orphan_pid=$(cat "$lane/work/health-checkout/orphan.pid")
+if kill -0 "$orphan_pid" 2>/dev/null; then
+  kill -KILL "$orphan_pid" 2>/dev/null || true
+  fail 'normal completion left its descendant alive'
+fi
+
 # 7. Bare sources fail validation before a clone is created.
 bare="$TEST_TMP/repos/bare"
 git init --bare -q "$bare"
@@ -273,6 +315,71 @@ for overlap in exact nested; do
   source_sha_after=$(tar -cf - -C "$overlap_source" . | shasum -a 256 | awk '{print $1}')
   [ "$source_sha_before" = "$source_sha_after" ] || fail "$overlap source overlap changed source bytes"
 done
+
+# Preflight must not create even the lane directory inside the source checkout.
+for selection_path in explicit rotation; do
+  inside_source=$(init_source "inside-$selection_path")
+  lane="$inside_source/lane"
+  mkdir -p "$inside_source/lane_1"
+  jq -n --arg night "$TEST_NIGHT" --arg source "$inside_source" \
+    '{night_id:$night,selected:"inside",path:$source,refresh:"ok"}' > "$inside_source/lane_1/rotation.json"
+  source_sha_before=$(tar -cf - -C "$inside_source" . | shasum -a 256 | awk '{print $1}')
+  case "$selection_path" in
+    explicit) source_setting="HEALTH_TARGET_SOURCE=$inside_source" ;;
+    rotation) source_setting=HEALTH_ROTATION_LANE=lane_1 ;;
+  esac
+  inside_rc=0
+  env -i PATH="$PATH" HOME="$TEST_TMP/home" TMPDIR="$TEST_TMP" LANG=C TERM=dumb \
+    NIGHT_ID="$TEST_NIGHT" LANE_DIR="$lane" GIT_CEILING_DIRECTORIES="$TEST_TMP" \
+    "$source_setting" /bin/bash "$HEALTH_SH" > "$TEST_TMP/inside.stdout" 2> "$TEST_TMP/inside.stderr" || inside_rc=$?
+  [ "$inside_rc" -eq 1 ] || fail "$selection_path inside source did not return 1"
+  assert_contains 'health: invalid source' "$TEST_TMP/inside.stderr"
+  [ ! -e "$lane" ] || fail "$selection_path created a lane inside source"
+  source_sha_after=$(tar -cf - -C "$inside_source" . | shasum -a 256 | awk '{print $1}')
+  [ "$source_sha_before" = "$source_sha_after" ] || fail "$selection_path preflight changed source bytes"
+done
+
+# Infrastructure failures cannot fabricate test findings. The EXIT trap restores
+# permissions even when an assertion fails, before removing any fixture.
+if [ "$(id -u)" -ne 0 ]; then
+  unreadable_repo=$(init_source unreadable-objects)
+  # Git rejects objects/ itself at source validation when it lacks search
+  # permission. Keep the repo valid, but deny access to its loose objects.
+  chmod 000 "$unreadable_repo"/.git/objects/??
+  lane="$TEST_TMP/clone-failed"
+  run_health "$lane" 1 "HEALTH_TARGET_SOURCE=$unreadable_repo"
+  chmod 755 "$unreadable_repo"/.git/objects/??
+  assert_result "$lane" error 0 0
+  jq -e '.reason == "clone-failed" and .commands == []' "$lane/health.json" >/dev/null || fail 'clone failure status'
+  [ -s "$lane/evidence/clone.log" ] || fail 'clone failure log missing or empty'
+
+  lane="$TEST_TMP/unwritable-evidence"
+  mkdir -p "$lane/evidence"
+  chmod 555 "$lane/evidence"
+  run_health "$lane" 1 "HEALTH_TARGET_SOURCE=$empty_repo"
+  chmod 755 "$lane/evidence"
+  assert_result "$lane" error 0 0
+  jq -e '.commands == []' "$lane/health.json" >/dev/null || fail 'unwritable evidence recorded a command'
+
+  # Also exercise a manifest failure originating in finish(), with no prior error.
+  lane="$TEST_TMP/unwritable-manifest"
+  mkdir -p "$lane/evidence"
+  chmod 555 "$lane/evidence"
+  run_health "$lane" 1 HEALTH_ROTATION_LANE=lane_999
+  chmod 755 "$lane/evidence"
+  assert_result "$lane" error 0 0
+  jq -e '.reason == "evidence-unwritable" and .commands == []' "$lane/health.json" >/dev/null || fail 'manifest failure status'
+else
+  printf 'SKIP health permission cases: running as root\n'
+fi
+
+unborn_repo="$TEST_TMP/repos/unborn"
+git init -q "$unborn_repo"
+lane="$TEST_TMP/unreadable-head"
+run_health "$lane" 1 "HEALTH_TARGET_SOURCE=$unborn_repo"
+assert_result "$lane" error 0 0
+jq -e '.reason == "head-unreadable" and .commands == []' "$lane/health.json" >/dev/null || fail 'unreadable HEAD status'
+assert_file_exists "$lane/evidence/clone.log"
 
 # Configuration errors and empty globs remain observable.
 lane="$TEST_TMP/no-matching-suites"
