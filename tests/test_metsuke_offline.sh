@@ -9,19 +9,69 @@ ROOT=$(cd "$TEST_DIR/.." && pwd)
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-metsuke.XXXXXX")
 PLAYWRIGHT_MARKER="$ROOT/lanes/metsuke/node_modules/playwright"
 CREATED_PLAYWRIGHT_MARKER=false
+TEST_LOCK="$ROOT/lanes/metsuke/.test-metsuke-offline.lock"
+ACQUIRED_TEST_LOCK=false
 cleanup() {
+  local cleanup_rc=0
   if [ "${METSUKE_TEST_KEEP_TMP:-0}" = 1 ]; then
     printf 'METSUKE_TEST_KEEP_TMP=1: %s\n' "$TEST_TMP" >&2
   else
-    rm -rf "$TEST_TMP"
+    rm -rf "$TEST_TMP" || cleanup_rc=$?
   fi
   if [ "$CREATED_PLAYWRIGHT_MARKER" = true ]; then
     rmdir "$PLAYWRIGHT_MARKER" 2>/dev/null || true
     rmdir "$ROOT/lanes/metsuke/node_modules" 2>/dev/null || true
   fi
+  if [ "$ACQUIRED_TEST_LOCK" = true ]; then
+    rm -rf "$TEST_LOCK" || cleanup_rc=$?
+  fi
+  return "$cleanup_rc"
 }
 # Set METSUKE_TEST_KEEP_TMP=1 to retain test evidence and print its path on exit.
 trap cleanup EXIT
+
+# Runs share the checkout's temporary Playwright dependency marker.
+# Without a suite-wide lock, one run can remove it while another still needs it.
+# Hold the claim through marker cleanup so overlapping runs cannot lose preflight.
+lock_timeout=${METSUKE_TEST_LOCK_TIMEOUT_SEC:-600}
+case "$lock_timeout" in
+  ''|*[!0-9]*) fail "METSUKE_TEST_LOCK_TIMEOUT_SEC must be a nonnegative integer" ;;
+esac
+lock_started=$SECONDS
+reclaimed_test_lock=false
+while ! mkdir "$TEST_LOCK" 2>/dev/null; do
+  owner_pid=$(cat "$TEST_LOCK/pid" 2>/dev/null || true)
+  lock_expired=false
+  if [ "$((SECONDS - lock_started))" -ge "$lock_timeout" ]; then
+    lock_expired=true
+  fi
+  stale_lock=false
+  case "$owner_pid" in
+    # A missing pid may belong to an owner between mkdir and pid publication.
+    ''|*[!0-9]*|0) ;;
+    *) kill -0 "$owner_pid" 2>/dev/null || stale_lock=true ;;
+  esac
+  if [ "$stale_lock" = true ] && [ "$reclaimed_test_lock" = false ] &&
+    mkdir "$TEST_LOCK/reclaim" 2>/dev/null; then
+    # Serialize reclaimers and recheck in case the owner just published its pid.
+    current_pid=$(cat "$TEST_LOCK/pid" 2>/dev/null || true)
+    if [ "$current_pid" = "$owner_pid" ] &&
+      ! kill -0 "${current_pid:-invalid}" 2>/dev/null; then
+      printf 'NOTE: reclaiming stale test_metsuke_offline lock %s (pid: %s)\n' \
+        "$TEST_LOCK" "${owner_pid:-unreadable}" >&2
+      rm -rf "$TEST_LOCK"
+      reclaimed_test_lock=true
+      continue
+    fi
+    rmdir "$TEST_LOCK/reclaim" 2>/dev/null || true
+  fi
+  if [ "$lock_expired" = true ]; then
+    fail "another test_metsuke_offline run holds $TEST_LOCK (owner pid: ${owner_pid:-unreadable}) for > $lock_timeout s"
+  fi
+  sleep 1
+done
+ACQUIRED_TEST_LOCK=true
+printf '%s\n' "$$" > "$TEST_LOCK/pid"
 
 dump_lane_and_fail() {
   local lane_dir=$1
@@ -492,7 +542,7 @@ run_lane_case() {
 }
 
 run_lane_case success
-[ "$CASE_RC" -eq 0 ] || fail "successful stubbed lane failed"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "successful stubbed lane failed"
 printf '%s\n' \
   exec \
   --ignore-user-config \
@@ -646,7 +696,7 @@ assert_contains "unknown METSUKE_SEAT 'unknown-seat'" \
   "$TEST_TMP/rejected-unknown-seat/stderr"
 
 run_lane_case direct-dispatcher-forge "beginner" "" valid valid 0 0 "" both
-[ "$CASE_RC" -eq 0 ] || fail "direct dispatcher forgery changed honest lane exit behavior"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "direct dispatcher forgery changed honest lane exit behavior"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "final findings publication did not retain exactly the normalized finding"
 if grep -F 'FORGED' "$CASE_LANE/findings.jsonl" >/dev/null; then
@@ -663,7 +713,7 @@ jq -e '
 
 run_lane_case total-failure-direct-forge "beginner" beginner valid valid 0 0 "" both
 [ "$CASE_RC" -ne 0 ] ||
-  fail "total persona failure with direct forgery looked like a clean night"
+  dump_lane_and_fail "$CASE_LANE" "total persona failure with direct forgery looked like a clean night"
 [ ! -s "$CASE_LANE/findings.jsonl" ] ||
   fail "EXIT publication retained a forged finding on total persona failure"
 jq -e '
@@ -677,7 +727,7 @@ jq -e '
 
 run_lane_case staging-contract-tamper "beginner" "" valid valid 0 0 "" "" 1
 [ "$CASE_RC" -ne 0 ] ||
-  fail "tampered shell-assigned finding contract did not fail publication"
+  dump_lane_and_fail "$CASE_LANE" "tampered shell-assigned finding contract did not fail publication"
 [ ! -s "$CASE_LANE/findings.jsonl" ] ||
   fail "tampered shell-assigned finding contract was published"
 assert_contains "shell-normalized content was tampered" "$CASE_LANE/stderr"
@@ -690,7 +740,7 @@ jq -e '
 
 run_lane_case consistent-staging-forge "beginner" "" valid valid 0 0 "" "" 0 1
 [ "$CASE_RC" -ne 0 ] ||
-  fail "consistent staging/metadata forgery did not fail publication"
+  dump_lane_and_fail "$CASE_LANE" "consistent staging/metadata forgery did not fail publication"
 [ -e "$CASE_LANE/no-metadata-file" ] ||
   fail "fake Codex found writable file-backed finding contract metadata"
 if find "$CASE_LANE" -maxdepth 1 -type f \
@@ -704,7 +754,7 @@ assert_contains "in-memory finding contract ended before the staged findings" \
   "$CASE_LANE/stderr"
 
 run_lane_case one-persona-fails "beginner expert impatient" beginner
-[ "$CASE_RC" -eq 0 ] || fail "one persona failure incorrectly failed the lane"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "one persona failure incorrectly failed the lane"
 jq -e '
   .personas_attempted == 3 and
   .personas_succeeded == 2 and
@@ -717,7 +767,7 @@ jq -e '
   fail "remaining personas did not continue after one failure"
 
 run_lane_case all-personas-fail "beginner expert impatient" "beginner expert impatient"
-[ "$CASE_RC" -ne 0 ] || fail "all persona failure looked like a clean night"
+[ "$CASE_RC" -ne 0 ] || dump_lane_and_fail "$CASE_LANE" "all persona failure looked like a clean night"
 jq -e '
   .personas_attempted == 3 and
   .personas_succeeded == 0 and
@@ -728,7 +778,7 @@ jq -e '
   dump_lane_and_fail "$CASE_LANE" "all persona failure did not finish goals with honest status"
 
 run_lane_case valid-empty "beginner" "" valid valid 0 0 beginner
-[ "$CASE_RC" -eq 0 ] || fail "valid empty persona output was treated as failure"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "valid empty persona output was treated as failure"
 jq -e '
   .personas_attempted == 1 and
   .personas_succeeded == 1 and
@@ -740,7 +790,7 @@ jq -e '
   fail "valid empty persona output unexpectedly created a finding"
 
 run_lane_case goals-fail "beginner expert impatient" "" valid valid 1
-[ "$CASE_RC" -eq 0 ] || fail "goals failure was incorrectly fatal after persona success"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "goals failure was incorrectly fatal after persona success"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
   dump_lane_and_fail "$CASE_LANE" "goals failure was not recorded"
@@ -748,7 +798,7 @@ jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   fail "goals failure discarded findings"
 
 run_lane_case capture-fail "beginner" "" valid fail
-[ "$CASE_RC" -ne 0 ] || fail "capture process failure did not fail closed"
+[ "$CASE_RC" -ne 0 ] || dump_lane_and_fail "$CASE_LANE" "capture process failure did not fail closed"
 jq -e '
   .capture_failed == true and
   .stages.capture.status == "failed" and
@@ -758,7 +808,7 @@ jq -e '
   dump_lane_and_fail "$CASE_LANE" "capture process failure metrics were dishonest"
 
 run_lane_case malformed-manifest "beginner" "" valid malformed
-[ "$CASE_RC" -ne 0 ] || fail "malformed capture manifest did not fail closed"
+[ "$CASE_RC" -ne 0 ] || dump_lane_and_fail "$CASE_LANE" "malformed capture manifest did not fail closed"
 jq -e '.capture_failed == true and .stages.capture.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
   dump_lane_and_fail "$CASE_LANE" "malformed manifest was not recorded as capture failure"
@@ -766,7 +816,7 @@ jq -e '.capture_failed == true and .stages.capture.status == "failed"' \
 for negative_mode in unmanifested invented cross console-cross; do
   run_lane_case "negative-$negative_mode" "beginner" "" "$negative_mode"
   [ "$CASE_RC" -ne 0 ] ||
-    fail "$negative_mode finding did not contribute to total analysis failure"
+    dump_lane_and_fail "$CASE_LANE" "$negative_mode finding did not contribute to total analysis failure"
   jq -e '
     .invalid_findings == 1 and
     .personas_succeeded == 0 and
@@ -776,13 +826,13 @@ for negative_mode in unmanifested invented cross console-cross; do
 done
 
 run_lane_case shared-console "beginner" "" console
-[ "$CASE_RC" -eq 0 ] || fail "mapped shared console evidence was rejected"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "mapped shared console evidence was rejected"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "mapped shared console evidence was not retained"
 
 for mutation_mode in digest fabricated; do
   run_lane_case "mutation-$mutation_mode" "beginner" "" "$mutation_mode"
-  [ "$CASE_RC" -ne 0 ] || fail "$mutation_mode capture mutation did not fail closed"
+  [ "$CASE_RC" -ne 0 ] || dump_lane_and_fail "$CASE_LANE" "$mutation_mode capture mutation did not fail closed"
   assert_contains "captured manifest/evidence changed" "$CASE_LANE/stderr"
 done
 
@@ -791,7 +841,7 @@ mkdir -p "$partial_state/goals"
 printf '%s\n' "# stale goals" > "$partial_state/goals/GOALS-draft.md"
 printf '%s\n' "# stale feature map" > "$partial_state/goals/feature-map.md"
 run_lane_case partial-goals-success "beginner"
-[ "$CASE_RC" -eq 0 ] || fail "partial goals set regeneration failed"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "partial goals set regeneration failed"
 partial_state="$CASE_STATE"
 assert_contains "# generated GOALS_OUTPUT_PATH" "$partial_state/goals/GOALS-draft.md"
 assert_contains "# generated FEATURE_MAP_OUTPUT_PATH" "$partial_state/goals/feature-map.md"
@@ -801,7 +851,7 @@ assert_file_exists "$partial_state/goals/range-map.md"
 run_lane_case goals-backup-housekeeping-fail \
   "beginner" "" valid valid 0 0 "" "" 0 0 1
 [ "$CASE_RC" -eq 0 ] ||
-  fail "backup cleanup inverted a successfully published GOALS set"
+  dump_lane_and_fail "$CASE_LANE" "backup cleanup inverted a successfully published GOALS set"
 jq -e '
   .goals_failed == false and
   .stages.goals == {attempted:true,status:"succeeded"}
@@ -818,7 +868,7 @@ printf '%s\n' "# curated feature map" > "$failed_goals_state/goals/feature-map.m
 cp "$failed_goals_state/goals/GOALS-draft.md" "$TEST_TMP/goals-before-codex-fail"
 cp "$failed_goals_state/goals/feature-map.md" "$TEST_TMP/feature-before-codex-fail"
 run_lane_case partial-goals-codex-fail "beginner" "" valid valid 1
-[ "$CASE_RC" -eq 0 ] || fail "goals Codex failure was incorrectly fatal"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "goals Codex failure was incorrectly fatal"
 cmp -s "$TEST_TMP/goals-before-codex-fail" "$CASE_STATE/goals/GOALS-draft.md" ||
   fail "goals Codex failure changed the existing GOALS draft"
 cmp -s "$TEST_TMP/feature-before-codex-fail" "$CASE_STATE/goals/feature-map.md" ||
@@ -833,7 +883,7 @@ printf '%s\n' "# curated publication feature map" > "$publication_state/goals/fe
 cp "$publication_state/goals/GOALS-draft.md" "$TEST_TMP/goals-before-publication-fail"
 cp "$publication_state/goals/feature-map.md" "$TEST_TMP/feature-before-publication-fail"
 run_lane_case publication-fail "beginner" "" valid valid 0 1
-[ "$CASE_RC" -eq 0 ] || fail "goals publication failure was incorrectly fatal"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "goals publication failure was incorrectly fatal"
 jq -e '.goals_failed == true and .stages.goals.status == "failed"' \
   "$CASE_LANE/metrics.json" >/dev/null ||
   dump_lane_and_fail "$CASE_LANE" "goals publication failure was not recorded"
@@ -852,7 +902,7 @@ printf '%s\n' "# protected target" > "$unsafe_goals_state/protected-feature-map"
 ln -s "$unsafe_goals_state/protected-feature-map" \
   "$unsafe_goals_state/goals/feature-map.md"
 run_lane_case unsafe-goals-symlink "beginner"
-[ "$CASE_RC" -eq 0 ] || fail "unsafe goals destination made persona findings fatal"
+[ "$CASE_RC" -eq 0 ] || dump_lane_and_fail "$CASE_LANE" "unsafe goals destination made persona findings fatal"
 [ -L "$CASE_STATE/goals/feature-map.md" ] ||
   fail "unsafe goals destination symlink was replaced"
 assert_contains "# protected target" "$unsafe_goals_state/protected-feature-map"
@@ -872,7 +922,7 @@ ln -s "$unsafe_goals_dir_state/protected-goals" \
   "$unsafe_goals_dir_state/goals"
 run_lane_case unsafe-goals-directory "beginner"
 [ "$CASE_RC" -eq 0 ] ||
-  fail "unsafe goals directory aborted independent capture/persona analysis"
+  dump_lane_and_fail "$CASE_LANE" "unsafe goals directory aborted independent capture/persona analysis"
 [ "$(wc -l < "$CASE_LANE/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "unsafe goals directory discarded accepted persona findings"
 assert_contains "# protected goals directory" \
