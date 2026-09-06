@@ -106,10 +106,22 @@ for test_file in "${test_files[@]}"; do
   fi
 
   executed=$((executed + 1))
-  if /bin/bash "$test_file"; then
-    printf 'PASS %s\n' "$test_name"
-    passed=$((passed + 1))
+  # PASS requires exit 0 and either exact '<suite basename without .sh>: PASS'
+  # or a line starting with 'PASS ('. Output is captured and replayed after
+  # each suite; live streaming is intentionally not provided for portability.
+  if suite_out=$(/bin/bash "$test_file" 2>&1); then
+    [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
+    # Read all output so an early grep match cannot cause SIGPIPE with pipefail.
+    if printf '%s\n' "$suite_out" | grep -Fx "${test_name%.sh}: PASS" >/dev/null ||
+       printf '%s\n' "$suite_out" | grep -E '^PASS [(]' >/dev/null; then
+      printf 'PASS %s\n' "$test_name"
+      passed=$((passed + 1))
+    else
+      printf 'FAIL %s (no verdict line)\n' "$test_name"
+      failed=$((failed + 1))
+    fi
   else
+    [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
     printf 'FAIL %s\n' "$test_name"
     failed=$((failed + 1))
   fi
