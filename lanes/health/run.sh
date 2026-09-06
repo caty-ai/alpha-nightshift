@@ -3,11 +3,13 @@ set -euo pipefail
 
 error() {
   reason=$1
+  shift
+  [[ "$reason" =~ ^[a-z0-9-]+$ ]] || reason=unexpected-error
   printf 'health: %s\n' "$*" >&2
   exit 1
 }
 
-[ -n "${LANE_DIR:-}" ] || error 'LANE_DIR is required'
+[ -n "${LANE_DIR:-}" ] || error lane-dir-required 'LANE_DIR is required'
 night_id=${NIGHT_ID:-}
 started=$(date +%s)
 repo=
@@ -30,7 +32,7 @@ finish() {
   finish_rc=$?
   trap - EXIT
   if [ -n "$active_pid" ]; then
-    stop_seat_tree "$active_pid" "$active_known"
+    stop_remaining_tree "$active_pid" "$active_known"
     wait "$active_pid" 2>/dev/null || true
   fi
   manifest='{}'
@@ -43,7 +45,14 @@ finish() {
       --arg sha "$sha" --argjson bytes "$bytes" \
       '. + {($ref):{sha256:$sha,bytes:$bytes}}') || exit 1
   done
-  printf '%s\n' "$manifest" | jq '{files:.}' > "$LANE_DIR/evidence/manifest.json" || exit 1
+  if ! printf '%s\n' "$manifest" | jq '{files:.}' > "$LANE_DIR/evidence/manifest.json"; then
+    if [ "$finish_rc" -eq 0 ] || [ "$finish_rc" -eq 3 ]; then
+      result=error
+      reason=evidence-unwritable
+      printf 'health: cannot write evidence manifest\n' >&2
+    fi
+    finish_rc=1
+  fi
   jq -n --arg night_id "$night_id" --arg repo "$repo" --arg source "$source" \
     --arg commit "$commit" --arg selection "$selection" --arg runner "$runner" \
     --arg result "$result" --arg reason "$reason" --arg refresh "$refresh" --argjson suites "$suites" \
@@ -102,6 +111,49 @@ stop_seat_tree() {
   done
 }
 
+# Avoid signalling a reaped group (whose pid could be reused) when no members
+# remain. If process inspection is unavailable, retain the full fail-closed stop.
+stop_remaining_tree() {
+  local remaining_root=$1 remaining_known=$2 members alive='' pid group_rc=0
+  if ! command -v pgrep >/dev/null 2>&1 ||
+      ! collect_descendants "$remaining_root" "$remaining_known"; then
+    stop_seat_tree "$remaining_root" "$remaining_known"
+    return
+  fi
+  remaining_known=$COLLECTED_DESCENDANTS
+  members=$(pgrep -g "$remaining_root" 2>/dev/null) || group_rc=$?
+  if [ "$group_rc" -gt 1 ]; then
+    stop_seat_tree "$remaining_root" "$remaining_known"
+    return
+  fi
+  for pid in $remaining_known $members; do
+    if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; fi
+  done
+  [ -n "$alive" ] || return 0
+  /bin/kill -TERM "-$remaining_root" 2>/dev/null || true
+  for pid in $alive; do kill -TERM "$pid" 2>/dev/null || true; done
+  sleep 0.5
+  collect_descendants "$remaining_root" "$alive" || true
+  alive="$alive $COLLECTED_DESCENDANTS"
+  /bin/kill -KILL "-$remaining_root" 2>/dev/null || true
+  for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+# Selection validation stays with the caller; it may supply its validated
+# rotation snapshot so the chosen path and metadata come from the same read.
+candidate_source() {
+  if [ -n "${HEALTH_TARGET_SOURCE:-}" ]; then
+    printf '%s\n' "$HEALTH_TARGET_SOURCE"
+  elif [[ "${HEALTH_ROTATION_LANE:-}" =~ ^lane_[0-9]+$ ]]; then
+    if [ "$#" -gt 0 ]; then
+      printf '%s\n' "$1"
+    else
+      cat "$(dirname "$LANE_DIR")/$HEALTH_ROTATION_LANE/rotation.json" 2>/dev/null || true
+    fi | jq -r --arg night "$night_id" \
+      'select(.night_id == $night) | .path // empty' 2>/dev/null || true
+  fi
+}
+
 no_input() {
   result=no-input
   reason=$1
@@ -111,12 +163,7 @@ no_input() {
 
 # A lane inside the source cannot safely receive even error artifacts. Check
 # its existing ancestor before mkdir/truncation, including rotation selections.
-preflight_source=${HEALTH_TARGET_SOURCE:-}
-if [ -z "$preflight_source" ] && [[ "${HEALTH_ROTATION_LANE:-}" =~ ^lane_[0-9]+$ ]]; then
-  preflight_source=$(jq -r --arg night "$night_id" \
-    'select(.night_id == $night) | .path // empty' \
-    "$(dirname "$LANE_DIR")/$HEALTH_ROTATION_LANE/rotation.json" 2>/dev/null || true)
-fi
+preflight_source=$(candidate_source)
 if [ -n "$preflight_source" ] && [ -d "$preflight_source" ] &&
     preflight_root=$(git -C "$preflight_source" rev-parse --show-toplevel 2>/dev/null); then
   preflight_root=$(cd "$preflight_root" && pwd -P)
@@ -124,7 +171,7 @@ if [ -n "$preflight_source" ] && [ -d "$preflight_source" ] &&
   while [ ! -d "$lane_ancestor" ]; do lane_ancestor=$(dirname "$lane_ancestor"); done
   lane_ancestor=$(cd "$lane_ancestor" && pwd -P)
   case "$lane_ancestor/" in "$preflight_root/"*)
-    error 'invalid source: LANE_DIR is inside source checkout; cannot safely write lane artifacts'
+    error lane-inside-source 'invalid source: LANE_DIR is inside source checkout; cannot safely write lane artifacts'
     ;;
   esac
 fi
@@ -133,22 +180,22 @@ mkdir -p "$LANE_DIR/evidence" "$LANE_DIR/work"
 LANE_DIR=$(cd "$LANE_DIR" && pwd -P)
 export LANE_DIR GIT_TERMINAL_PROMPT=0
 trap finish EXIT
-trap 'error interrupted' INT TERM
+trap 'error interrupted interrupted' INT TERM
 : > "$LANE_DIR/findings.jsonl"
-[ -n "$night_id" ] || error 'NIGHT_ID is required'
+[ -n "$night_id" ] || error night-id-required 'NIGHT_ID is required'
 
 if [ -n "${HEALTH_TEST_CMD:-}" ] && [ -n "${HEALTH_SUITE_GLOB:-}" ]; then
-  error 'HEALTH_TEST_CMD and HEALTH_SUITE_GLOB are mutually exclusive'
+  error exclusive-runners 'HEALTH_TEST_CMD and HEALTH_SUITE_GLOB are mutually exclusive'
 fi
 timebox=${HEALTH_TIMEBOX_SEC-1800}
 [[ "$timebox" =~ ^[0-9]+$ ]] && [[ "$timebox" =~ [1-9] ]] ||
-  error 'HEALTH_TIMEBOX_SEC must be a positive integer'
+  error invalid-timebox 'HEALTH_TIMEBOX_SEC must be a positive integer'
 
 if [ -n "${HEALTH_TARGET_SOURCE:-}" ]; then
-  source=$HEALTH_TARGET_SOURCE
+  source=$(candidate_source)
 elif [ -n "${HEALTH_ROTATION_LANE:-}" ]; then
   selection=rotation
-  [[ "$HEALTH_ROTATION_LANE" =~ ^lane_[0-9]+$ ]] || error 'invalid HEALTH_ROTATION_LANE'
+  [[ "$HEALTH_ROTATION_LANE" =~ ^lane_[0-9]+$ ]] || error invalid-rotation-lane 'invalid HEALTH_ROTATION_LANE'
   rotation_file="$(dirname "$LANE_DIR")/$HEALTH_ROTATION_LANE/rotation.json"
   if ! rotation=$(jq -e -s --arg night "$night_id" '
       select(length == 1) | .[0] | select(type == "object" and .night_id == $night and
@@ -157,7 +204,7 @@ elif [ -n "${HEALTH_ROTATION_LANE:-}" ]; then
       (.refresh | type == "string"))' "$rotation_file" 2>/dev/null); then
     no_input rotation-evidence-missing
   fi
-  source=$(printf '%s\n' "$rotation" | jq -r '.path')
+  source=$(candidate_source "$rotation")
   repo=$(basename "$source")
   selected=$(printf '%s\n' "$rotation" | jq -r '.selected')
   # rotate.sh writes refresh=skipped both for a missing mirror and for
@@ -165,7 +212,7 @@ elif [ -n "${HEALTH_ROTATION_LANE:-}" ]; then
   # decide anything; missing-mirror is detected from state and the path.
   refresh=$(printf '%s\n' "$rotation" | jq -r '.refresh')
   if [ -n "${HEALTH_ROTATION_STATE:-}" ]; then
-    case "$HEALTH_ROTATION_STATE" in /*) ;; *) error 'HEALTH_ROTATION_STATE must be absolute' ;; esac
+    case "$HEALTH_ROTATION_STATE" in /*) ;; *) error invalid-rotation-state 'HEALTH_ROTATION_STATE must be absolute' ;; esac
     jq -e -s --arg selected "$selected" --arg night "$night_id" '
       length == 1 and (.[0] | .schema_version == 1 and
         .targets[$selected].last_attempt == $night)' "$HEALTH_ROTATION_STATE" >/dev/null 2>&1 ||
@@ -176,33 +223,33 @@ elif [ -n "${HEALTH_ROTATION_LANE:-}" ]; then
     fi
   fi
 else
-  error 'HEALTH_TARGET_SOURCE or HEALTH_ROTATION_LANE is required'
+  error source-required 'HEALTH_TARGET_SOURCE or HEALTH_ROTATION_LANE is required'
 fi
 
-case "$source" in /*) ;; *) error "invalid source $source (must be absolute)" ;; esac
+case "$source" in /*) ;; *) error invalid-source "invalid source $source (must be absolute)" ;; esac
 repo=$(basename "$source")
 if [ ! -d "$source" ] || ! git -C "$source" rev-parse --git-dir >/dev/null 2>&1 ||
     [ "$(git -C "$source" rev-parse --is-bare-repository 2>/dev/null || true)" != false ]; then
   # Under rotation this is the mirror rotate.sh already reported as missing:
   # NO-INPUT, not an infrastructure error. An explicit source stays exit 1.
   [ "$selection" != rotation ] || no_input rotation-missing-mirror
-  error "invalid source $source"
+  error invalid-source "invalid source $source"
 fi
 source_root=$(git -C "$source" rev-parse --show-toplevel)
 source_root=$(cd "$source_root" && pwd -P)
-case "$LANE_DIR/" in "$source_root/"*) error 'invalid source: lane directory is inside source checkout' ;; esac
+case "$LANE_DIR/" in "$source_root/"*) error lane-inside-source 'invalid source: lane directory is inside source checkout' ;; esac
 clone_dir="$LANE_DIR/work/health-checkout"
 # Resolve an existing work directory before checking the disposable subtree.
 clone_parent=$(cd "$LANE_DIR/work" && pwd -P)
 case "$source_root/" in "$clone_parent/health-checkout/"*)
-  error 'invalid source: source checkout is inside disposable health-checkout'
+  error invalid-source 'invalid source: source checkout is inside disposable health-checkout'
   ;;
 esac
 rm -rf "$clone_dir"
 if ! git clone --quiet --no-hardlinks "$source" "$clone_dir" > "$LANE_DIR/evidence/clone.log" 2>&1; then
-  error 'clone failed (see evidence/clone.log)'
+  error clone-failed 'clone failed (see evidence/clone.log)'
 fi
-commit=$(git -C "$clone_dir" rev-parse --short HEAD) || error 'cannot read cloned HEAD'
+commit=$(git -C "$clone_dir" rev-parse --short HEAD) || error head-unreadable 'cannot read cloned HEAD'
 printf 'health: target=%s source=%s commit=%s selection=%s\n' "$repo" "$source" "$commit" "$selection"
 
 run_command() {
@@ -217,7 +264,7 @@ run_command() {
     slug="${slug:0:120}-$(printf '%s' "$target" | shasum -a 256 | cut -c1-12)"
   fi
   log_ref="evidence/health-$slug.log"
-  : > "$LANE_DIR/$log_ref" || error "cannot open evidence log for $target"
+  : > "$LANE_DIR/$log_ref" || error evidence-log-unwritable "cannot open evidence log for $target"
   command_started=$(date +%s)
   timed_out=false
   active_known=
@@ -226,9 +273,10 @@ run_command() {
   active_pid=$!
   set +m
   while kill -0 "$active_pid" 2>/dev/null; do
-    collect_descendants "$active_pid" "$active_known" || error 'cannot inspect process tree'
+    collect_descendants "$active_pid" "$active_known" || error process-inspection-failed 'cannot inspect process tree'
     active_known=$COLLECTED_DESCENDANTS
     if [ "$(($(date +%s) - command_started))" -ge "$timebox" ]; then
+      kill -0 "$active_pid" 2>/dev/null || break
       timed_out=true
       stop_seat_tree "$active_pid" "$active_known"
       break
@@ -237,7 +285,7 @@ run_command() {
   done
   if wait "$active_pid" 2>/dev/null; then rc=0; else rc=$?; fi
   # Also clean up background children after a normally completed command.
-  stop_seat_tree "$active_pid" "$active_known"
+  stop_remaining_tree "$active_pid" "$active_known"
   active_pid=
   elapsed=$(($(date +%s) - command_started))
   suites=$((suites + 1))
@@ -268,8 +316,9 @@ if [ -n "$cmd" ]; then
   runner=explicit-cmd
 elif [ -n "${HEALTH_SUITE_GLOB:-}" ]; then
   runner="suite-glob"
-elif [ -f "$clone_dir/Makefile" ] && grep -q '^test:' "$clone_dir/Makefile"; then
+elif [ -f "$clone_dir/Makefile" ] && grep -Eq '^test:([^=]|$)' "$clone_dir/Makefile"; then
   runner=make-test
+  command -v make >/dev/null 2>&1 || error runner-unavailable 'make is unavailable'
   cmd='make test'
 elif [ -f "$clone_dir/tests/run.sh" ]; then
   runner=tests-run
@@ -281,15 +330,19 @@ else
   no_input no-test-runner
 fi
 if [ "$runner" = suite-glob ]; then
-  case "$HEALTH_SUITE_GLOB" in /*|../*|*/../*|*/..) error 'HEALTH_SUITE_GLOB must stay relative to clone root' ;; esac
+  case "$HEALTH_SUITE_GLOB" in /*|../*|*/../*|*/..) error invalid-suite-glob 'HEALTH_SUITE_GLOB must stay relative to clone root' ;; esac
   printf 'health: runner=%s cmd=%s\n' "$runner" "$HEALTH_SUITE_GLOB"
   cd "$clone_dir"
   # Expand only pathname patterns, never evaluate shell code or split spaces.
+  old_ifs=$IFS
+  old_nullglob=false
+  shopt -q nullglob && old_nullglob=true
   IFS=
   shopt -s nullglob
   # shellcheck disable=SC2206
   suite_files=($HEALTH_SUITE_GLOB)
-  unset IFS
+  IFS=$old_ifs
+  [ "$old_nullglob" = true ] || shopt -u nullglob
   for suite in ${suite_files[@]+"${suite_files[@]}"}; do
     [ -f "$suite" ] || continue
     run_command "$suite" /bin/bash "./$suite"
