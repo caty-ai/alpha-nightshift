@@ -325,6 +325,10 @@ run_with_watchdog() {
     watchdog_known=$COLLECTED_DESCENDANTS
     watchdog_now=$(date '+%s')
     if [ $((watchdog_now - watchdog_started)) -ge "$watchdog_timeout" ]; then
+      # kill -0 also succeeds for an exited but unreaped child. The preceding
+      # date command substitution forks, letting bash reap the job first; keep
+      # this re-check after that read and do not replace it with a fork-free clock.
+      kill -0 "$watchdog_pid" 2>/dev/null || break
       watchdog_timed_out=true
       stop_seat_tree "$watchdog_pid" "$watchdog_known"
       watchdog_known=$STOPPED_DESCENDANTS

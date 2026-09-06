@@ -360,6 +360,8 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 755 "$lane/evidence"
   assert_result "$lane" error 0 0
   jq -e '.commands == []' "$lane/health.json" >/dev/null || fail 'unwritable evidence recorded a command'
+  jq -e '.reason == "evidence-log-unwritable"' "$lane/health.json" >/dev/null ||
+    fail "unwritable evidence dir was not reported as evidence-log-unwritable"
 
   # Also exercise a manifest failure originating in finish(), with no prior error.
   lane="$TEST_TMP/unwritable-manifest"
