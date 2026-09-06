@@ -131,6 +131,17 @@ Before running a suite, the runner checks that suite's declared environment cont
 
 A suite never skips while all of its contracts are present; a failing executed suite always exits the run nonzero. Suites with no macOS-bound contract (including the publication-gate selftest and the live publication-gate scan of the repo) run everywhere.
 
+### loom verifier runner template (tests/run.sh)
+
+The loom runner template `tests/run.sh` is the SHA-pinned template that alpha-loom's server verifier executes with `--loom-server-verifier`.
+It discovers the same `tests/test_*.sh` files as `tests/run_tests.sh`, applies the same contract table and verdict rule, and prints the same `suites:` reconciliation line exactly once; it does not read `tests/expected_suite_count`, because loom's static inventory is the count authority and the census stays with `make test`.
+The two contract tables are kept identical by the `make lint` parity gate, which also runs in CI.
+Support files under `tests/` (helpers, fixture `.sh` files, `run_tests.sh`, `expected_suite_count`, and `foreground-signal-launcher.py`) are pinned by sha256 in the registered loom profile, so editing any of them requires profile re-registration (see alpha-loom `docs/reflex-loop-design.md` §5.2).
+Loom checks every *added* line in a governed diff against `\bTODO\b|NotImplemented` and `^\s*printf\s+'SKIP\b`; adding a matching line fails verify.
+A `<<` inside a multi-line quoted string or `$((a<<b))` in any `tests/test_*.sh` makes the whole repo unverifiable by loom's static parser.
+The loom sandbox denies writes outside its private temp root and denies network, while macOS bash 3.2 heredocs write to `/tmp` regardless of `TMPDIR`; registration is tracked in dev#81.
+The registered profile's source surface is `guard/` (suffixes `.sh`, `.sb`), so a *new* `guard/*.sh` in a governed diff requires a test change in the same diff, while new `lib/*.sh` and `bin/*` files do not trip that gate and are covered only by diff review and the repo-wide manifest.
+
 ---
 
 ## Manual operation

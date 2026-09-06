@@ -26,6 +26,10 @@ safety boundaries.
 - **Suites must reconcile.** `make test` ends with
   `suites: declared=N executed=M skipped=K`; new suites are auto-discovered
   from `tests/test_*.sh`, and skips must print a reason.
+- The loom runner template `tests/run.sh` has the same discovery and summary as
+  `tests/run_tests.sh`; `make lint` fails if its contract table diverges.
+  Do not add `TODO`/`SKIP`-shaped lines or exotic heredoc forms without reading
+  the [engineering doc section](docs/engineering.md#loom-verifier-runner-template-testsrunsh).
 - **Development rules.** This repo follows the
   [family-dev-handbook](https://github.com/caty-ai/family-dev-handbook)
   lane discipline (worktrees, review seats, completion records).
