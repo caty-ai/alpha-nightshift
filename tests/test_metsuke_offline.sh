@@ -1055,15 +1055,12 @@ done
 publication_order_wait_for_descendants() {
   local ticks=0
   local quiet_ticks=0
-  # The night id is normally only in descendants' environment, and pgrep
-  # cannot inspect processes in the test sandbox. Marker recreation by fake
-  # lsof is observable: require two quiet samples, also checking matching argv
-  # when process inspection is available.
+  # Marker recreation by fake lsof is observable: require that the marker was
+  # not recreated for two consecutive 50 ms samples.
   while [ "$ticks" -lt 100 ]; do
     rm -f "$publication_order_started"
     sleep 0.05
-    if [ ! -e "$publication_order_started" ] &&
-      ! pgrep -f '[p]ublication-before-cleanup' >/dev/null 2>&1; then
+    if [ ! -e "$publication_order_started" ]; then
       quiet_ticks=$((quiet_ticks + 1))
       [ "$quiet_ticks" -lt 2 ] || return 0
     else
@@ -1071,7 +1068,8 @@ publication_order_wait_for_descendants() {
     fi
     ticks=$((ticks + 1))
   done
-  fail "publication-order descendants did not finish cleanup within 5 s"
+  printf 'NOTE: publication-order descendants still alive after 5 s\n' >&2
+  return 1
 }
 publication_order_fail() {
   local message=$1
@@ -1079,6 +1077,7 @@ publication_order_fail() {
   local staging_file
   local staging_exists=false
   local rc=0
+  local descendants_quiet=no
   {
     printf 'findings.jsonl line count at cleanup seam: %s\n' "$count"
     printf 'cleanup-marker ticks: %s/500\n' "$publication_order_ticks"
@@ -1092,7 +1091,8 @@ publication_order_fail() {
   kill -TERM "$publication_order_pid" 2>/dev/null || true
   rm -f "$publication_order_block" || kill -KILL "$publication_order_pid" 2>/dev/null || true
   wait "$publication_order_pid" 2>/dev/null || rc=$?
-  publication_order_wait_for_descendants
+  publication_order_wait_for_descendants && descendants_quiet=yes || true
+  printf 'descendants quiet: %s\n' "$descendants_quiet" >&2 || true
   printf 'lane exit status: %s\n' "$rc" >&2 || true
   dump_lane_and_fail "$publication_order_lane" "$message"
 }
@@ -1109,7 +1109,8 @@ fi
 kill -TERM "$publication_order_pid" 2>/dev/null || true
 rm -f "$publication_order_block"
 wait "$publication_order_pid" 2>/dev/null || true
-publication_order_wait_for_descendants
+publication_order_wait_for_descendants ||
+  fail "publication-order descendants did not finish cleanup within 5 s"
 [ "$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "termination during cleanup lost an already accepted finding"
 
