@@ -13,19 +13,39 @@ TEST_LOCK="$ROOT/lanes/metsuke/.test-metsuke-offline.lock"
 ACQUIRED_TEST_LOCK=false
 cleanup() {
   local cleanup_rc=0
+  local cleanup_attempt
+  local cleanup_error
   if [ "${METSUKE_TEST_KEEP_TMP:-0}" = 1 ]; then
     printf 'METSUKE_TEST_KEEP_TMP=1: %s\n' "$TEST_TMP" >&2
   else
-    rm -rf "$TEST_TMP" || cleanup_rc=$?
+    for cleanup_attempt in 1 2 3 4 5; do
+      if cleanup_error=$(rm -rf "$TEST_TMP" 2>&1); then
+        break
+      fi
+      if [ "$cleanup_attempt" -eq 5 ]; then
+        printf 'FAIL: cleanup could not remove TEST_TMP (%s): %s\n' \
+          "$TEST_TMP" "$cleanup_error" >&2
+        cleanup_rc=1
+      else
+        sleep 0.2
+      fi
+    done
   fi
   if [ "$CREATED_PLAYWRIGHT_MARKER" = true ]; then
     rmdir "$PLAYWRIGHT_MARKER" 2>/dev/null || true
     rmdir "$ROOT/lanes/metsuke/node_modules" 2>/dev/null || true
   fi
   if [ "$ACQUIRED_TEST_LOCK" = true ]; then
-    rm -rf "$TEST_LOCK" || cleanup_rc=$?
+    if ! cleanup_error=$(rm -rf "$TEST_LOCK" 2>&1); then
+      printf 'FAIL: cleanup could not release suite lock (%s): %s\n' \
+        "$TEST_LOCK" "$cleanup_error" >&2
+      cleanup_rc=1
+    fi
   fi
-  return "$cleanup_rc"
+  # An EXIT trap's return status does not override the original exit status.
+  if [ "$cleanup_rc" -ne 0 ]; then
+    exit 1
+  fi
 }
 # Set METSUKE_TEST_KEEP_TMP=1 to retain test evidence and print its path on exit.
 trap cleanup EXIT
@@ -37,6 +57,8 @@ lock_timeout=${METSUKE_TEST_LOCK_TIMEOUT_SEC:-600}
 case "$lock_timeout" in
   ''|*[!0-9]*) fail "METSUKE_TEST_LOCK_TIMEOUT_SEC must be a nonnegative integer" ;;
 esac
+[ -d "$ROOT/lanes/metsuke" ] && [ -w "$ROOT/lanes/metsuke" ] ||
+  fail "cannot create the suite lock: $ROOT/lanes/metsuke is missing or not writable"
 lock_started=$SECONDS
 reclaimed_test_lock=false
 while ! mkdir "$TEST_LOCK" 2>/dev/null; do
@@ -49,14 +71,16 @@ while ! mkdir "$TEST_LOCK" 2>/dev/null; do
   case "$owner_pid" in
     # A missing pid may belong to an owner between mkdir and pid publication.
     ''|*[!0-9]*|0) ;;
-    *) kill -0 "$owner_pid" 2>/dev/null || stale_lock=true ;;
+    *) kill -0 "$owner_pid" 2>/dev/null ||
+         ps -p "$owner_pid" >/dev/null 2>&1 || stale_lock=true ;;
   esac
   if [ "$stale_lock" = true ] && [ "$reclaimed_test_lock" = false ] &&
     mkdir "$TEST_LOCK/reclaim" 2>/dev/null; then
     # Serialize reclaimers and recheck in case the owner just published its pid.
     current_pid=$(cat "$TEST_LOCK/pid" 2>/dev/null || true)
     if [ "$current_pid" = "$owner_pid" ] &&
-      ! kill -0 "${current_pid:-invalid}" 2>/dev/null; then
+      ! kill -0 "${current_pid:-invalid}" 2>/dev/null &&
+      ! ps -p "${current_pid:-invalid}" >/dev/null 2>&1; then
       printf 'NOTE: reclaiming stale test_metsuke_offline lock %s (pid: %s)\n' \
         "$TEST_LOCK" "${owner_pid:-unreadable}" >&2
       rm -rf "$TEST_LOCK"
@@ -85,7 +109,7 @@ dump_lane_and_fail() {
         printf '%s\n' '(missing)'
     done
     printf 'findings.jsonl line count: '
-    [ -f "$lane_dir/findings.jsonl" ] && wc -l < "$lane_dir/findings.jsonl" ||
+    [ -f "$lane_dir/findings.jsonl" ] && wc -l < "$lane_dir/findings.jsonl" | tr -d ' ' ||
       printf '%s\n' '(missing)'
     printf '%s\n' 'lane metrics.json:'
     [ -f "$lane_dir/metrics.json" ] && cat "$lane_dir/metrics.json" ||
@@ -1028,6 +1052,27 @@ while [ ! -e "$publication_order_started" ] &&
   sleep 0.02
   publication_order_ticks=$((publication_order_ticks + 1))
 done
+publication_order_wait_for_descendants() {
+  local ticks=0
+  local quiet_ticks=0
+  # The night id is normally only in descendants' environment, and pgrep
+  # cannot inspect processes in the test sandbox. Marker recreation by fake
+  # lsof is observable: require two quiet samples, also checking matching argv
+  # when process inspection is available.
+  while [ "$ticks" -lt 100 ]; do
+    rm -f "$publication_order_started"
+    sleep 0.05
+    if [ ! -e "$publication_order_started" ] &&
+      ! pgrep -f '[p]ublication-before-cleanup' >/dev/null 2>&1; then
+      quiet_ticks=$((quiet_ticks + 1))
+      [ "$quiet_ticks" -lt 2 ] || return 0
+    else
+      quiet_ticks=0
+    fi
+    ticks=$((ticks + 1))
+  done
+  fail "publication-order descendants did not finish cleanup within 5 s"
+}
 publication_order_fail() {
   local message=$1
   local count=$2
@@ -1047,6 +1092,7 @@ publication_order_fail() {
   kill -TERM "$publication_order_pid" 2>/dev/null || true
   rm -f "$publication_order_block" || kill -KILL "$publication_order_pid" 2>/dev/null || true
   wait "$publication_order_pid" 2>/dev/null || rc=$?
+  publication_order_wait_for_descendants
   printf 'lane exit status: %s\n' "$rc" >&2 || true
   dump_lane_and_fail "$publication_order_lane" "$message"
 }
@@ -1063,6 +1109,7 @@ fi
 kill -TERM "$publication_order_pid" 2>/dev/null || true
 rm -f "$publication_order_block"
 wait "$publication_order_pid" 2>/dev/null || true
+publication_order_wait_for_descendants
 [ "$(wc -l < "$publication_order_lane/findings.jsonl" | tr -d ' ')" -eq 1 ] ||
   fail "termination during cleanup lost an already accepted finding"
 
