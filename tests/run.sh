@@ -112,12 +112,14 @@ for test_file in "${test_files[@]}"; do
     continue
   fi
 
+  executed=$((executed + 1))
   # Capture without opening extra descriptors that suites could inherit.
   suite_status=0
   suite_out=$(/bin/bash "$test_file" 2>&1) || suite_status=$?
-  executed=$((executed + 1))
   if [ -n "$suite_out" ]; then
-    printf '%s\n' "$suite_out" | sed 's/^suites: declared=/[nested] &/'
+    # LC_ALL=C: BSD sed in a UTF-8 locale aborts on invalid bytes in suite
+    # output ("RE error: illegal byte sequence"); replay must be byte-safe.
+    printf '%s\n' "$suite_out" | LC_ALL=C sed 's/^suites: declared=/[nested] &/'
   fi
   # PASS requires exit 0 and either exact '<suite basename without .sh>: PASS'
   # or a line starting with 'PASS ('. Read all output to avoid SIGPIPE.

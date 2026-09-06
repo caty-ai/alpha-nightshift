@@ -137,7 +137,8 @@ loom runner template `tests/run.sh`は、alpha-loomのサーバー検証器が`-
 `tests/run_tests.sh`と同じ`tests/test_*.sh`を検出し、同じ契約表と合否判定ルールを適用し、同じ`suites:`整合性確認行を正確に1回出力しますが、件数の正本はloomの静的インベントリーであり、台帳の確認は`make test`が担当するため、`tests/expected_suite_count`は読みません。
 2つの契約表は`make lint`のparityゲートで同一に保たれ、このゲートはCIでも実行されます。
 `tests/`配下のサポートファイル（helpers、フィクスチャの`.sh`、`run_tests.sh`、`expected_suite_count`、`foreground-signal-launcher.py`）は登録済みloomプロファイル内でsha256により固定されるため、どれかを編集した場合はプロファイルの再登録が必要です（alpha-loomの`docs/reflex-loop-design.md` §5.2を参照）。
-loomは検証対象diffのすべての*追加行*を`\bTODO\b|NotImplemented`と`^\s*printf\s+'SKIP\b`で検査し、一致する行を追加するとverifyは失敗します。
+loomは検証対象diffのすべての*追加行*をTODO/NotImplemented系（`\b(?:TODO|NotImplemented(?:Error)?)\b`）と`^\s*printf\s+'SKIP\b`で検査し、一致する行を追加するとverifyは失敗します（runnerテンプレート自身はSKIPマーカー検査の対象外なので、自身が出す`SKIP …: missing contract`行は合法です。TODO検査に例外はありません）。
+使い方の誤り（`--loom-server-verifier`以外の引数）は検出前にexit 2で終了し、`suites:`行は出しません。実行が中断された場合（runner自身がkillされた場合）でもサマリーは1回だけ出力され、そのときの`skipped`は「契約が無い」ではなく「完了しなかった」を意味します。
 いずれかの`tests/test_*.sh`に、複数行の引用文字列内の`<<`または`$((a<<b))`があると、loomの静的パーサーではリポジトリ全体を検証できなくなります。
 loomのサンドボックスは専用一時ディレクトリ外への書き込みとネットワークを拒否しますが、macOSのbash 3.2のheredocは`TMPDIR`に関係なく`/tmp`へ書き込むため、登録はdev#81で追跡しています。
 登録済みプロファイルのソース対象は`guard/`（拡張子`.sh`、`.sb`）なので、検証対象diffに*新しい*`guard/*.sh`を追加する場合は同じdiffにテスト変更が必要ですが、新しい`lib/*.sh`と`bin/*`はこのゲートの対象にならず、diffレビューとリポジトリ全体のマニフェストのみでカバーされます。

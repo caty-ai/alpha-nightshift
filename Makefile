@@ -24,8 +24,8 @@ lint:
 	# runner parity: extracts each function body from `^<fn>() {` to the first `^}` with awk and diffs it;
 	# empty extraction or a missing function is red. Keep this recipe identical in Makefile and ci.yml.
 	for fn in suite_contracts contract_available; do \
-	  awk -v fn="$$fn" '$$0 ~ "^"fn"\\(\\) \\{" {p=1} p {print} p && $$0 ~ "^\\}" {exit}' tests/run_tests.sh > /tmp/parity-a.$$$$; \
-	  awk -v fn="$$fn" '$$0 ~ "^"fn"\\(\\) \\{" {p=1} p {print} p && $$0 ~ "^\\}" {exit}' tests/run.sh > /tmp/parity-b.$$$$; \
+	  awk -v fn="$$fn" '$$0 ~ "^"fn"\\(\\) [{]" {p=1} p {print} p && $$0 ~ "^\\}" {exit}' tests/run_tests.sh > /tmp/parity-a.$$$$; \
+	  awk -v fn="$$fn" '$$0 ~ "^"fn"\\(\\) [{]" {p=1} p {print} p && $$0 ~ "^\\}" {exit}' tests/run.sh > /tmp/parity-b.$$$$; \
 	  test -s /tmp/parity-a.$$$$ && test -s /tmp/parity-b.$$$$ || { echo "runner parity: function $$fn not found in both runners" >&2; exit 1; }; \
 	  diff -u /tmp/parity-a.$$$$ /tmp/parity-b.$$$$ || { echo "runner parity: $$fn differs between tests/run_tests.sh and tests/run.sh" >&2; exit 1; }; \
 	  rm -f /tmp/parity-a.$$$$ /tmp/parity-b.$$$$; \
