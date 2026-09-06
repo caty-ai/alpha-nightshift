@@ -136,8 +136,9 @@ stop_remaining_tree() {
   sleep 0.5
   collect_descendants "$remaining_root" "$alive" || true
   alive="$alive $COLLECTED_DESCENDANTS"
-  members=$(pgrep -g "$remaining_root" 2>/dev/null) || true
-  if [ -n "$members" ]; then
+  group_rc=0
+  members=$(pgrep -g "$remaining_root" 2>/dev/null) || group_rc=$?
+  if [ "$group_rc" -gt 1 ] || [ -n "$members" ]; then
     /bin/kill -KILL "-$remaining_root" 2>/dev/null || true
   fi
   for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
@@ -250,6 +251,7 @@ case "$source_root/" in "$clone_parent/health-checkout/"*)
   ;;
 esac
 rm -rf "$clone_dir"
+: > "$LANE_DIR/evidence/clone.log" || error evidence-log-unwritable 'cannot open evidence log for clone'
 if ! git clone --quiet --no-hardlinks "$source" "$clone_dir" > "$LANE_DIR/evidence/clone.log" 2>&1; then
   error clone-failed 'clone failed (see evidence/clone.log)'
 fi

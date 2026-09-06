@@ -488,5 +488,68 @@ fi
 [ "$(wc -l < "$WATCHDOG_LANE/findings.jsonl" | tr -d '[:space:]')" -eq 2 ] ||
   fail "watchdog lane did not continue through the remaining seats"
 
+# Synchronize the clock read with adapter exit, rather than racing wall time.
+# BASH_ENV affects only the lane shell; adapter launches clear the environment.
+# The seat stays alive until the watchdog enters its in-loop date call. That
+# call releases it and observes actual adapter exit before returning the edge.
+write_success_bins
+BOUNDARY_LANE="$TEST_TMP/boundary-lane"
+mkdir -p "$BOUNDARY_LANE"
+cat > "$TEST_TMP/boundary-clock.sh" <<'CLOCK'
+date() {
+  if [ "$*" = '+%s' ] && [ -n "${watchdog_pid:-}" ] &&
+      [ ! -f "$LANE_DIR/clock-crossed" ]; then
+    : > "$LANE_DIR/clock-crossed"
+    local ticks=0
+    while kill -0 "$watchdog_pid" 2>/dev/null; do
+      [ "$ticks" -lt 1000 ] || {
+        printf 'boundary clock: adapter did not exit within the tick budget\n' >&2
+        return 90
+      }
+      sleep 0.01
+      ticks=$((ticks + 1))
+    done
+    : > "$LANE_DIR/adapter-exited"
+    printf '%s\n' "$((watchdog_started + watchdog_timeout))"
+  else
+    command date "$@"
+  fi
+}
+CLOCK
+# The appended body runs after write_success_bins has written the candidate.
+# shellcheck disable=SC2016
+printf '%s\n' \
+  'ticks=0' \
+  "while [ ! -f '$BOUNDARY_LANE/clock-crossed' ]; do" \
+  '  [ "$ticks" -lt 1000 ] || {' \
+  '    printf "boundary adapter: clock did not advance within the tick budget\n" >&2' \
+  '    exit 91' \
+  '  }' \
+  '  sleep 0.01' \
+  '  ticks=$((ticks + 1))' \
+  'done' \
+  "printf '%s\\n' exited > '$BOUNDARY_LANE/seat-exited'" \
+  >> "$FAKE_BIN/codex"
+/usr/bin/env -i \
+  PATH="$PATH" \
+  HOME="$BOUNDARY_LANE/home" \
+  TMPDIR="$BOUNDARY_LANE/tmp" \
+  LANG="${LANG:-C}" \
+  TERM=dumb \
+  BASH_ENV="$TEST_TMP/boundary-clock.sh" \
+  LANE_DIR="$BOUNDARY_LANE" \
+  NIGHT_ID=boundary-night \
+  REVIEW_TARGET_SOURCE="$SOURCE_REPO" \
+  REVIEW_SEAT_ROSTER=codex \
+  REVIEW_SEATS_PER_NIGHT=1 \
+  REVIEW_SEAT_TIMEOUT_SEC=2 \
+  REVIEW_CODEX_BIN="$FAKE_BIN/codex" \
+  /bin/bash "$RUN_SH" || fail "seat exiting at the watchdog boundary failed"
+assert_file_exists "$BOUNDARY_LANE/clock-crossed"
+assert_file_exists "$BOUNDARY_LANE/seat-exited"
+assert_file_exists "$BOUNDARY_LANE/adapter-exited"
+assert_contains 'seat=codex status=ok candidates=1' "$BOUNDARY_LANE/evidence/run.log"
+assert_not_contains 'seat=codex status=failed exit=124' "$BOUNDARY_LANE/evidence/run.log"
+
 SUITE_COMPLETED=1
 printf 'test_lane_review_runtime: PASS\n'
