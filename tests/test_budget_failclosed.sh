@@ -1,8 +1,10 @@
 #!/bin/bash
+# shellcheck disable=SC2031 # reason: direct budget checks isolate sourced library state in subshells; later assertions intentionally use the parent NIGHT_ID
 set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-budget.XXXXXX")
@@ -193,7 +195,6 @@ for oversized_value in \
     . "$ROOT/lib/ledger.sh"
     . "$ROOT/lib/budget.sh"
     STATE_DIR="$TEST_TMP/direct-oversized-state-$oversized_index"
-    NIGHT_ID="$NIGHT_ID"
     NIGHT_BUDGET_TOKENS=100
     BUDGET_PROBE_CMD="$oversized_probe"
     BUDGET_PROBE_TIMEOUT_SEC=2

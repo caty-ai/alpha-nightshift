@@ -174,6 +174,7 @@ nightshift_refresh_process_tree() {
         nightshift_children_rc=$?
         nightshift_tree_children=
         if [ "$nightshift_children_rc" -gt 1 ]; then
+          # shellcheck disable=SC2034 # reason: Failure flag is consumed by callers after process inspection.
           NIGHTSHIFT_PROCESS_INSPECTION_FAILED=true
         fi
       fi

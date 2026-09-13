@@ -7,20 +7,18 @@ test:
 # (handbook checklist A3 — a lint that cannot fail must not sit behind a badge).
 # SC2015 is excluded: pre-existing `A && B || C` style in guard/{common,gateway,
 # publisher}.sh, flagged only by newer shellcheck builds (ubuntu runner) —
-# style debt tracked in issue #46; the exclusion is mirrored in ci.yml so
-# both lint lanes check the same thing. Everything else (incl. SC2086) fails.
+# style debt tracked in issue #46. CI invokes this target so both lanes
+# check the same files and exclusions. Everything else (incl. SC2086) fails.
+# Extensionless Bash entry points (audited via shebangs in bin/ and lanes/).
+LINT_BASH_EXECUTABLES = bin/budget-probe-stub bin/morning-triage bin/nightshift-dispatch bin/oc-suggest bin/verdict-sync
+
 lint:
 	command -v shellcheck
-	for f in guard/*.sh lanes/**/*.sh tests/*.sh; do bash -n "$$f" || exit 1; done
-	bash -n bin/oc-suggest
-	bash -n lanes/org-consistency/seat.sh
-	bash -n tests/fixtures/org-consistency/fake-gh.sh
-	bash -n tests/fixtures/org-consistency/fake-seat.sh
-	bash -n tests/test_lane_org_consistency_layer2.sh
-	bash -n tests/test_lane_org_consistency_layer3.sh
-	bash -n tests/test_lane_org_consistency_oc_bcd.sh
-	bash -n tests/test_lane_org_consistency_s4_residuals.sh
-	bash -n tests/test_lane_org_consistency_suggest.sh
+	@set -e; files=$$(mktemp); trap 'rm -f "$$files"' EXIT HUP INT TERM; \
+	  git ls-files -z '*.sh' > "$$files"; \
+	  printf '%s\0' $(LINT_BASH_EXECUTABLES) >> "$$files"; \
+	  xargs -0 -n 1 bash -n < "$$files"; \
+	  xargs -0 shellcheck -e SC2015 < "$$files"
 	# runner parity: extracts each function body from `^<fn>() {` to the first `^}` with awk and diffs it;
 	# empty extraction or a missing function is red. Keep this recipe identical in Makefile and ci.yml.
 	for fn in suite_contracts contract_available; do \
@@ -30,39 +28,3 @@ lint:
 	  diff -u /tmp/parity-a.$$$$ /tmp/parity-b.$$$$ || { echo "runner parity: $$fn differs between tests/run_tests.sh and tests/run.sh" >&2; exit 1; }; \
 	  rm -f /tmp/parity-a.$$$$ /tmp/parity-b.$$$$; \
 	done
-	shellcheck -e SC2015 \
-		guard/common.sh \
-		guard/broker.sh \
-		guard/gateway.sh \
-		guard/drift-monitor.sh \
-		guard/publisher.sh \
-		guard/publisher-lib.sh \
-		guard/publisher-askpass.sh \
-		guard/remote-preflight.sh \
-		bin/oc-suggest \
-		tests/test_guard_publisher.sh \
-		tests/test_guard_drift_monitor.sh \
-		tests/test_guard_revocation_runbook.sh \
-		tests/test_publication_gate_selftest.sh \
-		tests/test_publication_gate_repo.sh \
-		tests/test_publication_denylist.sh \
-		lanes/health/run.sh \
-		tests/test_lane_health.sh \
-		lanes/org-consistency/run.sh \
-		lanes/org-consistency/seat.sh \
-		tests/test_lane_org_consistency_core.sh \
-		tests/test_lane_org_consistency_lifecycle.sh \
-		tests/test_lane_org_consistency_layer2.sh \
-		tests/test_lane_org_consistency_layer3.sh \
-		tests/test_lane_org_consistency_mutation.sh \
-		tests/test_lane_org_consistency_oc_a.sh \
-		tests/test_lane_org_consistency_oc_bcd.sh \
-		tests/test_lane_org_consistency_s4_residuals.sh \
-		tests/test_lane_org_consistency_suggest.sh \
-		tests/test_lane_org_consistency_targets_mirrors.sh \
-		tests/test_lane_org_consistency_timebox.sh \
-		tests/fixtures/org-consistency/fake-gh.sh \
-		tests/fixtures/org-consistency/fake-seat.sh \
-		tests/fixtures/org-consistency/lib.sh \
-		tests/run.sh \
-		tests/run_tests.sh

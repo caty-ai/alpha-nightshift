@@ -1,8 +1,10 @@
 #!/bin/bash
+# shellcheck disable=SC2016 # reason: fixture scripts and policy payloads require literal dollar expressions
 set -euo pipefail
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
-ROOT=$(CDPATH= cd -- "$TEST_DIR/.." && pwd -P)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-text-policy-test.XXXXXX")
@@ -10,7 +12,7 @@ cleanup() {
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
-TEST_TMP=$(CDPATH= cd -- "$TEST_TMP" && pwd -P)
+TEST_TMP=$(CDPATH='' cd -- "$TEST_TMP" && pwd -P)
 POLICY=$ROOT/guard/text-policy.sh
 MANIFEST=$ROOT/config/guard-activation.example.json
 GIT=/opt/homebrew/bin/git
@@ -786,7 +788,7 @@ while IFS=' ' read -r two_stage_target two_stage_code; do
     two_stage_pending_prefix=as
     two_stage_pending_suffix=ecret
   else
-    two_stage_pending_prefix=at
+    two_stage_pending_prefix='at'
     two_stage_pending_suffix=oken
   fi
   /usr/bin/perl -CSD -e '

@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
-ROOT=$(CDPATH= cd -- "$TEST_DIR/.." && pwd -P)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-scan-test.XXXXXX")
@@ -10,7 +11,7 @@ cleanup() {
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
-TEST_TMP=$(CDPATH= cd -- "$TEST_TMP" && pwd -P)
+TEST_TMP=$(CDPATH='' cd -- "$TEST_TMP" && pwd -P)
 REPO=$TEST_TMP/repo
 MANIFEST=$ROOT/config/guard-activation.example.json
 GIT=/opt/homebrew/bin/git
@@ -652,7 +653,7 @@ fi
 assert_contains 'unsupported or opaque classification' "$TEST_TMP/source-mime.out"
 
 tip=$("$GIT" -C "$REPO" rev-parse HEAD)
-object_dir=${tip%${tip#??}}
+object_dir=${tip%"${tip#??}"}
 object_name=${tip#??}
 /bin/chmod 644 "$REPO/.git/objects/$object_dir/$object_name"
 /usr/bin/printf '%s' corrupt > "$REPO/.git/objects/$object_dir/$object_name"

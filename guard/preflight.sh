@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-GUARD_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+GUARD_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 # shellcheck source=guard/common.sh
 . "$GUARD_DIR/common.sh"
 
@@ -31,7 +31,7 @@ guard_json_exact_keys "$manifest" \
   { guard_fail "activation manifest schema is invalid"; exit 1; }
 
 preflight_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-preflight.XXXXXX")
-preflight_tmp=$(CDPATH= cd -- "$preflight_tmp" && pwd -P)
+preflight_tmp=$(CDPATH='' cd -- "$preflight_tmp" && pwd -P)
 cleanup() {
   rm -rf "$preflight_tmp"
 }

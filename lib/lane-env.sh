@@ -212,6 +212,7 @@ lane_exec() {
   # immediately rather than allowing them to consume the rest of the timebox.
   nightshift_stop_process_tree "$lane_pid" "$NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS"
   lane_survivors=$NIGHTSHIFT_PROCESS_SURVIVORS
+  # shellcheck disable=SC2034 # reason: Shared cleanup state consumed by the sourcing dispatcher.
   NIGHTSHIFT_ACTIVE_LANE_PID=
   NIGHTSHIFT_ACTIVE_LANE_DESCENDANTS=
   if [ -n "$(printf '%s' "$lane_survivors" | tr -d '[:space:]')" ]; then

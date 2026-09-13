@@ -79,6 +79,7 @@ evidence_capture_file_set() {
   names_tmp=$(mktemp "${TMPDIR:-/tmp}/metsuke-evidence-names.XXXXXX")
   find "$evidence_dir" -mindepth 1 -maxdepth 1 -print > "$paths_tmp"
   : > "$names_tmp"
+  # shellcheck disable=SC2094 # reason: Removing the input on failure is intentional; the function returns immediately.
   while IFS= read -r captured_path; do
     if [ ! -f "$captured_path" ] || [ -L "$captured_path" ]; then
       rm -f "$paths_tmp" "$names_tmp"

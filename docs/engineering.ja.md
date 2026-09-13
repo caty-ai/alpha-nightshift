@@ -87,7 +87,7 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 
 `.github/workflows/ci.yml`ワークフローは、実行前に全スイート契約を自分でインストール・検証します。全イベントが hosted の`macos-15`で実行され、このリポジトリにセルフホストランナーは登録されていません。これは意図的です — プルリクエストはこのジョブの手順自体を書き換えられ、手順はソフトウェアを導入するため、常駐のセルフホストランナーでは fork プルリクエストがオーナーのマシン上での任意コード実行になってしまいます（issue #58）。hosted ランナーなら fork プルリクエストには読み取り専用トークン・secrets なし・使い捨て VM が与えられます。ツール検証の手順:
 
-- ShellCheckをインストールし、ガードスクリプトに対して実行
+- ShellCheckをインストールし、`make lint`で追跡対象の全`*.sh`ファイルと明示リストの拡張子なしBashエントリーポイントを検査
 - バージョン固定gitleaks 8.30.1バイナリを、インストール時だけでなく実行のたびにSHA-256で検証
 - 実際のランナーバージョンを検証するGit互換パスのシム
 - `/usr/bin/jq`にあるシステムjqの可用性確認
@@ -97,7 +97,7 @@ uses: caty-ai/family-dev-handbook/.github/workflows/reusable-test-lint.yml@ci-v1
 実行と分析:
 
 - すべてのシェルスクリプトのBash構文チェック
-- パブリッシャー表面とテストに対するShellCheckのlint
+- ローカルと同じ`make lint`ターゲットによるBash構文検査とShellCheckのlint
 - `tests/run_tests.sh`によるフルテストスイートの実行、続けてゼロスキップ・アサーション（このランナーにはすべての契約がインストール済みのため、1つでもスキップがあれば契約がサイレントに壊れたことを意味します）
 - PR範囲のgitleaksスキャンは、この`ci.yml`ワークフローではなく再利用可能な呼び出し元`.github/workflows/gitleaks.yml`側に存在します
 

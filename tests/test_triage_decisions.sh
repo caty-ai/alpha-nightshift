@@ -474,6 +474,7 @@ assert_contains 'decision_drops_canonical: 1' "$b1_state/triage/report.md"
   mkdir -p "$org_filter_invalid_state/ledger" \
     "$org_filter_invalid_state/triage/state" \
     "$org_filter_invalid_work"
+  # shellcheck disable=SC2034 # reason: STATE_DIR is consumed by sourced triage and ledger functions
   STATE_DIR="$org_filter_invalid_state"
   TRIAGE_WORK_DIR="$org_filter_invalid_work"
   triage_init_state_file

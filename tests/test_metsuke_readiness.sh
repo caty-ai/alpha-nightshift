@@ -45,10 +45,13 @@ write_fixture_metadata() {
     "$chromium_revision" \
     "$headless_shell_revision" \
     > "$LANE/node_modules/playwright-core/browsers.json"
+  # shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
   printf '#!/bin/bash\n: > "$MARKER"\n' \
     > "$CACHE/chromium-1193/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+  # shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
   printf '#!/bin/bash\n: > "$MARKER"\n' \
     > "$CACHE/chromium_headless_shell-1193/chrome-mac/headless_shell"
+  # shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
   printf '#!/bin/bash\n: > "$MARKER"\n' > "$CODEX"
   chmod +x \
     "$CACHE/chromium-1193/chrome-mac/Chromium.app/Contents/MacOS/Chromium" \
@@ -96,6 +99,7 @@ mkdir -p "$fake_bin"
 for command_name in \
   npm npx pnpm yarn node playwright chromium chrome codex \
   git gh curl wget nc ssh dig host nslookup brew install; do
+  # shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
   printf '#!/bin/bash\n: > "$MARKER"\nexit 97\n' > "$fake_bin/$command_name"
   chmod +x "$fake_bin/$command_name"
 done
@@ -114,6 +118,7 @@ MARKER="$MARKER" \
 [ ! -e "$STATE" ] || fail "readiness checker created the state directory"
 [ ! -s "$TEST_TMP/ready.err" ] || fail "ready path wrote stderr"
 assert_not_contains "$SECRET" "$ready_output"
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 "$REAL_JQ" -e \
   --arg lp "$LP" \
   --arg cache "$CACHE" \

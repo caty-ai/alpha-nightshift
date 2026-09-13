@@ -332,6 +332,7 @@ EOF
     }
     publication_sequence=$((publication_sequence + 1))
   done < "$FINDINGS_STAGING_FILE"
+  # shellcheck disable=SC2034 # reason: Only the presence of an extra contract record matters.
   if IFS= read -r extra_contract <&3; then
     log "in-memory finding contract contains entries without staged findings"
     publication_failed=1

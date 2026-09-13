@@ -4,15 +4,15 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-# shellcheck source=../lib/common.sh
+# shellcheck source=lib/common.sh
 . "$REPO_ROOT/lib/common.sh"
 nightshift_init "$REPO_ROOT"
 
-# shellcheck source=../lib/lock.sh
+# shellcheck source=lib/lock.sh
 . "$REPO_ROOT/lib/lock.sh"
-# shellcheck source=../lib/ledger.sh
+# shellcheck source=lib/ledger.sh
 . "$REPO_ROOT/lib/ledger.sh"
-# shellcheck source=../lib/verdict.sh
+# shellcheck source=lib/verdict.sh
 . "$REPO_ROOT/lib/verdict.sh"
 
 usage() {
