@@ -4,6 +4,7 @@ set -euo pipefail
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
 PYTHON_BIN=$(command -v python3)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-dispatch-failclosed.XXXXXX")

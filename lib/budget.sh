@@ -81,6 +81,7 @@ budget_check() {
   fi
   nightshift_stop_process_tree "$budget_pid" "$NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS"
   budget_survivors=$NIGHTSHIFT_PROCESS_SURVIVORS
+  # shellcheck disable=SC2034 # reason: Shared cleanup state consumed by the sourcing dispatcher.
   NIGHTSHIFT_ACTIVE_PROBE_PID=
   NIGHTSHIFT_ACTIVE_PROBE_DESCENDANTS=
 
@@ -155,6 +156,7 @@ budget_check() {
   esac
 
   rm -rf "$budget_tmp_dir"
+  # shellcheck disable=SC2034 # reason: Shared cleanup state consumed by the sourcing dispatcher.
   NIGHTSHIFT_ACTIVE_BUDGET_TMP_DIR=
   if ! budget_status=$(printf '%s\n' "$budget_result" | jq -r '.status' 2>/dev/null); then
     budget_fail_with_meter_error "invalid_probe_output"

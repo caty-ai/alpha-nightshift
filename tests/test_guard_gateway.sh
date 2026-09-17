@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
-ROOT=$(CDPATH= cd -- "$TEST_DIR/.." && pwd -P)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-gateway.XXXXXX")
@@ -10,7 +11,7 @@ cleanup() {
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
-TEST_TMP=$(CDPATH= cd -- "$TEST_TMP" && pwd -P)
+TEST_TMP=$(CDPATH='' cd -- "$TEST_TMP" && pwd -P)
 
 "$ROOT/guard/gateway.sh" status > "$TEST_TMP/status.json"
 /usr/bin/jq -e '
@@ -30,6 +31,7 @@ for argv in \
   'scan refs/heads/night/20260730-0001' \
   'scan --push-option=x' \
   'inspect --config=core.hooksPath=/tmp/x'; do
+  # shellcheck disable=SC2086 # reason: intentionally split fixed attack strings into multiple gateway arguments; fixtures contain no glob characters
   if "$ROOT/guard/gateway.sh" $argv > "$TEST_TMP/arbitrary.out" 2>&1; then
     fail "gateway accepted free-form argv: $argv"
   fi

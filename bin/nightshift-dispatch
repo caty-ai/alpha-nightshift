@@ -4,19 +4,19 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-# shellcheck source=../lib/common.sh
+# shellcheck source=lib/common.sh
 . "$REPO_ROOT/lib/common.sh"
 nightshift_init "$REPO_ROOT"
 
-# shellcheck source=../lib/lock.sh
+# shellcheck source=lib/lock.sh
 . "$REPO_ROOT/lib/lock.sh"
-# shellcheck source=../lib/ledger.sh
+# shellcheck source=lib/ledger.sh
 . "$REPO_ROOT/lib/ledger.sh"
-# shellcheck source=../lib/budget.sh
+# shellcheck source=lib/budget.sh
 . "$REPO_ROOT/lib/budget.sh"
-# shellcheck source=../lib/lane-env.sh
+# shellcheck source=lib/lane-env.sh
 . "$REPO_ROOT/lib/lane-env.sh"
-# shellcheck source=../lib/digest.sh
+# shellcheck source=lib/digest.sh
 . "$REPO_ROOT/lib/digest.sh"
 
 usage() {
@@ -59,6 +59,7 @@ run_end_already_recorded_in_ledger() {
   ' "$run_ledger" 2>/dev/null); then
     return 1
   fi
+  # shellcheck disable=SC2086 # reason: intentionally split jq-generated TSV integer counts into two positional arguments
   set -- $run_record_counts
   [ "${1:-0}" -gt 0 ] && [ "${2:-0}" -ge "$1" ]
 }
@@ -197,6 +198,7 @@ abort_infrastructure_run() {
   return 1
 }
 
+# shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the signal traps below (SC2317 is the pre-0.10 code for the same finding)
 run_signal_handler() {
   caught_signal=$1
   signal_exit=$2
@@ -632,6 +634,7 @@ dispatch_subcommand() {
 }
 
 NIGHTSHIFT_DISPATCH_PID=
+# shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the signal traps below (SC2317 is the pre-0.10 code for the same finding)
 supervisor_signal_handler() {
   supervisor_signal=$1
   supervisor_exit=$2

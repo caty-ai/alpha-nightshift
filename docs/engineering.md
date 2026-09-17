@@ -87,7 +87,7 @@ The test lanes deliberately cover different depths, because most of this suite i
 
 The `.github/workflows/ci.yml` workflow installs and verifies every suite contract before running anything. Every event runs on hosted `macos-15`; no self-hosted runner is registered on this repository. That is deliberate — a pull request controls the steps the job runs, the steps install software, and a persistent self-hosted runner would turn a fork pull request into arbitrary code execution on the owner's machine (issue #58). Hosted runners give fork pull requests a read-only token, no secrets, and a throwaway VM. Tool verification steps:
 
-- ShellCheck installed and invoked on guard scripts
+- ShellCheck installed; `make lint` checks every tracked `*.sh` file and the explicitly listed extensionless Bash entry points
 - Pinned gitleaks 8.30.1 binary with SHA-256 verification on every run (not only on install)
 - Git compatibility path shim validating actual runner version
 - System jq at `/usr/bin/jq` availability
@@ -97,7 +97,7 @@ The `.github/workflows/ci.yml` workflow installs and verifies every suite contra
 Execution and analysis:
 
 - Bash syntax for all shell scripts
-- ShellCheck linting of publisher surface and tests
+- Bash syntax and ShellCheck linting through the same `make lint` target used locally
 - Full test suite via `tests/run_tests.sh`, followed by a zero-skip assertion (every contract is installed on this runner, so any skip means a contract silently broke)
 - PR-range gitleaks scanning lives in the reusable caller `.github/workflows/gitleaks.yml`, not in this workflow
 

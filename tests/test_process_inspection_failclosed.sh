@@ -3,10 +3,11 @@ set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
-# shellcheck source=../lib/common.sh
+# shellcheck source=lib/common.sh
 . "$ROOT/lib/common.sh"
-# shellcheck source=../lib/lane-env.sh
+# shellcheck source=lib/lane-env.sh
 . "$ROOT/lib/lane-env.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-inspection.XXXXXX")
@@ -134,7 +135,9 @@ jq -e '
   }
 
 timeout_lane_dir="$TEST_TMP/timeout-lane"
+# shellcheck disable=SC2034 # reason: configuration is consumed by lane_exec in sourced lib/lane-env.sh
 LANE_TIMEBOX_MIN=0
+# shellcheck disable=SC2034 # reason: configuration is consumed by lane_exec in sourced lib/lane-env.sh
 LANE_HOME_LINKS=
 LANG=${LANG:-C}
 PATH="$fake_bin:$PATH" INSPECTION_FAIL_ALWAYS=true \

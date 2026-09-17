@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
-ROOT=$(CDPATH= cd -- "$TEST_DIR/.." && pwd -P)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-bypass.XXXXXX")
@@ -10,7 +11,7 @@ cleanup() {
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
-TEST_TMP=$(CDPATH= cd -- "$TEST_TMP" && pwd -P)
+TEST_TMP=$(CDPATH='' cd -- "$TEST_TMP" && pwd -P)
 MANIFEST=$ROOT/config/guard-activation.example.json
 GIT=/opt/homebrew/bin/git
 DETECTABLE_VALUE='ABCDEFGHIJKLMNOPQRSTUVWXYZ'"123456"
@@ -41,6 +42,7 @@ for operation in \
   'graphql mutation' \
   'comment issue' \
   'label issue'; do
+  # shellcheck disable=SC2086 # reason: intentionally split fixed attack strings into multiple gateway arguments; fixtures contain no glob characters
   if "$ROOT/guard/gateway.sh" $operation >/dev/null 2>&1; then
     fail "publication bypass was accepted: $operation"
   fi

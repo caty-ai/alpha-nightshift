@@ -3,6 +3,7 @@ set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-verdict.XXXXXX")
@@ -344,6 +345,7 @@ jq -n -c '
 ' > "$TEST_TMP/pagination-events.json"
 
 fake_gh="$TEST_TMP/fake-gh"
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 printf '%s\n' \
   '#!/bin/bash' \
   'set -euo pipefail' \

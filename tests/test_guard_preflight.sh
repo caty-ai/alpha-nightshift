@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
-ROOT=$(CDPATH= cd -- "$TEST_DIR/.." && pwd -P)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH='' cd -- "$TEST_DIR/.." && pwd -P)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-preflight-test.XXXXXX")
@@ -10,7 +11,7 @@ cleanup() {
   rm -rf "$TEST_TMP"
 }
 trap cleanup EXIT
-TEST_TMP=$(CDPATH= cd -- "$TEST_TMP" && pwd -P)
+TEST_TMP=$(CDPATH='' cd -- "$TEST_TMP" && pwd -P)
 
 "$ROOT/guard/preflight.sh" \
   --manifest "$ROOT/config/guard-activation.example.json" > "$TEST_TMP/report.json"

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-GUARD_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+GUARD_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 # shellcheck source=guard/common.sh
 . "$GUARD_DIR/common.sh"
 

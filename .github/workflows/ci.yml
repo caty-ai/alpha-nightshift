@@ -112,61 +112,9 @@ jobs:
           test -x /opt/homebrew/bin/git
           /opt/homebrew/bin/git --version
 
-      - name: Bash syntax
-        # One bash -n per file: `bash -n a.sh b.sh` only checks the first
-        # file and treats the rest as script arguments.
+      - name: Lint all tracked shell files (make lint)
         run: |
-          for f in guard/*.sh lanes/**/*.sh tests/*.sh; do
-            bash -n "$f"
-          done
-          bash -n bin/oc-suggest
-          bash -n lanes/org-consistency/seat.sh
-          bash -n tests/fixtures/org-consistency/fake-gh.sh
-          bash -n tests/fixtures/org-consistency/fake-seat.sh
-          bash -n tests/test_lane_org_consistency_layer2.sh
-          bash -n tests/test_lane_org_consistency_layer3.sh
-          bash -n tests/test_lane_org_consistency_oc_bcd.sh
-          bash -n tests/test_lane_org_consistency_s4_residuals.sh
-          bash -n tests/test_lane_org_consistency_suggest.sh
-
-      - name: ShellCheck changed publisher surface
-        # -e SC2015 mirrors the Makefile lint exclusion (pre-existing style
-        # debt in guard/*.sh) so the two lint lanes stay semantically aligned.
-        run: |
-          shellcheck -e SC2015 \
-            guard/common.sh \
-            guard/broker.sh \
-            guard/gateway.sh \
-            guard/drift-monitor.sh \
-            guard/publisher.sh \
-            guard/publisher-lib.sh \
-            guard/publisher-askpass.sh \
-            guard/remote-preflight.sh \
-            bin/oc-suggest \
-            tests/test_guard_publisher.sh \
-            tests/test_guard_drift_monitor.sh \
-            tests/test_guard_revocation_runbook.sh \
-            tests/test_publication_gate_selftest.sh \
-            tests/test_publication_gate_repo.sh \
-            tests/test_publication_denylist.sh \
-            lanes/org-consistency/run.sh \
-            lanes/org-consistency/seat.sh \
-            tests/test_lane_org_consistency_core.sh \
-            tests/test_lane_org_consistency_lifecycle.sh \
-            tests/test_lane_org_consistency_layer2.sh \
-            tests/test_lane_org_consistency_layer3.sh \
-            tests/test_lane_org_consistency_mutation.sh \
-            tests/test_lane_org_consistency_oc_a.sh \
-            tests/test_lane_org_consistency_oc_bcd.sh \
-            tests/test_lane_org_consistency_s4_residuals.sh \
-            tests/test_lane_org_consistency_suggest.sh \
-            tests/test_lane_org_consistency_targets_mirrors.sh \
-            tests/test_lane_org_consistency_timebox.sh \
-            tests/fixtures/org-consistency/fake-gh.sh \
-            tests/fixtures/org-consistency/fake-seat.sh \
-            tests/fixtures/org-consistency/lib.sh \
-            tests/run.sh \
-            tests/run_tests.sh
+          make lint
 
       - name: Runner parity (tests/run.sh vs tests/run_tests.sh)
         # runner parity: extracts each function body from `^<fn>() {` to the first `^}` with awk and diffs it;

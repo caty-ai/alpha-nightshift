@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-GUARD_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+GUARD_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 # shellcheck source=guard/common.sh
 . "$GUARD_DIR/common.sh"
 
@@ -87,7 +87,7 @@ esac
   { guard_fail "text input path is aliased or non-regular"; exit 1; }
 
 text_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-text-policy.XXXXXX")
-text_tmp=$(CDPATH= cd -- "$text_tmp" && pwd -P)
+text_tmp=$(CDPATH='' cd -- "$text_tmp" && pwd -P)
 cleanup_text_policy() {
   rm -f "$text_tmp/input.snapshot" "$text_tmp/scanner.stdout" "$text_tmp/scanner.stderr"
   rmdir "$text_tmp" 2>/dev/null || :

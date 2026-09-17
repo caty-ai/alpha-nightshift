@@ -4,6 +4,7 @@ set -euo pipefail
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
 PYTHON_BIN=$(command -v python3)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/lane-env.sh"
@@ -40,6 +41,7 @@ export GITHUB_TOKEN=fake-github
 export SSH_AUTH_SOCK="$TEST_TMP/fake-agent.sock"
 export ANTHROPIC_API_KEY=fake-anthropic
 
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 lane_exec "$lane_dir" /bin/bash -c '
   env > "$LANE_DIR/env.txt"
   printf "%s\n" "$HOME" > "$LANE_DIR/home.txt"
@@ -77,6 +79,7 @@ printf '%s\n' '{"dummy":"auth"}' > "$fake_codex/auth.json"
 printf '%s\n' '[credential]' '	helper = osxkeychain' > "$fake_gitconfig"
 LANE_HOME_LINKS="$fake_codex:$fake_gitconfig"
 linked_lane="$STATE_DIR/linked-lane"
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 lane_exec "$linked_lane" /bin/bash -c '
   env > "$LANE_DIR/env.txt"
   cat "$HOME/.codex/auth.json" > "$LANE_DIR/auth-copy.json"
@@ -135,6 +138,7 @@ fi
 
 REPO_LANE_TMP=$(mktemp -d "$ROOT/.lane-ceiling.XXXXXX")
 LANE_HOME_LINKS=
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 lane_exec "$REPO_LANE_TMP/lane" /bin/bash -c '
   git rev-parse --show-toplevel > "$LANE_DIR/git-root.txt" 2>&1
   printf "%s\n" "$?" > "$LANE_DIR/git-root-status.txt"
@@ -144,6 +148,7 @@ lane_exec "$REPO_LANE_TMP/lane" /bin/bash -c '
 
 LANE_TIMEBOX_MIN=0
 timeout_lane="$STATE_DIR/timeout-lane"
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 lane_exec "$timeout_lane" /bin/bash -c '
   sleep 300 &
   printf "%s\n" "$!" > "$LANE_DIR/child.pid"
@@ -165,6 +170,7 @@ fi
 leader_exit_lane="$STATE_DIR/leader-exit-lane"
 LANE_TIMEBOX_MIN=1
 leader_exit_started=$(date '+%s')
+# shellcheck disable=SC2016 # reason: dollar expressions are literal input for the generated script, child shell, or jq program
 lane_exec "$leader_exit_lane" /bin/bash -c '
   /bin/bash -c '\''trap "" HUP; exec sleep 300'\'' &
   printf "%s\n" "$!" > "$LANE_DIR/leader-exit-child.pid"

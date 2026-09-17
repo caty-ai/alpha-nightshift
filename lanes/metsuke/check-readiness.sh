@@ -35,7 +35,7 @@ validate_path_text() {
   esac
   case "$value" in
     *[![:print:]]*) fail "$cell" "path contains a control character" ;;
-    *'"'*|*'\'*) fail "$cell" "path contains a refused character" ;;
+    *'"'*|*\\*) fail "$cell" "path contains a refused character" ;;
     //*) fail "$cell" "path is not canonical" ;;
     *//*|*/./*|*/../*|*/.|*/..) fail "$cell" "path is not canonical" ;;
     */) [ "$value" = / ] || fail "$cell" "path is not canonical" ;;

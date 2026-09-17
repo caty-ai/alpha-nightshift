@@ -3,6 +3,7 @@ set -euo pipefail
 
 TEST_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$TEST_DIR/.." && pwd)
+# shellcheck source=tests/helpers.sh
 . "$TEST_DIR/helpers.sh"
 . "$ROOT/lib/common.sh"
 . "$ROOT/lib/ledger.sh"

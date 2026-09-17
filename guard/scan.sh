@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-GUARD_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+GUARD_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 # shellcheck source=guard/common.sh
 . "$GUARD_DIR/common.sh"
 
@@ -47,6 +47,7 @@ scan_payload() {
   scanner_stdout=$scan_tmp/stdout-"$scan_label".log
   scan_bytes=$(/usr/bin/wc -c < "$scan_input" | /usr/bin/tr -d ' ')
   set +e
+  # shellcheck disable=SC2002 # reason: the cat pipe is deliberate; PIPESTATUS below reads both the cat and the gitleaks status
   /bin/cat "$scan_input" |
     /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks stdin \
       --config "$config_path" \
@@ -135,7 +136,8 @@ if [ "$#" -eq 2 ] && [ "$1" = "--exact-stdin" ]; then
   [ "$exact_size" -le 65536 ] ||
     { guard_fail "exact-stdin input exceeds the local bound"; exit 1; }
   scan_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-exact-stdin.XXXXXX")
-  scan_tmp=$(CDPATH= cd -- "$scan_tmp" && pwd -P)
+  scan_tmp=$(CDPATH='' cd -- "$scan_tmp" && pwd -P)
+  # shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the EXIT trap below (SC2317 is the pre-0.10 code for the same finding)
   cleanup_exact_stdin() {
     rm -rf "$scan_tmp"
   }
@@ -232,7 +234,7 @@ if [ -f "$git_dir/commondir" ]; then
   case "$common_hint" in
     /*) common_dir=$common_hint ;;
     *)
-      common_dir=$(CDPATH= cd -- "$git_dir/$common_hint" 2>/dev/null && pwd -P) ||
+      common_dir=$(CDPATH='' cd -- "$git_dir/$common_hint" 2>/dev/null && pwd -P) ||
         { guard_fail "Git common directory is ambiguous"; exit 1; }
       ;;
   esac
@@ -272,7 +274,7 @@ if [ -f "$common_dir/config" ]; then
 fi
 
 scan_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-object-scan.XXXXXX")
-scan_tmp=$(CDPATH= cd -- "$scan_tmp" && pwd -P)
+scan_tmp=$(CDPATH='' cd -- "$scan_tmp" && pwd -P)
 cleanup() {
   rm -rf "$scan_tmp"
 }
