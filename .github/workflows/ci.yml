@@ -112,11 +112,8 @@ jobs:
           test -x /opt/homebrew/bin/git
           /opt/homebrew/bin/git --version
 
-      - name: Lint all tracked shell files
-        # Use the local target for Bash syntax, ShellCheck and runner parity.
-        # shellcheck is installed above; verify the runner supplies make.
+      - name: Lint all tracked shell files (make lint)
         run: |
-          command -v make
           make lint
 
       - name: Runner parity (tests/run.sh vs tests/run_tests.sh)

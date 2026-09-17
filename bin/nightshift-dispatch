@@ -198,7 +198,7 @@ abort_infrastructure_run() {
   return 1
 }
 
-# shellcheck disable=SC2329 # reason: invoked indirectly by the signal traps below
+# shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the signal traps below (SC2317 is the pre-0.10 code for the same finding)
 run_signal_handler() {
   caught_signal=$1
   signal_exit=$2
@@ -634,7 +634,7 @@ dispatch_subcommand() {
 }
 
 NIGHTSHIFT_DISPATCH_PID=
-# shellcheck disable=SC2329 # reason: invoked indirectly by the signal traps below
+# shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the signal traps below (SC2317 is the pre-0.10 code for the same finding)
 supervisor_signal_handler() {
   supervisor_signal=$1
   supervisor_exit=$2

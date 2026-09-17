@@ -47,6 +47,7 @@ scan_payload() {
   scanner_stdout=$scan_tmp/stdout-"$scan_label".log
   scan_bytes=$(/usr/bin/wc -c < "$scan_input" | /usr/bin/tr -d ' ')
   set +e
+  # shellcheck disable=SC2002 # reason: the cat pipe is deliberate; PIPESTATUS below reads both the cat and the gitleaks status
   /bin/cat "$scan_input" |
     /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks stdin \
       --config "$config_path" \
@@ -136,7 +137,7 @@ if [ "$#" -eq 2 ] && [ "$1" = "--exact-stdin" ]; then
     { guard_fail "exact-stdin input exceeds the local bound"; exit 1; }
   scan_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nightshift-exact-stdin.XXXXXX")
   scan_tmp=$(CDPATH='' cd -- "$scan_tmp" && pwd -P)
-  # shellcheck disable=SC2329 # reason: invoked indirectly by the EXIT trap below
+  # shellcheck disable=SC2317,SC2329 # reason: invoked indirectly by the EXIT trap below (SC2317 is the pre-0.10 code for the same finding)
   cleanup_exact_stdin() {
     rm -rf "$scan_tmp"
   }

@@ -7,11 +7,10 @@ test:
 # (handbook checklist A3 — a lint that cannot fail must not sit behind a badge).
 # SC2015 is excluded: pre-existing `A && B || C` style in guard/{common,gateway,
 # publisher}.sh, flagged only by newer shellcheck builds (ubuntu runner) —
-# style debt tracked in issue #46. CI invokes this target so both lanes
-# check the same files and exclusions. Everything else (incl. SC2086) fails.
-# Extensionless Bash entry points (audited via shebangs in bin/ and lanes/).
+# style debt tracked in issue #46; ci.yml invokes this same target so
+# both lint lanes check the same thing. Everything else (incl. SC2086) fails.
+# Extensionless Bash entry points (audited via shebangs in bin/ and lanes/):
 LINT_BASH_EXECUTABLES = bin/budget-probe-stub bin/morning-triage bin/nightshift-dispatch bin/oc-suggest bin/verdict-sync
-
 lint:
 	command -v shellcheck
 	@set -e; files=$$(mktemp); trap 'rm -f "$$files"' EXIT HUP INT TERM; \
